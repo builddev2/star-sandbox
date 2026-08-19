@@ -35,8 +35,9 @@ import pygame
 DEFAULT_S = 1
 GRID_CHOICES = (1, 2, 3)
 
-#: Target text height in logical points.
-TARGET_TEXT_POINTS = 14
+#: Target text height in logical points.  Sized for a child reading alongside an
+#: adult on a laptop screen, not for maximum information density.
+TARGET_TEXT_POINTS = 18
 #: Below this a scalable font stops being legible whatever the grid.
 MIN_FONT_PX = 8
 
