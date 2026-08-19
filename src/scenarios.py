@@ -86,6 +86,8 @@ def solar_system(world=None, moons=True):
                   world.pos[pi] + rel_pos, world.vel[pi] + rel_vel)
         index_by_name[name] = world.n - 1
 
+    world.bodies[index_by_name["Saturn"]].rings = True
+
     # Without this the whole system slowly drifts off screen, because giving the Sun a
     # velocity of exactly zero leaves the barycentre moving.
     world.zero_net_momentum()

@@ -63,7 +63,7 @@ class Body:
     """Identity and appearance of one simulated object."""
 
     __slots__ = ("id", "name", "kind", "material", "trail", "born_day",
-                 "event_id", "no_collide_until", "seed")
+                 "event_id", "no_collide_until", "seed", "rings")
 
     def __init__(self, body_id, name, material, kind=KIND_PLANET, born_day=0.0, seed=0):
         self.id = body_id
@@ -78,6 +78,8 @@ class Body:
         self.event_id = 0
         self.no_collide_until = -1.0
         self.seed = seed
+        #: Drawn with a ring system.  Set by scenarios for Saturn.
+        self.rings = False
 
     @property
     def is_star(self):

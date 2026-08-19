@@ -89,24 +89,31 @@ rows. `selftest.py` covers it.
 
 ### Resolution
 
-At startup the app queries the actual display size and derives the internal
-buffer as `display / S` for integer `S`, defaulting to **S = 2**. On a 16"
-MacBook Pro (3456x2234 native) that gives a 1728x1117 internal buffer. The
-integer divisor guarantees an exact upscale with correct aspect ratio and no
-letterboxing.
+**Resolved by measurement, 2026-08-18.**  SDL reports only logical points --
+`get_desktop_sizes()` gives 1728x1117 on a 16" MacBook Pro whose panel is
+3456x2234, `get_window_size()` likewise, and `WINDOW_ALLOW_HIGHDPI` does not
+exist in pygame 2.6.  Individual panel pixels are therefore unaddressable.
+
+That turns out to be the right answer rather than a limitation: at one internal
+pixel per logical point, macOS renders each of ours as an exact 2x2 block of
+panel pixels.  A clean integer upscale, at the finest grid available.  So
+**S = 1 is the default**, giving a 1728x1084 buffer, and `G` cycles S through
+1, 2, 3.
+
+Two consequences the measurement forced:
+
+- **Text is sized in logical points**, not device pixels, because points are the
+  unit the platform is calibrated in.  14 points at S=1.
+- **A fullscreen window is not the desktop size.**  The menu-bar/notch strip
+  costs 33 points of height, so a buffer sized to the desktop gets scaled by
+  0.97 -- non-integer, smearing the very pixel grid it exists to preserve.  The
+  window is therefore opened once, its true size read back, and the buffer
+  re-derived from that.  Verified: S=1, 2 and 3 all upscale by exactly 1.0, 2.0
+  and 3.0.
 
 The display opens with pygame's `SCALED` flag so SDL performs the upscale on the
-GPU. Software-blitting 7.7M pixels per frame would cost several milliseconds;
-this costs nothing.
-
-`G` cycles S between 2, 3 and 4 live, rebuilding the internal surface and
-clearing the sprite cache. Fullscreen by default, `Cmd+F` toggles.
-
-**Open risk:** whether SDL hands us the true Retina backing store on macOS or
-only the logical 1728x1117 point size must be verified empirically as the first
-implementation step. If it returns logical points, the effective resolution
-ceiling is half the panel's capability. This is a ten-minute check and it gates
-nothing else, but it must not be assumed.
+GPU.  Software-blitting would cost several milliseconds a frame; this costs
+nothing.  Fullscreen by default, `Cmd+F` toggles.
 
 ### The size law
 

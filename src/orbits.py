@@ -13,6 +13,7 @@ import math
 
 import numpy as np
 
+from . import units
 from .units import G
 
 
@@ -61,8 +62,9 @@ def true_anomaly_from_mean(mean_anomaly, e, tol=1e-12, max_iter=40):
 def elements_from_state(mu, rel_pos, rel_vel):
     """Osculating elements from a state vector relative to the attractor.
 
-    Returns a dict with ``a``, ``e``, ``period`` (days, or ``None`` if unbound),
-    ``periapsis``, ``apoapsis`` (or ``None``), ``lon_peri`` and ``true_anomaly``.
+    Returns a dict with ``a``, ``e``, ``p`` (semi-latus rectum), ``period``
+    (days, or ``None`` if unbound), ``periapsis``, ``apoapsis`` (or ``None``),
+    ``lon_peri``, ``true_anomaly`` and ``bound``.
     """
     rx, ry = float(rel_pos[0]), float(rel_pos[1])
     vx, vy = float(rel_vel[0]), float(rel_vel[1])
@@ -83,9 +85,19 @@ def elements_from_state(mu, rel_pos, rel_vel):
     else:
         a = -mu / (2.0 * energy)
 
-    bound = energy < 0.0
+    # bool(), not the bare comparison: mu is often a numpy scalar, and a
+    # leaking np.bool_ breaks every `is True` check downstream.
+    bound = bool(energy < 0.0)
     period = 2.0 * math.pi * math.sqrt(a ** 3 / mu) if bound and a > 0 else None
-    periapsis = a * (1.0 - e) if bound else r * (1.0 - e) / (1.0 + e) if e > 0 else r
+
+    # Semi-latus rectum from angular momentum.  This is the one form that is
+    # correct for every conic, which matters because a * (1 - e) is nan for a
+    # parabola and the naive unbound formula r(1-e)/(1+e) goes *negative* once
+    # e > 1 -- so a body thrown past escape velocity reported a negative closest
+    # approach and drew no predicted path at all.
+    h = rx * vy - ry * vx
+    p = h * h / mu
+    periapsis = p / (1.0 + e) if e > -1.0 else r
     apoapsis = a * (1.0 + e) if bound else None
 
     lon_peri = math.atan2(ey, ex) if e > 1e-12 else 0.0
@@ -95,6 +107,7 @@ def elements_from_state(mu, rel_pos, rel_vel):
     return {
         "a": a,
         "e": e,
+        "p": p,
         "period": period,
         "periapsis": periapsis,
         "apoapsis": apoapsis,
@@ -104,26 +117,99 @@ def elements_from_state(mu, rel_pos, rel_vel):
     }
 
 
-def dominant_attractor(world, index):
-    """Index of the body pulling hardest on ``index``, or None if it is alone.
+def conic_points(mu, rel_pos, rel_vel, samples=128):
+    """The path a body on this state vector will follow, relative to its attractor.
 
-    "Hardest" means largest G*m/r^2.  This is what every orbit readout, the trail
-    sampler and the circular-orbit helper are all measured against, so it needs to agree
-    with intuition: for the Moon it must come out Earth, not the Sun.
+    Returns ``(points, bound)``.  This is algebra, not integration: the whole
+    trajectory comes out of the orbital elements in closed form, which is what
+    makes it cheap enough to redraw every frame while someone is aiming.
+
+    For a hyperbola the true anomaly is only valid within +-acos(-1/e), so the
+    sampling range is narrowed accordingly and the arc is drawn open-ended.
+    """
+    el = elements_from_state(mu, rel_pos, rel_vel)
+    e = el["e"]
+    bound = el["bound"]
+    p = el["p"]
+
+    if bound:
+        nus = np.linspace(-math.pi, math.pi, samples)
+    else:
+        # Beyond +-acos(-1/e) the conic has no real points; stop just short so
+        # the arc goes off to infinity rather than wrapping round.
+        limit = (math.acos(min(1.0, max(-1.0, -1.0 / e))) if e > 1.0 else math.pi)
+        nus = np.linspace(-limit * 0.985, limit * 0.985, samples)
+
+    if not math.isfinite(p) or p <= 0.0:
+        return np.zeros((0, 2)), bound
+
+    denominator = 1.0 + e * np.cos(nus)
+    good = denominator > 1e-9
+    nus = nus[good]
+    radii = p / denominator[good]
+
+    angles = nus + el["lon_peri"]
+    return np.stack([radii * np.cos(angles), radii * np.sin(angles)], axis=1), bound
+
+
+def dominant_attractor(world, index):
+    """Index of the body that ``index`` should be considered to orbit.
+
+    **Not the body pulling hardest.**  The Sun pulls on the Moon about twice as
+    hard as the Earth does -- that is a real fact about the solar system, not a
+    numerical accident -- so raw force gives "Sun" and every moon in the
+    inspector reads as orbiting the Sun on a wildly eccentric path.
+
+    The right question is which sphere of influence the body sits inside.  A
+    candidate qualifies when it is more massive, when ``index`` lies within its
+    Hill radius about the system's primary, and when the two of them are
+    gravitationally bound in the two-body sense.  Of the candidates that
+    qualify, the most local one wins -- smallest Hill radius, i.e. deepest
+    nesting.
+
+    The boundness test is what separates a moon from its neighbours: Io sits
+    well inside Ganymede's Hill radius, but the two are racing past each other
+    at far above their mutual escape velocity, so Ganymede is correctly
+    rejected and Jupiter wins.
+
+    Falls back to the most massive body, and returns None only for a body that
+    is itself the most massive or is alone.
     """
     n = world.n
     if n < 2:
         return None
+
     pos = world.pos[:n]
+    vel = world.vel[:n]
     mass = world.mass[:n]
 
+    heaviest = int(np.argmax(mass))
+    if heaviest == index:
+        return None
+
     d = pos - pos[index]
-    r2 = np.einsum("ij,ij->i", d, d)
-    r2[index] = np.inf
-    pull = mass / r2
-    pull[index] = -1.0
-    best = int(np.argmax(pull))
-    return best if pull[best] > 0.0 else None
+    r = np.sqrt(np.einsum("ij,ij->i", d, d))
+    r[index] = np.inf
+
+    dv = vel - vel[index]
+    v2 = np.einsum("ij,ij->i", dv, dv)
+
+    # Hill radius of every candidate, measured about the system's primary.
+    from_primary = pos - pos[heaviest]
+    a = np.sqrt(np.einsum("ij,ij->i", from_primary, from_primary))
+    hill = units.hill_radius(mass, mass[heaviest], a)
+
+    mu = G * (mass + mass[index])
+    bound = (0.5 * v2 - mu / r) < 0.0
+
+    ok = (mass > mass[index]) & (r < hill) & bound
+    ok[index] = False
+    ok[heaviest] = False
+
+    if not ok.any():
+        return heaviest
+    candidates = np.flatnonzero(ok)
+    return int(candidates[np.argmin(hill[candidates])])
 
 
 def circular_velocity(world, index, attractor, retrograde=False):
