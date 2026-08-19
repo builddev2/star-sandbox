@@ -22,10 +22,19 @@ def test_size_order_is_preserved_when_zoomed_out():
     assert sun > jupiter > earth > moon
 
 
-def test_nothing_is_smaller_than_a_pixel_and_a_half_unit():
+def test_even_a_one_kilometre_rock_stays_visible():
     u = H / scale.REF_HEIGHT
     tiny = _px(1.0 / units.AU_KM)          # a 1 km rock
     assert tiny >= scale.FLOOR_MIN * u
+    assert tiny >= 2.0, "debris must not vanish into a single pixel"
+
+
+def test_small_bodies_are_still_told_apart():
+    """The floor must not be so high that Mercury and the Moon flatten into the
+    same dot -- distinguishing sizes is the whole job of this law."""
+    mercury = _px(2439.7 / units.AU_KM)
+    moon = _px(1737.4 / units.AU_KM)
+    assert mercury > moon
 
 
 def test_the_floor_is_capped_so_nothing_swallows_the_view():
