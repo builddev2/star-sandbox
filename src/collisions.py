@@ -16,6 +16,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import units
+from .body import KIND_DEBRIS, KIND_PLANET, KIND_STAR
+
 
 @dataclass
 class Collision:
@@ -85,3 +88,61 @@ def find_collisions(world, prev_pos):
 
     out.sort(key=lambda c: c.s)
     return out
+
+
+def impact_energy(world, c):
+    """Kinetic energy of the impact in the pair's centre-of-mass frame.
+
+    Using the reduced mass is what makes this the energy actually available to do
+    damage: the part of the kinetic energy that is not just the pair drifting.
+    """
+    mi, mj = world.mass[c.i], world.mass[c.j]
+    total = mi + mj
+    if total <= 0.0:
+        return 0.0
+    reduced = mi * mj / total
+    return 0.5 * reduced * c.v_rel * c.v_rel
+
+
+def binding_of_target(world, c):
+    """Gravitational binding energy of the larger body: what holds it together."""
+    return units.binding_energy(world.mass[c.i], world.radius[c.i])
+
+
+def is_catastrophic(world, c):
+    """True when the impact carries more energy than the target's self-gravity."""
+    return bool(impact_energy(world, c) >= binding_of_target(world, c))
+
+
+def merge(world, c):
+    """Combine the pair into the larger body.  Returns its index afterwards.
+
+    Mass and momentum are conserved exactly.  Density becomes the mass-weighted
+    mean of the two, and the radius then follows from mass and density, so the
+    result is a physically sized sphere rather than a made-up number.
+    """
+    i, j = c.i, c.j
+    mi, mj = float(world.mass[i]), float(world.mass[j])
+    total = mi + mj
+
+    momentum = mi * world.vel[i] + mj * world.vel[j]
+    centre = (mi * world.pos[i] + mj * world.pos[j]) / total
+
+    di = units.density_from_mass_radius(mi, float(world.radius[i]))
+    dj = units.density_from_mass_radius(mj, float(world.radius[j]))
+    density = (mi * di + mj * dj) / total
+
+    survivor = world.bodies[i]
+    world.pos[i] = centre
+    world.vel[i] = momentum / total
+    world.mass[i] = total
+    world.radius[i] = units.radius_from_mass_density(total, density)
+
+    if total >= units.STAR_MASS_THRESHOLD:
+        survivor.kind = KIND_STAR
+    elif survivor.kind == KIND_DEBRIS and total >= units.EARTH_MASS * 0.01:
+        survivor.kind = KIND_PLANET
+
+    world.remove(j)
+    # remove() swap-removes, so i may no longer be the survivor's row.
+    return world.index_of(survivor.id)
