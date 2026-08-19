@@ -136,6 +136,13 @@ DISRUPT = "disrupt"
 #: bullet, not a second planet, and simply buries itself regardless of angle.
 GRAZE_MIN_MASS_RATIO = 0.02
 
+#: A graze is inelastic: this much of the normal-component relative speed
+#: survives it.  Rock does not bounce.
+GRAZE_RESTITUTION = 0.3
+#: Fraction of the smaller body's mass scraped off and accreted by the larger
+#: one in a graze.
+GRAZE_MASS_TRANSFER = 0.1
+
 
 def threshold_of_target(world, c):
     """Specific energy needed to disperse the pair, in simulation units."""
@@ -248,6 +255,63 @@ class CollisionResolver:
 
     # --- outcomes --------------------------------------------------------------
 
+    def graze(self, world, c):
+        """A glancing blow: both bodies survive, deflected and lightly mixed.
+
+        The normal component of the relative velocity (along the line
+        joining the centres) is reflected and damped by ``GRAZE_RESTITUTION``
+        -- rock does not bounce -- while the tangential component, which is
+        most of the relative velocity for a near-grazing hit, passes through
+        unchanged. A sliver of the smaller body's mass is scraped onto the
+        larger one. Returns ``(i, j)``, unchanged from ``c`` since a graze
+        never removes a body.
+        """
+        i, j = c.i, c.j
+        mi, mj = float(world.mass[i]), float(world.mass[j])
+        ri, rj = float(world.radius[i]), float(world.radius[j])
+        total = mi + mj
+        momentum = mi * world.vel[i] + mj * world.vel[j]
+
+        normal = world.pos[j] - world.pos[i]
+        dist = float(np.hypot(normal[0], normal[1]))
+        normal = normal / dist if dist > 0.0 else np.array([1.0, 0.0])
+
+        dv = world.vel[j] - world.vel[i]
+        dv_normal = float(np.dot(dv, normal)) * normal
+        dv_tangent = dv - dv_normal
+        new_dv = -GRAZE_RESTITUTION * dv_normal + dv_tangent
+
+        di = units.density_from_mass_radius(mi, ri)
+        dj = units.density_from_mass_radius(mj, rj)
+        transfer = GRAZE_MASS_TRANSFER * mj
+        new_mi, new_mj = mi + transfer, mj - transfer
+
+        world.mass[i], world.mass[j] = new_mi, new_mj
+        world.radius[i] = units.radius_from_mass_density(new_mi, di)
+        world.radius[j] = units.radius_from_mass_density(new_mj, dj)
+
+        # Solved directly rather than corrected after the fact: this is the
+        # unique (vel_i, vel_j) pair whose difference is new_dv and whose
+        # mass-weighted sum is the momentum the pair had going in.
+        world.vel[i] = (momentum - new_mj * new_dv) / total
+        world.vel[j] = world.vel[i] + new_dv
+
+        # Nudge the smaller body clear along the same line so the pair does
+        # not still read as touching next frame.
+        sep = float(world.radius[i] + world.radius[j])
+        world.pos[j] = world.pos[i] + normal * (1.01 * sep)
+
+        event_id = self._next_event_id
+        self._next_event_id += 1
+        speed = float(np.hypot(new_dv[0], new_dv[1]))
+        until = world.time + IMMUNITY_RADII * sep / max(speed, 1e-12)
+        for k in (i, j):
+            body = world.bodies[k]
+            body.event_id = event_id
+            body.no_collide_until = until
+
+        return i, j
+
     def shatter(self, world, c):
         """Break the pair into fragments.  Returns their indices.
 
@@ -358,10 +422,9 @@ class CollisionResolver:
         outcome = classify(world, c)
         if outcome == DISRUPT:
             self.shatter(world, c)
+        elif outcome == GRAZE:
+            self.graze(world, c)
         else:
-            # GRAZE falls back to a plain merge until Task 5 gives it its own
-            # handler; classify() already keeps the Sun-vs-asteroid case out
-            # of this branch via b_crit, so nothing regresses in the meantime.
             merge(world, c)
         integrator.refresh(world)
         return 1
