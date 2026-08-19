@@ -128,17 +128,6 @@ def specific_impact_energy(world, c):
     return impact_energy(world, c) / total if total > 0.0 else 0.0
 
 
-def binding_of_target(world, c):
-    """Gravitational binding energy of the larger body: what holds it together.
-
-    Used only by the fragment-speed budget in :meth:`CollisionResolver.shatter`
-    -- how hard the debris has to be thrown to actually escape -- not by
-    :func:`classify`, which compares against the real disruption threshold
-    instead of gravity alone.
-    """
-    return units.binding_energy(world.mass[c.i], world.radius[c.i])
-
-
 ACCRETE = "accrete"
 GRAZE = "graze"
 DISRUPT = "disrupt"
@@ -222,6 +211,28 @@ FRAGMENT_RING = 1.15
 #: Immunity lasts long enough for fragments to travel this many target radii.
 IMMUNITY_RADII = 5.0
 
+#: Leinhardt & Stewart (2012): above this multiple of the disruption threshold
+#: the largest remnant collapses into a supercatastrophic power law rather
+#: than the near-linear regime below it.
+SUPERCATASTROPHIC_RATIO = 1.8
+#: Fraction of the impact energy *above* what disruption itself consumed that
+#: ends up as fragment motion.  The rest goes to heat and to grinding rock
+#: into gravel, which is where most of a real impact's energy actually goes.
+DISPERSAL_EFFICIENCY = 0.2
+
+
+def largest_remnant_fraction(q_ratio):
+    """Mass of the biggest surviving piece, as a fraction of the pair's total.
+
+    ``q_ratio`` is the specific impact energy divided by the target's
+    disruption threshold. At the threshold itself (1.0) half the mass
+    survives as one piece; well past it the remnant collapses toward dust.
+    """
+    if q_ratio <= SUPERCATASTROPHIC_RATIO:
+        return float(np.clip(0.5 * (2.0 - q_ratio), 0.05, 1.0))
+    return float(np.clip(0.1 * (q_ratio / SUPERCATASTROPHIC_RATIO) ** -1.5,
+                         0.01, 0.5))
+
 
 class CollisionResolver:
     """Owns the RNG and the event counter for collision outcomes.
@@ -257,11 +268,11 @@ class CollisionResolver:
         density = (mi * di + mj * dj) / total
 
         # How badly did the impact overshoot what held the target together?
-        binding = binding_of_target(world, c)
-        excess = impact_energy(world, c) / binding if binding > 0.0 else 1.0
-        excess = max(excess, 1.0)
+        q_r = specific_impact_energy(world, c)
+        q_star = threshold_of_target(world, c)
+        q_ratio = max(q_r / q_star, 1.0) if q_star > 0.0 else 1.0
 
-        wanted = int(MIN_FRAGMENTS + 2.0 * np.log2(excess))
+        wanted = int(MIN_FRAGMENTS + 2.0 * np.log2(q_ratio))
         room = world.capacity - (world.n - 2)
         count = int(min(wanted, MAX_FRAGMENTS, room))
         if count < MIN_FRAGMENTS:
@@ -274,20 +285,37 @@ class CollisionResolver:
         event_id = self._next_event_id
         self._next_event_id += 1
 
-        # Mass split: one dominant remnant, the rest a random partition.
-        remnant_share = float(np.clip(0.50 - 0.08 * np.log2(excess), 0.30, 0.50))
+        # Mass split: one dominant remnant (Leinhardt & Stewart), the rest a
+        # random partition.
+        remnant_share = largest_remnant_fraction(q_ratio)
         weights = self.rng.random(count - 1) + 0.15
         weights *= (1.0 - remnant_share) / weights.sum()
         shares = np.concatenate(([remnant_share], weights))
         masses = shares * total
 
-        kick = units.escape_velocity(total, r_big)
         angles = (np.arange(count) / count) * 2.0 * np.pi
         angles += self.rng.normal(0.0, 0.25, count)
         directions = np.stack([np.cos(angles), np.sin(angles)], axis=1)
-        speeds = kick * self.rng.uniform(0.55, 1.45, count)
+
+        # Shape the speed distribution first, then scale it to the energy the
+        # impact actually has left to disperse the debris with -- above what
+        # disruption itself consumed, and discounted by DISPERSAL_EFFICIENCY
+        # since most of a real impact's energy goes to heat, not motion.  A
+        # marginal disruption then barely separates; an overkill one sprays.
+        v_esc = units.escape_velocity(total, r_big)
+        speeds = self.rng.uniform(0.55, 1.45, count)
         # The remnant keeps most of the mass, so give it least of the kick.
         speeds[0] *= 0.35
+        budget = DISPERSAL_EFFICIENCY * max(q_r - q_star, 0.0) * total
+        ke_shape = 0.5 * float((masses * speeds * speeds).sum())
+        if ke_shape > 0.0 and budget > 0.0:
+            speeds *= math.sqrt(budget / ke_shape)
+        # Never below escape speed, or the pieces just fall back together and
+        # the break-up is invisible.
+        floor = 1.05 * v_esc
+        peak = float(speeds.max())
+        if peak > 0.0 and peak < floor:
+            speeds *= floor / peak
 
         positions = centre + directions * (FRAGMENT_RING * r_big)
         velocities = drift + directions * speeds[:, None]
@@ -310,7 +338,7 @@ class CollisionResolver:
             if body is None:
                 break
             body.event_id = event_id
-            body.no_collide_until = world.time + IMMUNITY_RADII * r_big / max(kick, 1e-12)
+            body.no_collide_until = world.time + IMMUNITY_RADII * r_big / max(v_esc, 1e-12)
             made.append(world.index_of(body.id))
         return made
 
