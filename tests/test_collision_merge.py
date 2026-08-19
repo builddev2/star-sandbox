@@ -92,3 +92,54 @@ def test_hypervelocity_impact_is_catastrophic():
                   units.EARTH_MASS * 0.1, r * 0.5, (fast, 0.0), r)
     c = collisions.Collision(0, 1, 0.5, fast, v_impact=fast)
     assert collisions.classify(world, c) == collisions.DISRUPT
+
+
+# --- cratering ejecta on accretion --------------------------------------------------
+
+def _accrete_impact(speed_kms, gap_factor=1.0, ratio=0.1):
+    r = units.EARTH_RADIUS
+    speed = speed_kms / units.AUD_TO_KMS
+    world = _pair(units.EARTH_MASS, r, (0.0, 0.0),
+                  units.EARTH_MASS * ratio, r * 0.5, (speed, 0.0), gap_factor * r)
+    c = collisions.Collision(0, 1, 0.5, speed, v_impact=speed)
+    return world, c
+
+
+def test_a_feeble_impact_produces_no_ejecta_bodies():
+    world, c = _accrete_impact(1e-5)
+    resolver = collisions.CollisionResolver(seed=1)
+    idx = resolver.accrete(world, c)
+    assert world.n == 1
+    assert idx == 0
+
+
+def test_an_energetic_but_sub_catastrophic_impact_throws_real_debris():
+    world, c = _accrete_impact(30.0)
+    assert collisions.classify(world, c) != collisions.DISRUPT, \
+        "test setup must stay sub-catastrophic"
+    before = world.n
+    resolver = collisions.CollisionResolver(seed=1)
+    resolver.accrete(world, c)
+    assert world.n > before, "an energetic sub-catastrophic hit must excavate ejecta"
+
+
+def test_accretion_conserves_mass_and_momentum_with_ejecta():
+    world, c = _accrete_impact(30.0)
+    m0 = float(world.masses.sum())
+    p0 = world.total_momentum().copy()
+    resolver = collisions.CollisionResolver(seed=1)
+    resolver.accrete(world, c)
+    assert float(world.masses.sum()) == pytest.approx(m0, rel=1e-12)
+    assert np.allclose(world.total_momentum(), p0, rtol=1e-9,
+                       atol=1e-12 * abs(p0).max())
+
+
+def test_ejecta_is_suppressed_when_the_world_is_nearly_full():
+    world, c = _accrete_impact(30.0)
+    while world.n < world.capacity - 1:
+        world.add("filler", ROCK, 1e-14, units.EARTH_RADIUS * 0.01,
+                  np.array([100.0 + world.n, 0.0]), np.zeros(2))
+    before = world.n
+    resolver = collisions.CollisionResolver(seed=1)
+    resolver.accrete(world, c)
+    assert world.n == before - 1, "should have merged with no room to spare for ejecta"

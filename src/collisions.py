@@ -241,6 +241,26 @@ def largest_remnant_fraction(q_ratio):
                          0.01, 0.5))
 
 
+#: Below this multiple of the disruption threshold, cratering ejecta is a
+#: picture for the effects layer to draw, not physics -- the merge stays
+#: exact, which is what keeps the O(n^2) kernel from filling up with debris
+#: from every gentle bump.
+EJECTA_MIN_RATIO = 0.15
+#: Ejecta mass as a fraction of the total, growing with how energetic the
+#: impact was and capped well short of the point this should have counted as
+#: a disruption instead.
+EJECTA_MAX_FRACTION = 0.2
+EJECTA_SLOPE = 0.3
+#: Half-angle of the cone ejecta is thrown into, centred on the direction
+#: away from the impact point.
+EJECTA_SPREAD = 0.6
+
+
+def ejecta_mass_fraction(q_ratio):
+    """Fraction of the merged mass excavated as real ejecta bodies."""
+    return float(np.clip(EJECTA_SLOPE * q_ratio, 0.0, EJECTA_MAX_FRACTION))
+
+
 class CollisionResolver:
     """Owns the RNG and the event counter for collision outcomes.
 
@@ -311,6 +331,82 @@ class CollisionResolver:
             body.no_collide_until = until
 
         return i, j
+
+    def accrete(self, world, c):
+        """Merge the pair, throwing off a crater's worth of debris when the
+        impact is energetic enough to excavate real ejecta.
+
+        Below ``EJECTA_MIN_RATIO``, or with too little room left in the
+        world, the merge stays exact -- a spray at that scale is the effects
+        layer's business to draw, not physics to simulate. Returns the
+        survivor's index.
+        """
+        i, j = c.i, c.j
+        q_r = specific_impact_energy(world, c)
+        q_star = threshold_of_target(world, c)
+        q_ratio = q_r / q_star if q_star > 0.0 else 0.0
+
+        # The impact direction, before the pair becomes one body and it is
+        # lost: ejecta is thrown back out the way the impactor came in.
+        approach = world.pos[j] - world.pos[i]
+        dist = float(np.hypot(approach[0], approach[1]))
+        direction = approach / dist if dist > 0.0 else np.array([1.0, 0.0])
+
+        idx = merge(world, c)
+        room = world.capacity - world.n
+        if q_ratio < EJECTA_MIN_RATIO or room < MIN_FRAGMENTS:
+            return idx
+
+        total = float(world.mass[idx])
+        r_total = float(world.radius[idx])
+        density = units.density_from_mass_radius(total, r_total)
+        ejecta_total = ejecta_mass_fraction(q_ratio) * total
+        count = min(MIN_FRAGMENTS + int(2.0 * np.log2(q_ratio / EJECTA_MIN_RATIO)),
+                   MAX_FRAGMENTS, room)
+        if count < MIN_FRAGMENTS:
+            return idx
+
+        weights = self.rng.random(count) + 0.15
+        weights /= weights.sum()
+        masses = weights * ejecta_total
+
+        v_esc = units.escape_velocity(total, r_total)
+        base_angle = math.atan2(direction[1], direction[0])
+        spread = self.rng.uniform(-EJECTA_SPREAD, EJECTA_SPREAD, count)
+        directions = np.stack([np.cos(base_angle + spread), np.sin(base_angle + spread)],
+                              axis=1)
+        speeds = v_esc * self.rng.uniform(1.0, 1.3, count)
+
+        survivor_pos = world.pos[idx].copy()
+        survivor_vel = world.vel[idx].copy()
+        positions = survivor_pos + directions * (FRAGMENT_RING * r_total)
+        velocities = survivor_vel + directions * speeds[:, None]
+
+        # The survivor keeps the recoil: total momentum is exactly what the
+        # merge produced, split between what stays and what leaves.
+        ejecta_momentum = (masses[:, None] * velocities).sum(axis=0)
+        remaining = total - ejecta_total
+        world.mass[idx] = remaining
+        world.radius[idx] = units.radius_from_mass_density(remaining, density)
+        world.vel[idx] = (total * survivor_vel - ejecta_momentum) / remaining
+
+        material = world.bodies[idx].material
+        event_id = self._next_event_id
+        self._next_event_id += 1
+        until = world.time + IMMUNITY_RADII * r_total / max(v_esc, 1e-12)
+        for k in range(count):
+            mass = float(masses[k])
+            body = world.add(
+                "Ejecta", material, mass,
+                units.radius_from_mass_density(mass, density),
+                positions[k], velocities[k],
+                kind=KIND_DEBRIS, seed=int(self.rng.integers(0, 1 << 30)),
+            )
+            if body is None:
+                break
+            body.event_id = event_id
+            body.no_collide_until = until
+        return idx
 
     def shatter(self, world, c):
         """Break the pair into fragments.  Returns their indices.
@@ -425,6 +521,6 @@ class CollisionResolver:
         elif outcome == GRAZE:
             self.graze(world, c)
         else:
-            merge(world, c)
+            self.accrete(world, c)
         integrator.refresh(world)
         return 1
