@@ -27,6 +27,13 @@ TRAIL_CHUNKS = 8
 CULL_MARGIN = 64
 #: Labels are suppressed below this drawn radius to stop the view turning to soup.
 LABEL_MIN_PX = 3
+#: Past this many screen-heights of radius a body is drawn as a plain filled
+#: circle rather than a generated sprite.  Zoomed all the way in, the Sun's
+#: drawn radius reaches 4.6e9 pixels -- allocating that sprite is an instant
+#: crash, and holding the scroll wheel is the easiest thing in the world to do.
+MAX_SPRITE_HEIGHTS = 1.5
+#: Hard ceiling on any radius handed to pygame.draw, which wants a C int.
+MAX_DRAW_PX = 1_000_000
 #: Extra padding around a label when testing whether it collides with another.
 LABEL_PAD = 3
 
@@ -95,6 +102,12 @@ class WorldRenderer:
             if px < 2.0:
                 if 0 <= int(x) < width and 0 <= int(y) < height:
                     surface.set_at((int(x), int(y)), body.material.tones[2])
+            elif px > MAX_SPRITE_HEIGHTS * height:
+                # Bigger than the screen: no sprite could add detail, and
+                # allocating one this large would fail outright.
+                pygame.draw.circle(surface, body.material.tones[1],
+                                   (int(x), int(y)),
+                                   int(min(px, MAX_DRAW_PX)))
             else:
                 if body.rings and px >= 4:
                     rings = ring_surface(int(px), body.material.tones)
@@ -107,7 +120,7 @@ class WorldRenderer:
 
             if selected_id is not None and body.id == selected_id:
                 pygame.draw.circle(surface, palette.SELECT, (int(x), int(y)),
-                                   int(max(px, 3) + 5), 1)
+                                   int(min(max(px, 3) + 5, MAX_DRAW_PX)), 1)
 
             if view.show_labels and px >= LABEL_MIN_PX:
                 self._label(surface, body.name, x + px + 4,

@@ -187,3 +187,28 @@ def test_starfield_is_deterministic():
     Starfield(320, 200, seed=42).draw(a, cam)
     Starfield(320, 200, seed=42).draw(b, cam)
     assert pygame.image.tostring(a, "RGB") == pygame.image.tostring(b, "RGB")
+
+
+def test_drawing_at_maximum_zoom_does_not_try_to_allocate_the_universe(parts):
+    """Holding the scroll wheel reaches 1e12 px/AU, where the Sun's drawn radius
+    is 4.6e9 pixels.  Allocating that sprite is an outright crash."""
+    parts["camera"].zoom_by(400)
+    assert parts["camera"].zoom > 1e10
+    parts["renderer"].draw(parts["surface"], parts["sim"], parts["camera"],
+                           parts["view"], selected_id=parts["sim"].world.bodies[0].id)
+
+
+def test_drawing_at_minimum_zoom_is_also_safe(parts):
+    parts["camera"].zoom_by(-400)
+    parts["renderer"].draw(parts["surface"], parts["sim"], parts["camera"],
+                           parts["view"])
+
+
+def test_a_body_larger_than_the_screen_still_draws(parts):
+    """Editing can make a planet enormous; that must not crash the renderer."""
+    from src import edits, units
+    world = parts["sim"].world
+    edits.set_mass(world, 3, 40.0)
+    edits.set_density(world, 3, units.from_gcm3(0.05))
+    parts["renderer"].draw(parts["surface"], parts["sim"], parts["camera"],
+                           parts["view"])

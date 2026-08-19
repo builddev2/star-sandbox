@@ -82,12 +82,21 @@ class DisplayContext:
         """
         flags = self._flags()
         wanted = internal_size(self.desktop[0], self.desktop[1], self.s)
-        self.surface = pygame.display.set_mode(wanted, flags, vsync=1)
+        previous = self.surface
+        try:
+            self.surface = pygame.display.set_mode(wanted, flags, vsync=1)
 
-        actual = pygame.display.get_window_size()
-        corrected = internal_size(actual[0], actual[1], self.s)
-        if corrected != wanted:
-            self.surface = pygame.display.set_mode(corrected, flags, vsync=1)
+            actual = pygame.display.get_window_size()
+            corrected = internal_size(actual[0], actual[1], self.s)
+            if corrected != wanted:
+                self.surface = pygame.display.set_mode(corrected, flags, vsync=1)
+        except pygame.error:
+            # Some drivers (the headless dummy among them) refuse to build a
+            # second renderer.  Cycling the pixel grid must not take the whole
+            # app down, so keep the display we already had.
+            if previous is None:
+                raise
+            self.surface = previous
 
         self.width, self.height = self.surface.get_size()
         self.window = pygame.display.get_window_size()

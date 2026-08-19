@@ -20,7 +20,12 @@ MAX_ZOOM = 1e12
 
 
 class Camera:
-    def __init__(self, width, height, au_across=70.0):
+    #: Default view width in AU.  Wide enough for Jupiter and Saturn, tight
+    #: enough that Earth and Mars visibly move -- which matters far more for a
+    #: first impression than fitting Neptune's orbit on screen.
+    DEFAULT_AU_ACROSS = 13.0
+
+    def __init__(self, width, height, au_across=DEFAULT_AU_ACROSS):
         self.width = width
         self.height = height
         self.centre = np.zeros(2, dtype=np.float64)

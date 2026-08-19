@@ -101,3 +101,14 @@ def test_framing_a_tiny_body_does_not_blow_past_the_zoom_limit():
     cam.frame_body(world, world.index_of(moon.id))
     assert cam.zoom <= MAX_ZOOM
     assert np.allclose(cam.centre, world.pos[world.index_of(moon.id)])
+
+
+def test_the_default_view_shows_the_planets_that_visibly_move():
+    """Opening on a 70 AU view is mostly empty space with the inner planets an
+    indistinct cluster; nothing appears to happen."""
+    cam = Camera(1728, 1084)
+    span = cam.screen_to_world(1728, 542)[0] - cam.screen_to_world(0, 542)[0]
+    assert 8.0 <= span <= 22.0, "default view spans %.1f AU" % span
+    # Jupiter at 5.2 AU must be comfortably inside the frame.
+    x, _ = cam.world_to_screen(np.array([5.2, 0.0]))
+    assert 0 < x < 1728
