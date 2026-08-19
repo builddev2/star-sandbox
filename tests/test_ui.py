@@ -646,12 +646,25 @@ def test_a_tiny_window_still_lays_out_without_raising(state, ui):
 
 # --- the promise this interface makes ---------------------------------------------
 
-#: Every shortcut a child would otherwise have to memorise, and it is on a
-#: button.  If a key is added without a button, this fails -- which is the point.
-SHORTCUTS_THAT_MUST_BE_BUTTONS = {
-    "Space", "[", "]", "1", "2", "3", "T", "R", "L", "G", "F", "0", "Del",
-    "F5", "?", "B", "Cmd+F", "+", "-", "H", "Cmd+Q",
-}
+#: The entries in the help table that are not keys at all, or whose mouse
+#: equivalent is a gesture rather than a button: the wheel, dragging and
+#: clicking *are* the mouse; Tab's equivalent is picking a name out of the list;
+#: Esc's is clicking away from whatever is open.
+NOT_EXPECTED_TO_BE_BUTTONS = {"Wheel", "Drag", "Click", "Double-click", "Tab", "Esc"}
+
+
+def documented_shortcuts():
+    """Every key the help panel promises, one per token.
+
+    Read out of the help table rather than listed here, so that adding a
+    shortcut and documenting it -- which is the same commit -- is what makes
+    this test demand a button for it.
+    """
+    from src.render.hud import KEY_HELP
+    keys = set()
+    for combo, _ in KEY_HELP:
+        keys |= set(combo.split())
+    return keys - NOT_EXPECTED_TO_BE_BUTTONS
 
 
 def test_every_shortcut_is_also_a_button(state, ui):
@@ -662,8 +675,15 @@ def test_every_shortcut_is_also_a_button(state, ui):
         state.select(state.sim.world.bodies[3].id)
         ui.build(state, SIZE)
         keys |= {c.hotkey for c in ui.controls if c.hotkey}
-    missing = SHORTCUTS_THAT_MUST_BE_BUTTONS - keys
+    missing = documented_shortcuts() - keys
     assert not missing, "no button for %s" % sorted(missing)
+
+
+def test_the_parity_check_is_actually_checking_something(state, ui):
+    """A guard on the guard: if the help table stops being readable, say so."""
+    found = documented_shortcuts()
+    assert len(found) > 15
+    assert {"Space", "Del", "Cmd+Q", "F5"} <= found
 
 
 def test_selecting_a_body_never_requires_the_keyboard(state, ui):

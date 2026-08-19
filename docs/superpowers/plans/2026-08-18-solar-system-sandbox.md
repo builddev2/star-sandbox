@@ -51,8 +51,12 @@
 | `src/app/main.py` | Frame loop, entry point | **new** |
 | `selftest.py` | One-command test runner | **new** |
 | `run.command` | Double-clickable launcher | **new** |
+| `src/render/widgets.py` | Metrics, Control, icons, buttons, tooltips | **phase 2** |
+| `src/app/ui.py` | Button layout, hit-testing, action dispatch | **phase 2** |
 
 **Milestones:** Task 6 = physics complete and proven headless. Task 12 = the solar system is on screen and navigable. Task 16 = things collide and shatter. Task 19 = shippable.
+
+Phase 2 (Tasks 19-20, below) makes it playable without a keyboard.
 
 ---
 
@@ -5384,3 +5388,66 @@ Checked against the spec:
 - The one open risk in the spec — whether SDL exposes the true Retina backing
   store on macOS — is Task 7 Step 7, with both outcomes and their remedies
   written out.
+
+---
+
+# Phase 2: the clickable interface
+
+Added 2026-08-18, after v1 shipped. Spec: **Addendum A** in
+`docs/superpowers/specs/2026-08-18-solar-system-sandbox-design.md`.
+
+**Goal:** make every action reachable with a mouse, without taking anything away
+from the keyboard. v1 could only be played by someone who had already been told
+the keys, which rules out the audience it was written for.
+
+**Constraint carried over from Phase 1:** buttons and keys are never two
+implementations of one feature. A control names an action; the action is the
+method the key already called.
+
+## Task 19: Buttons, and everything that hangs off them
+
+- [x] **Step 1: `src/render/widgets.py`** — `Metrics` (every spacing derived
+      from the font, so the `G` grid switch keeps working), `Control` (one
+      record drives drawing, hit-testing and its own tooltip), vector icons
+      drawn from lines rather than typed as glyphs, `draw_button` with
+      rest/hover/down/active/disabled states, `draw_tooltip` clamped on screen.
+- [x] **Step 2: `src/app/ui.py`** — `UiLayer`: build, hit-test, dispatch, and
+      hold-to-repeat for steppers. Rebuilt each frame, after drawing.
+- [x] **Step 3: route the interface before the tools** in `input.py`. Without
+      this, the throw tool reads a press on Delete as an aim.
+- [x] **Step 4: the panels** — tool rail, tool context panel, body list,
+      transport bar, view toggles, zoom cluster, inspector actions.
+- [x] **Step 5: tools describe their own controls** — `Tool.controls` returns
+      rows, `Tool.perform` acts on them. Throw presets and the circular-orbit
+      latch; edit steppers for mass, density and material.
+- [x] **Step 6: the help panel becomes modal**, drawn over the interface rather
+      than under it, and says up front that everything in it is also a button.
+- [x] **Step 7: fill the gaps a mouse still could not reach** — zoom in/out and
+      go-home buttons (a wheel is not a given), and `B` for the body list so the
+      button's key cap is honest.
+- [x] **Step 8: tests** — `tests/test_widgets.py`, `tests/test_ui.py`, and the
+      smoke test presses every control through the real frame loop. Three
+      structural assertions: no two controls overlap or leave the screen;
+      clicking a button never also throws a body; every shortcut is a button.
+
+## Task 20: A way out
+
+- [x] **Step 1:** the app opens fullscreen, where there is no window close box,
+      so `Cmd+Q` was the only exit. Add a quit button, top right.
+- [x] **Step 2:** confirm it. First press arms and relabels to "Really quit?";
+      any other button, a click in space, or `Esc` answers no. `Cmd+Q` still
+      goes straight out. Nothing is saved, which is what makes the confirmation
+      worth its click.
+- [x] **Step 3:** test both presses through the real loop — arming changes the
+      button's width, so the second press has to find it where it now is.
+
+## Phase 2 self-review
+
+- The rule that every shortcut has a button is enforced by a test rather than by
+  discipline, because discipline is what fails six months later.
+- Two icons were wrong on inspection and are now right: the power symbol's gap
+  belongs at the top where the stem crosses it, and the fullscreen brackets had
+  grown long enough to join into a plain square.
+- One deviation from Addendum A: the body list is not virtualised. At
+  `MAX_BODIES = 200` a scroll offset over a plain list is enough, and a
+  viewport abstraction would be more code than the problem deserves.

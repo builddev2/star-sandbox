@@ -67,11 +67,13 @@ src/render/              everything that touches pixels
   starfield.py           parallax star background
   draw.py                world rendering: starfield, trails, bodies, overlays
   hud.py                 top bar, inspector panel, hint line, help overlay
+  widgets.py             ADDED  metrics, Control, icons, buttons, tooltips
 src/app/
   main.py                entry point, frame loop
   state.py               selection id, follow id, active tool, time scale, toggles
   input.py               event routing, keybinding table
   tools.py               Tool base, SelectTool, LaunchTool, EditTool
+  ui.py                  ADDED  button layout, hit-testing, action dispatch
 selftest.py              headless physics + collision assertions
 run.command              double-clickable macOS launcher
 ```
@@ -283,6 +285,10 @@ After any collision, `integrator.refresh(world)` recomputes cached accelerations
 Each tool is a class owning its own event handling and its own preview drawing,
 so adding tools later is a new file rather than surgery on a large event handler.
 
+> Superseded in part by **Addendum A: the clickable interface** at the end of
+> this document.  Everything below still happens; it is no longer the only way
+> to make it happen.
+
 ### SelectTool (`1`, default)
 
 Click a body to select. `F` follows it. `Tab` cycles. Wheel zooms at the cursor.
@@ -393,3 +399,85 @@ rendering 100 frames, so rendering crashes surface without needing a display.
 `run.command`, chmod +x, double-clickable in Finder: activates the venv and runs
 `python -m src.app.main`. A README covers first-time setup
 (`pip install -r requirements.txt`) and the keybindings.
+
+---
+
+# Addendum A: the clickable interface
+
+Date: 2026-08-18, after v1 shipped.
+
+## The problem with v1
+
+Everything above was reachable only by key. The spec's own audience — an
+eight-year-old, playing alongside a parent — cannot use a program whose entry
+requirement is a memorised keybinding table. What v1 actually shipped was a
+solar system that had to be *explained* before it could be played, and the
+`?` overlay was the explanation, which is the wrong shape: a list of shortcuts
+is a reference for someone who already knows what the program does.
+
+Reference points: Universe Sandbox and the space sims in its family put the
+tools in a rail down one side, the object list beside it, time transport along
+the bottom, and the selected object's properties and actions in a panel on the
+right. None of them require a key to be pressed to reach anything.
+
+## The rule
+
+**Every action has a button, and every button has its key printed on it.**
+
+The second half matters as much as the first. The buttons are not a beginner
+mode to be outgrown, they are how the keyboard gets taught: the child clicks
+Pause and reads `Space` next to it for a week, and one day stops clicking.
+`tests/test_ui.py` fails if a key is ever added without a button.
+
+Neither route reimplements the other. A control is a description — id, label,
+icon, hotkey, tooltip — and its id names an action that is the same AppState or
+tool method the key already called.
+
+## Layout
+
+| Region | Contents |
+|---|---|
+| Left rail | Look / Throw / Edit, then Bodies |
+| Under the rail | the live tool's own panel: throw presets, edit steppers |
+| Beside the rail | the body list — every body by name, scrollable, click to select |
+| Top bar right | trails, real sizes, labels, grid, fullscreen, help, quit |
+| Bottom centre | restart, slower, speed readout, faster, play/pause |
+| Bottom right | zoom in, zoom out, back to the whole system |
+| Under the inspector | follow, fly to, stop, delete |
+
+## Three decisions worth keeping
+
+**The interface sees mouse events before the tools.** The throw tool reads any
+press in the window as an aim, so tool-first ordering means clicking Delete also
+fires a comet through the button. A gesture that starts on a panel belongs to
+that panel until the button comes back up; a drag that starts in space is never
+stolen by a panel it passes over.
+
+**Steppers repeat while held.** Mass scrubs by ratio at 1.06 a notch, so
+igniting Jupiter is about eighty notches. One notch per click would make the
+edit tool a joke; a click acts immediately and then repeats after 320 ms.
+
+**Layout is rebuilt every frame, at the end of the frame.** Which controls exist
+depends on the selection, the tool and the window size, so a cache is a stale
+answer. Building after drawing means the next frame's clicks hit exactly what
+the eye can see.
+
+## Quitting
+
+v1 could only be left by `Cmd+Q` or the window's close box — and it opens
+fullscreen, where there is no close box. A mouse alone could not get out of the
+program. The quit button is top right, and asks: the first press relabels it
+"Really quit?" in red, and anything else at all answers no. Nothing is saved, so
+the confirmation is not ceremony.
+
+## Testing
+
+Same discipline as the rest: `src/render/widgets.py` and `src/app/ui.py` are
+covered by unit tests on layout, hit-testing, dispatch and drawing, and the
+smoke test presses every control through the real frame loop. Three structural
+assertions are worth naming, because they encode the rules above rather than the
+implementation of them:
+
+- no two controls overlap, and none hangs off the edge of the screen;
+- clicking a button never also throws a body;
+- every shortcut in the help table is also a button.

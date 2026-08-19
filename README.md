@@ -56,18 +56,19 @@ sits next to buttons a small hand is reaching for anyway.
 
 ## Things worth trying
 
-- Select Earth, press `0`, and watch it fall into the Sun.
-- Press `R`. Everything in the solar system becomes a single dot at once. That
-  is what the real scale looks like; the rest of the time the sizes are
-  exaggerated so you can see anything at all.
-- Throw tool (`2`), pick a gas giant, and drag. The green ellipse is the exact
-  orbit it will follow, worked out algebraically as you aim, not guessed. Pull
-  further and it turns red: that one is leaving forever. The colour changes at
-  exactly escape velocity.
-- Hold `Shift` while aiming to snap to a perfect circular orbit.
-- Edit tool (`3`) on Jupiter. Make it about 84 times heavier and it ignites into
-  a second star -- and every shadow in the solar system swings round, because
-  bodies are lit by whichever star is nearest.
+- Pick Earth out of the list, hit **Stop**, and watch it fall into the Sun.
+- Turn on **real sizes**. Everything in the solar system becomes a single dot at
+  once. That is what the real scale looks like; the rest of the time the sizes
+  are exaggerated so you can see anything at all.
+- **Throw**, pick a gas giant, and drag out in space. The green ellipse is the
+  exact orbit it will follow, worked out algebraically as you aim, not guessed.
+  Pull further and it turns red: that one is leaving forever. The colour changes
+  at exactly escape velocity.
+- Switch on **Circular orbit** (or hold `Shift`) while aiming, and whatever you
+  throw drops into a perfect round orbit.
+- **Edit** Jupiter, and hold the mass **+** down. Somewhere around 84 times
+  heavier it ignites into a second star -- and every shadow in the solar system
+  swings round, because bodies are lit by whichever star is nearest.
 - Throw something fast enough at a planet and it will not merge. If the impact
   carries more energy than the planet's own gravity is holding it together with,
   it shatters into fragments that fly apart and then slowly pull themselves back
