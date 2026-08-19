@@ -13,6 +13,7 @@ import math
 
 import numpy as np
 
+from . import units
 from .units import G
 
 
@@ -105,25 +106,63 @@ def elements_from_state(mu, rel_pos, rel_vel):
 
 
 def dominant_attractor(world, index):
-    """Index of the body pulling hardest on ``index``, or None if it is alone.
+    """Index of the body that ``index`` should be considered to orbit.
 
-    "Hardest" means largest G*m/r^2.  This is what every orbit readout, the trail
-    sampler and the circular-orbit helper are all measured against, so it needs to agree
-    with intuition: for the Moon it must come out Earth, not the Sun.
+    **Not the body pulling hardest.**  The Sun pulls on the Moon about twice as
+    hard as the Earth does -- that is a real fact about the solar system, not a
+    numerical accident -- so raw force gives "Sun" and every moon in the
+    inspector reads as orbiting the Sun on a wildly eccentric path.
+
+    The right question is which sphere of influence the body sits inside.  A
+    candidate qualifies when it is more massive, when ``index`` lies within its
+    Hill radius about the system's primary, and when the two of them are
+    gravitationally bound in the two-body sense.  Of the candidates that
+    qualify, the most local one wins -- smallest Hill radius, i.e. deepest
+    nesting.
+
+    The boundness test is what separates a moon from its neighbours: Io sits
+    well inside Ganymede's Hill radius, but the two are racing past each other
+    at far above their mutual escape velocity, so Ganymede is correctly
+    rejected and Jupiter wins.
+
+    Falls back to the most massive body, and returns None only for a body that
+    is itself the most massive or is alone.
     """
     n = world.n
     if n < 2:
         return None
+
     pos = world.pos[:n]
+    vel = world.vel[:n]
     mass = world.mass[:n]
 
+    heaviest = int(np.argmax(mass))
+    if heaviest == index:
+        return None
+
     d = pos - pos[index]
-    r2 = np.einsum("ij,ij->i", d, d)
-    r2[index] = np.inf
-    pull = mass / r2
-    pull[index] = -1.0
-    best = int(np.argmax(pull))
-    return best if pull[best] > 0.0 else None
+    r = np.sqrt(np.einsum("ij,ij->i", d, d))
+    r[index] = np.inf
+
+    dv = vel - vel[index]
+    v2 = np.einsum("ij,ij->i", dv, dv)
+
+    # Hill radius of every candidate, measured about the system's primary.
+    from_primary = pos - pos[heaviest]
+    a = np.sqrt(np.einsum("ij,ij->i", from_primary, from_primary))
+    hill = units.hill_radius(mass, mass[heaviest], a)
+
+    mu = G * (mass + mass[index])
+    bound = (0.5 * v2 - mu / r) < 0.0
+
+    ok = (mass > mass[index]) & (r < hill) & bound
+    ok[index] = False
+    ok[heaviest] = False
+
+    if not ok.any():
+        return heaviest
+    candidates = np.flatnonzero(ok)
+    return int(candidates[np.argmin(hill[candidates])])
 
 
 def circular_velocity(world, index, attractor, retrograde=False):
