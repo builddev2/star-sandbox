@@ -4,7 +4,7 @@ import sys
 
 import pygame
 
-from ..render import palette
+from ..render import palette, scale
 from ..render.camera import Camera
 from ..render.draw import ViewSettings, WorldRenderer
 from ..render.hud import Hud
@@ -77,6 +77,16 @@ class App:
         state = self.state
         # Held steppers keep firing between clicks; this is where they fire.
         self.ui.update(state, self.ctx)
+
+        # What a throw can actually hit is what the eye can see: refreshed
+        # once a frame, from the same camera the aim overlay draws with, so a
+        # click and a collision agree even though the two are computed
+        # nowhere near each other.
+        world = state.sim.world
+        drawn = scale.contact_radii_au(world.radii, state.camera.zoom,
+                                       state.camera.height,
+                                       real_size=state.view.real_size)
+        world.contact_radius[:world.n] = world.clamp_contact_radii(drawn)
 
         frame_dt = self.clock.tick(60) / 1000.0
         state.sim.advance(state.days_per_second * frame_dt)

@@ -70,8 +70,14 @@ def find_collisions(world, prev_pos):
     closest = r0 + s[:, :, None] * d
     dist2 = np.einsum("ijk,ijk->ij", closest, closest)
 
+    # Detection uses the contact radius -- what is drawn, clamped so it can
+    # never reach a neighbour's orbit (render/scale.py) -- so aiming at what
+    # the eye sees actually connects.  Every outcome computed below (energy,
+    # impact parameter, disruption threshold, ...) uses the true radius:
+    # only the yes/no question of contact is answered by what is on screen.
     radii = world.radius[:n]
-    touch = radii[:, None] + radii[None, :]
+    contact = world.contact_radius[:n]
+    touch = contact[:, None] + contact[None, :]
     hit = dist2 < touch * touch
     np.fill_diagonal(hit, False)
     hit = np.triu(hit)
@@ -196,6 +202,10 @@ def merge(world, c):
     world.vel[i] = momentum / total
     world.mass[i] = total
     world.radius[i] = units.radius_from_mass_density(total, density)
+    # Reset rather than leave stale: contact_radius must never sit below the
+    # true radius it is stretched from, and the render layer only refreshes
+    # it once a frame.
+    world.contact_radius[i] = world.radius[i]
 
     if total >= units.STAR_MASS_THRESHOLD:
         survivor.kind = KIND_STAR
@@ -309,6 +319,8 @@ class CollisionResolver:
         world.mass[i], world.mass[j] = new_mi, new_mj
         world.radius[i] = units.radius_from_mass_density(new_mi, di)
         world.radius[j] = units.radius_from_mass_density(new_mj, dj)
+        world.contact_radius[i] = world.radius[i]
+        world.contact_radius[j] = world.radius[j]
 
         # Solved directly rather than corrected after the fact: this is the
         # unique (vel_i, vel_j) pair whose difference is new_dv and whose
@@ -388,6 +400,7 @@ class CollisionResolver:
         remaining = total - ejecta_total
         world.mass[idx] = remaining
         world.radius[idx] = units.radius_from_mass_density(remaining, density)
+        world.contact_radius[idx] = world.radius[idx]
         world.vel[idx] = (total * survivor_vel - ejecta_momentum) / remaining
 
         material = world.bodies[idx].material

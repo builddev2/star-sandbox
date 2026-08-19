@@ -56,3 +56,30 @@ def display_radii_px(radii, zoom, internal_height, real_size=False):
     if real_size:
         return np.maximum(true_px, 1.0)
     return np.maximum(true_px, _floor(radii, internal_height / REF_HEIGHT))
+
+
+#: How far past its true radius a body's contact radius may be stretched so
+#: that aiming at what is drawn actually works.  Uncapped, the Sun's drawn
+#: disc is 0.6 AU across at 10 px/AU -- wider than Mercury's own orbit -- and
+#: would swallow it the moment the player zoomed out.  At 8x the Sun's
+#: contact radius is 0.037 AU, comfortably inside Mercury's 0.31 AU
+#: perihelion, and Earth's is inside the Moon's orbit by about the same
+#: margin.
+MAX_AIM_FACTOR = 8.0
+
+
+def contact_radii_au(radii, zoom, internal_height, real_size=False):
+    """Radii to collide against, in AU: what is drawn, capped so nothing
+    stretches far enough to eat a neighbour's orbit.
+
+    Collision *detection* is the only thing that ever reads this -- every
+    outcome the physics computes (energy, fragment count, disruption
+    threshold, ...) still uses the true radius. This is deliberately a
+    render-layer computation handed to the physics as a plain array: the
+    physics never learns what a camera is, and the render layer never learns
+    what a collision is.
+    """
+    radii = np.asarray(radii, dtype=np.float64)
+    drawn_px = display_radii_px(radii, zoom, internal_height, real_size)
+    drawn_au = drawn_px / max(zoom, 1e-30)
+    return np.clip(drawn_au, radii, radii * MAX_AIM_FACTOR)
