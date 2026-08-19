@@ -44,6 +44,7 @@ KEY_HELP = (
     ("Cmd+F", "fullscreen"),
     ("?", "this help"),
     ("Esc", "deselect, or close this help"),
+    ("Cmd+Q", "quit"),
 )
 
 

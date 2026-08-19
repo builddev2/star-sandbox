@@ -382,11 +382,14 @@ def draw_icon(surface, name, rect, colour):
                 surface.set_at((min(x + 1 + gx * step, rect.right - 1),
                                 min(y + 1 + gy * step, rect.bottom - 1)), colour)
     elif name == "fullscreen":
+        # Four corner brackets.  The arms stay short so they read as corners
+        # rather than joining up into a plain box.
+        arm = max(2, r // 2)
         for sx, sy in ((0, 0), (1, 0), (0, 1), (1, 1)):
             px = x + 1 if sx == 0 else rect.right - 2
             py = y + 1 if sy == 0 else rect.bottom - 2
-            ex = px + (r if sx == 0 else -r)
-            ey = py + (r if sy == 0 else -r)
+            ex = px + (arm if sx == 0 else -arm)
+            ey = py + (arm if sy == 0 else -arm)
             pygame.draw.line(surface, colour, (px, py), (ex, py), 1)
             pygame.draw.line(surface, colour, (px, py), (px, ey), 1)
     elif name == "follow":
@@ -435,6 +438,12 @@ def draw_icon(surface, name, rect, colour):
         pygame.draw.line(surface, colour, (cx, cy - r), (cx, cy + r), 1)
         pygame.draw.line(surface, colour, (cx - r + 1, cy - r + 1), (cx + r - 1, cy + r - 1), 1)
         pygame.draw.line(surface, colour, (cx - r + 1, cy + r - 1), (cx + r - 1, cy - r + 1), 1)
+    elif name == "power":
+        # The gap sits at the top, where the stem goes through it: pygame's
+        # angles run counterclockwise from three o'clock, so the top is pi/2.
+        pygame.draw.arc(surface, colour, pygame.Rect(cx - r, cy - r + 1, 2 * r, 2 * r),
+                        2.2, 7.2, 1)
+        pygame.draw.line(surface, colour, (cx, cy - r + 1), (cx, cy), 1)
     elif name == "help":
         pygame.draw.arc(surface, colour, pygame.Rect(cx - r, y + 1, 2 * r, r + 1),
                         0.2, 3.3, 1)

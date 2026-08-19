@@ -80,7 +80,9 @@ def handle_event(event, state, ctx, ui=None):
     elif key in (pygame.K_SLASH, pygame.K_QUESTION):
         state.help_visible = not state.help_visible
     elif key == pygame.K_ESCAPE:
-        if state.help_visible:
+        if state.quit_armed:
+            state.cancel_quit()
+        elif state.help_visible:
             state.help_visible = False
         else:
             state.selected_id = None

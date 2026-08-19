@@ -49,6 +49,10 @@ buttons.
 | `F5` | start over |
 | `?` | controls |
 | `Cmd+F` | fullscreen |
+| `Cmd+Q` | quit |
+
+The quit button, top right, asks once before it goes: nothing is saved, and it
+sits next to buttons a small hand is reaching for anyway.
 
 ## Things worth trying
 

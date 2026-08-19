@@ -43,6 +43,8 @@ class AppState:
         #: pressed Tab discovers that the planets have names and are clickable.
         self.show_body_list = True
         self.body_list_offset = 0
+        #: The quit button has been pressed once and is waiting to be confirmed.
+        self.quit_armed = False
 
     # --- time -------------------------------------------------------------------
 
@@ -201,6 +203,23 @@ class AppState:
             return
         self.sim.world.vel[index] = 0.0
         self.sim.refresh()
+
+    # --- leaving ----------------------------------------------------------------
+
+    def request_quit(self):
+        """Press once to ask, twice to go.
+
+        Nothing is saved, so a stray click on a quit button costs the child the
+        whole solar system they have spent an afternoon wrecking.  The first
+        press only arms it; the button then says so in as many words.
+        """
+        if self.quit_armed:
+            self.running = False
+        else:
+            self.quit_armed = True
+
+    def cancel_quit(self):
+        self.quit_armed = False
 
     def reset(self):
         self.sim.reset()

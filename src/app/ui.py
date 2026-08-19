@@ -209,7 +209,27 @@ class UiLayer:
         return width
 
     def _build_view_buttons(self, state, m, ctx):
-        """Icon toggles along the right of the top bar."""
+        """Icon toggles along the right of the top bar, then the way out.
+
+        The sandbox opens fullscreen, where there is no window close box at all,
+        so without this button a mouse is genuinely unable to leave the program.
+        """
+        y = (m.top_h - m.btn_h) // 2
+        if state.quit_armed:
+            quit_control = Control("app.quit", label="Really quit?", icon="power",
+                                   hotkey="Cmd+Q", danger=True, active=True,
+                                   tooltip="Click again to close the sandbox -- "
+                                           "nothing is saved")
+            quit_w = m.button_width(quit_control)
+        else:
+            quit_control = Control("app.quit", icon="power", hotkey="Cmd+Q",
+                                   compact=True, danger=True,
+                                   tooltip="Close the sandbox")
+            quit_w = m.icon_btn_w
+        x = m.width - m.gap - quit_w
+        self._place([(quit_control, pygame.Rect(x, y, quit_w, m.btn_h))])
+        x -= m.gap * 3
+
         flags = {
             "view.trails": state.view.show_trails,
             "view.sizes": state.view.real_size,
@@ -218,8 +238,7 @@ class UiLayer:
             "view.fullscreen": ctx is not None and ctx.fullscreen,
             "view.help": state.help_visible,
         }
-        x = m.width - m.gap - m.icon_btn_w
-        y = (m.top_h - m.btn_h) // 2
+        x -= m.icon_btn_w
         for cid, icon, label, key, tip in reversed(VIEW_BUTTONS):
             control = Control(cid, label=label, icon=icon, hotkey=key, tooltip=tip,
                               compact=True, active=flags.get(cid, False),
@@ -419,6 +438,8 @@ class UiLayer:
                     self.perform(control, state, ctx)
                     self._repeat_at = pygame.time.get_ticks() + REPEAT_DELAY_MS
                 return True
+            # A press that misses the quit button is an answer of "no" too.
+            state.cancel_quit()
             if self.over_panel(event.pos):
                 self._press_on_ui = True
                 return True
@@ -471,6 +492,14 @@ class UiLayer:
         if not control.clickable:
             return False
         cid, payload = control.id, control.payload
+
+        # Doing anything else at all is an answer of "no" to a waiting quit.
+        if cid != "app.quit":
+            state.cancel_quit()
+
+        if cid == "app.quit":
+            state.request_quit()
+            return True
 
         if cid.startswith("tool."):
             state.set_tool(tools_module.TOOL_BY_NAME[cid.split(".", 1)[1]])

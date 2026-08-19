@@ -98,7 +98,7 @@ def test_a_readout_is_not_clickable():
 ICON_NAMES = ("look", "throw", "edit", "play", "pause", "slower", "faster", "reset",
               "trails", "sizes", "labels", "grid", "fullscreen", "follow", "flyto",
               "stop", "trash", "plus", "minus", "left", "right", "up", "down",
-              "list", "close", "circle", "star", "help", "home")
+              "list", "close", "circle", "star", "help", "home", "power")
 
 
 @pytest.mark.parametrize("name", ICON_NAMES)

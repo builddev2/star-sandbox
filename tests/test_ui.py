@@ -229,6 +229,58 @@ def test_a_view_toggle_flips_its_flag_and_lights_up(state, ui, cid, attr):
     assert find(ui, cid).active is getattr(state.view, attr)
 
 
+def test_there_is_a_way_out_without_the_keyboard(state, ui):
+    """Fullscreen has no window close box, so this button is the only way out."""
+    assert find(ui, "app.quit") is not None
+
+
+def test_quitting_takes_two_presses(state, ui):
+    click_id(ui, state, "app.quit")
+    assert state.quit_armed
+    assert state.running, "one stray click must not end the program"
+    assert find(ui, "app.quit").label == "Really quit?"
+
+    click_id(ui, state, "app.quit")
+    assert not state.running
+
+
+def test_anything_else_answers_no_to_a_waiting_quit(state, ui):
+    for cid in ("time.pause", "view.trails", "tool.throw"):
+        state.quit_armed = True
+        ui.build(state, SIZE)
+        click_id(ui, state, cid)
+        assert not state.quit_armed
+        assert state.running
+
+
+def test_a_press_in_empty_space_answers_no_as_well(state, ui):
+    state.quit_armed = True
+    ui.build(state, SIZE)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(500, 400), button=1),
+                state)
+    assert not state.quit_armed
+    assert state.running
+
+
+def test_escape_calls_off_a_waiting_quit_before_anything_else(state, ui):
+    from src.app.input import handle_event
+    state.quit_armed = True
+    state.help_visible = True
+    state.select(state.sim.world.bodies[3].id)
+    handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0),
+                 state, None, ui)
+    assert not state.quit_armed
+    assert state.help_visible, "escape was spent on the quit, not the help"
+    assert state.running
+
+
+def test_the_keyboard_still_quits_outright(state, ui):
+    from src.app.input import handle_event
+    handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q,
+                                    mod=pygame.KMOD_META), state, None, ui)
+    assert not state.running
+
+
 def test_the_zoom_buttons_work_without_a_wheel(state, ui):
     before = state.camera.zoom
     click_id(ui, state, "view.zoom", payload=1)
@@ -598,7 +650,7 @@ def test_a_tiny_window_still_lays_out_without_raising(state, ui):
 #: button.  If a key is added without a button, this fails -- which is the point.
 SHORTCUTS_THAT_MUST_BE_BUTTONS = {
     "Space", "[", "]", "1", "2", "3", "T", "R", "L", "G", "F", "0", "Del",
-    "F5", "?", "B", "Cmd+F", "+", "-", "H",
+    "F5", "?", "B", "Cmd+F", "+", "-", "H", "Cmd+Q",
 }
 
 

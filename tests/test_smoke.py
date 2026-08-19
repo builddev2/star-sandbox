@@ -136,8 +136,10 @@ def test_pressing_every_button_in_the_real_app_keeps_it_running(app):
         app.step_once()
 
         for control in list(app.ui.controls):
-            if not control.clickable or control.id == "view.fullscreen":
-                continue                      # fullscreen has no meaning headless
+            # Fullscreen has no meaning headless, and quit is what its own test
+            # is for -- pressing it here would end the app mid-sweep.
+            if not control.clickable or control.id in ("view.fullscreen", "app.quit"):
+                continue
             pos = control.rect.center
             pygame.event.post(_press(pos))
             pygame.event.post(_release(pos))
@@ -160,6 +162,26 @@ def test_a_click_on_empty_space_still_selects_a_body(app):
     pygame.event.post(_release((int(sx), int(sy))))
     app.step_once()
     assert app.state.selected_id == world.bodies[index].id
+
+
+def test_the_quit_button_ends_the_program_on_the_second_press(app):
+    """Driven through the real loop, because arming it changes the layout."""
+    app.step_once()
+
+    def quit_button():
+        return next(c for c in app.ui.controls if c.id == "app.quit")
+
+    pygame.event.post(_press(quit_button().rect.center))
+    pygame.event.post(_release(quit_button().rect.center))
+    app.step_once()
+    assert app.state.quit_armed
+    assert app.state.running
+
+    # The button has grown into "Really quit?"; press wherever it is now.
+    pygame.event.post(_press(quit_button().rect.center))
+    pygame.event.post(_release(quit_button().rect.center))
+    app.step_once()
+    assert not app.state.running
 
 
 def test_holding_the_mass_button_ignites_a_planet(app):
