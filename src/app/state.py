@@ -39,6 +39,10 @@ class AppState:
         self.help_visible = False
         self.tool = None
         self.tool_name = "Look"
+        #: The list of bodies starts open.  It is how someone who has never
+        #: pressed Tab discovers that the planets have names and are clickable.
+        self.show_body_list = True
+        self.body_list_offset = 0
 
     # --- time -------------------------------------------------------------------
 
@@ -49,6 +53,15 @@ class AppState:
     @property
     def time_label(self):
         return TIME_LABELS[self.time_index]
+
+    @property
+    def time_labels(self):
+        """Every speed label, so the interface can size its readout once."""
+        return TIME_LABELS
+
+    @property
+    def time_index_max(self):
+        return len(TIME_SCALES) - 1
 
     def nudge_time(self, delta):
         self.time_index = max(0, min(len(TIME_SCALES) - 1, self.time_index + delta))
@@ -120,6 +133,45 @@ class AppState:
         if self.selected_id is not None:
             self.camera.follow_id = self.selected_id
 
+    def toggle_follow(self):
+        """Follow the selection, or stop following if it is already followed.
+
+        The button and the F key share this: a control that only ever turns
+        something on gives no way back out except panning, which is not
+        discoverable.
+        """
+        if self.selected_id is None:
+            return
+        if self.camera.follow_id == self.selected_id:
+            self.camera.follow_id = None
+        else:
+            self.camera.follow_id = self.selected_id
+
+    def fly_to_selected(self):
+        """Zoom in on the selection and stay with it -- the double-click, as a
+        button, for anyone who has not discovered that double-click works."""
+        index = self.selected_index
+        if index is None:
+            return
+        self.camera.frame_body(self.sim.world, index)
+        self.camera.follow_id = self.selected_id
+
+    # --- the body list ----------------------------------------------------------
+
+    def scroll_body_list(self, delta):
+        self.body_list_offset = max(0, self.body_list_offset + int(delta))
+
+    def clamp_body_list_offset(self, visible):
+        """Keep the scroll offset inside a list of ``visible`` rows.
+
+        Bodies are destroyed while the list is open -- a merge shortens it under
+        the cursor -- so the offset is clamped where it is read rather than
+        where it is set.
+        """
+        highest = max(0, self.sim.world.n - int(visible))
+        self.body_list_offset = max(0, min(self.body_list_offset, highest))
+        return self.body_list_offset
+
     def delete_selected(self):
         index = self.selected_index
         if index is None:
@@ -154,6 +206,7 @@ class AppState:
         self.sim.reset()
         self.selected_id = None
         self.camera.follow_id = None
+        self.body_list_offset = 0
 
     def cycle_grid(self, ctx):
         """Step the pixel grid.  Sprites are sized in pixels, so the cache dies."""

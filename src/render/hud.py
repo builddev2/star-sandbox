@@ -12,17 +12,26 @@ import pygame
 from .. import orbits, units
 from ..body import KIND_STAR
 from . import palette
+from .widgets import Metrics
 
 PAD = 6
 PANEL_WIDTH_CHARS = 34
+
+#: Opening line of the help panel.  Nothing in this list is the *only* way to do
+#: anything, and saying so is what stops the panel reading like a requirement.
+HELP_INTRO = "Everything here is also a button on screen -- these are the shortcuts."
 
 KEY_HELP = (
     ("Space", "pause and resume"),
     ("[  ]", "slower / faster"),
     ("Wheel", "zoom at the cursor"),
+    ("+  -", "zoom in and out"),
+    ("H", "back to the whole solar system"),
     ("Drag", "pan the view"),
     ("Click", "select a body"),
+    ("Double-click", "fly to a body"),
     ("Tab", "cycle through bodies"),
+    ("B", "the list of bodies"),
     ("F", "follow the selected body"),
     ("1 2 3", "Look / Throw / Edit"),
     ("0", "stop the selected body dead"),
@@ -111,20 +120,27 @@ class Hud:
         surface.blit(box, rect.topleft)
         pygame.draw.rect(surface, palette.PANEL_EDGE, rect, 1)
 
+    def metrics(self, width, height):
+        return Metrics(self.font, width, height)
+
     def draw(self, surface, state):
+        """The bars and the readout.
+
+        The help panel is deliberately *not* drawn here: it has to sit over the
+        buttons, and the buttons are drawn after this.  ``ui.py`` puts it up.
+        """
         self._draw_top_bar(surface, state)
         self._draw_inspector(surface, state)
         self._draw_hint(surface, state)
-        if state.help_visible:
-            self.draw_help(surface)
 
     def _draw_top_bar(self, surface, state):
         width = surface.get_width()
-        rect = pygame.Rect(0, 0, width, self.line + PAD)
+        m = self.metrics(width, surface.get_height())
+        rect = pygame.Rect(0, 0, width, m.top_h)
         self._panel(surface, rect)
 
         x = PAD
-        y = PAD // 2
+        y = (m.top_h - self.font.height) // 2
         x += self.font.draw(surface, x, y, state.elapsed_label, palette.TEXT) + 18
         x += self.font.draw(surface, x, y,
                             "PAUSED" if state.sim.paused else state.time_label,
@@ -184,16 +200,44 @@ class Hud:
         rows += [("", palette.TEXT), (body.material.blurb, palette.TEXT_DIM)]
         return rows
 
+    def visible_rows(self, state, index, height):
+        """The inspector rows that fit above the buttons underneath it.
+
+        On a short window the readout is trimmed rather than allowed to grow
+        under the action buttons: a number you cannot see is worth less than a
+        button you cannot press.
+        """
+        rows = self._rows(state, index)
+        m = self.metrics(0, height)
+        # Two button rows plus the gaps around them is the worst case the
+        # interface can place below this panel.
+        reserved = 2 * (m.btn_h + m.gap) + m.gap
+        room = m.content_bottom - m.content_top - reserved - PAD * 2
+        return rows[:max(1, room // self.line)]
+
+    def inspector_rect(self, state, width, height):
+        """Where the selected-body readout sits, or None when nothing is selected.
+
+        ``ui.py`` anchors the Follow/Fly to/Stop/Delete buttons to this, which
+        is why it is computed here rather than inside the drawing code: one
+        rectangle, two readers, no chance of them disagreeing.
+        """
+        index = state.selected_index
+        if index is None:
+            return None
+        m = self.metrics(width, height)
+        rows = self.visible_rows(state, index, height)
+        panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + PAD * 2
+        panel_h = len(rows) * self.line + PAD * 2
+        return pygame.Rect(width - panel_w - PAD, m.content_top, panel_w, panel_h)
+
     def _draw_inspector(self, surface, state):
         index = state.selected_index
         if index is None:
             return
-        rows = self._rows(state, index)
-
-        width = self.font.width("X") * PANEL_WIDTH_CHARS + PAD * 2
-        height = len(rows) * self.line + PAD * 2
-        rect = pygame.Rect(surface.get_width() - width - PAD, self.line + PAD * 3,
-                           width, height)
+        width, height = surface.get_size()
+        rect = self.inspector_rect(state, width, height)
+        rows = self.visible_rows(state, index, height)
         self._panel(surface, rect)
         for k, (text, colour) in enumerate(rows):
             self.font.draw(surface, rect.x + PAD, rect.y + PAD + k * self.line,
@@ -206,15 +250,23 @@ class Hud:
         self.font.draw(surface, PAD, height - self.line - PAD // 2,
                        state.hint, palette.TEXT_DIM)
 
+    def help_rect(self, width, height):
+        """Where the help panel goes.  ``ui.py`` hangs its close button off this."""
+        char = self.font.width("X")
+        panel_w = max(char * 46, self.font.width(HELP_INTRO)) + PAD * 4
+        panel_h = (len(KEY_HELP) + 4) * self.line + PAD * 2
+        return pygame.Rect((width - panel_w) // 2, (height - panel_h) // 2,
+                           panel_w, panel_h)
+
     def draw_help(self, surface):
-        width = self.font.width("X") * 46 + PAD * 2
-        height = (len(KEY_HELP) + 2) * self.line + PAD * 2
-        rect = pygame.Rect((surface.get_width() - width) // 2,
-                           (surface.get_height() - height) // 2, width, height)
+        char = self.font.width("X")
+        rect = self.help_rect(surface.get_width(), surface.get_height())
         self._panel(surface, rect)
         self.font.draw(surface, rect.x + PAD, rect.y + PAD, "Controls", palette.SELECT)
+        self.font.draw(surface, rect.x + PAD, rect.y + PAD + self.line,
+                       HELP_INTRO, palette.TEXT_DIM)
         for k, (keys, description) in enumerate(KEY_HELP):
-            y = rect.y + PAD + (k + 2) * self.line
+            y = rect.y + PAD + (k + 3) * self.line
             self.font.draw(surface, rect.x + PAD, y, keys, palette.ACCENT)
-            self.font.draw(surface, rect.x + PAD + self.font.width("X") * 9, y,
+            self.font.draw(surface, rect.x + PAD + char * 13, y,
                            description, palette.TEXT)

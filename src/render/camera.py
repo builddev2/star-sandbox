@@ -71,6 +71,17 @@ class Camera:
             return
         self.centre[:] = world.pos[index]
 
+    def reset_view(self, au_across=None):
+        """Back to the opening view: the inner system, centred, following nothing.
+
+        Getting lost is the failure mode of a camera that can span from a moon's
+        surface to Neptune's orbit, and panning back by hand from ten thousand
+        AU out is not a recovery a child will find.
+        """
+        self.centre[:] = 0.0
+        self.follow_id = None
+        self.log_zoom = math.log(self.width / (au_across or self.DEFAULT_AU_ACROSS))
+
     def frame_body(self, world, index, radii=8.0):
         """Centre on a body and zoom so it fills a sensible part of the view."""
         self.centre[:] = world.pos[index]

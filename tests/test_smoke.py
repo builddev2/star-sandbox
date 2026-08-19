@@ -101,3 +101,87 @@ def test_the_grid_can_be_changed_live(app):
         for _ in range(3):
             app.step_once()
         assert app.camera.width == app.ctx.width
+
+
+# --- the interface, driven the way a mouse drives it ------------------------------
+
+def _press(pos):
+    return pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1)
+
+
+def _release(pos):
+    return pygame.event.Event(pygame.MOUSEBUTTONUP, pos=pos, button=1)
+
+
+def test_the_buttons_are_laid_out_before_the_first_event(app):
+    """A click in the opening frame has to land on something."""
+    assert app.ui.controls
+    assert app.ui.control_at(next(c for c in app.ui.controls
+                                  if c.id == "time.pause").rect.center) is not None
+
+
+def test_pressing_every_button_in_the_real_app_keeps_it_running(app):
+    """Push each control through the whole frame loop, not just its action.
+
+    This is the test that catches a button whose action leaves the app in a
+    state the *renderer* cannot draw -- deleting the followed body, editing a
+    world down to nothing -- which no unit test of the action alone would see.
+    """
+    from src.app.tools import EditTool, LaunchTool, SelectTool
+
+    for tool in (SelectTool, LaunchTool, EditTool):
+        app.state.set_tool(tool)
+        if app.state.sim.world.n > 4:
+            app.state.select(app.state.sim.world.bodies[4].id)
+        app.step_once()
+
+        for control in list(app.ui.controls):
+            if not control.clickable or control.id == "view.fullscreen":
+                continue                      # fullscreen has no meaning headless
+            pos = control.rect.center
+            pygame.event.post(_press(pos))
+            pygame.event.post(_release(pos))
+            app.step_once()
+            app.step_once()
+
+    assert app.state.running
+
+
+def test_a_click_on_empty_space_still_selects_a_body(app):
+    """The interface must not have swallowed the world's own clicks."""
+    for _ in range(3):
+        app.step_once()
+    world = app.state.sim.world
+    index = next(i for i in range(world.n) if world.bodies[i].name == "Sun")
+    sx, sy = app.state.camera.world_to_screen(world.pos[index])
+    assert not app.ui.blocks((int(sx), int(sy)))
+
+    pygame.event.post(_press((int(sx), int(sy))))
+    pygame.event.post(_release((int(sx), int(sy))))
+    app.step_once()
+    assert app.state.selected_id == world.bodies[index].id
+
+
+def test_holding_the_mass_button_ignites_a_planet(app):
+    """The whole point of hold-to-repeat, end to end through the real loop."""
+    from src.app.tools import EditTool
+    from src.body import KIND_STAR
+
+    jupiter = next(b for b in app.state.sim.world.bodies if b.name == "Jupiter")
+    app.state.select(jupiter.id)
+    app.state.set_tool(EditTool)
+    app.step_once()
+
+    plus = next(c for c in app.ui.controls
+                if c.id == "edit.step" and c.payload == ("mass", 3))
+    pygame.event.post(_press(plus.rect.center))
+    app.step_once()
+
+    # Hold it for a simulated few seconds' worth of repeats.
+    now = pygame.time.get_ticks()
+    for k in range(120):
+        app.ui.update(app.state, app.ctx, now=now + 400 + k * 60)
+        app.step_once()
+
+    index = app.state.sim.world.index_of(jupiter.id)
+    assert app.state.sim.world.bodies[index].kind == KIND_STAR

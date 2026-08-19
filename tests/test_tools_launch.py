@@ -41,6 +41,10 @@ def _up(x, y):
     return pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(x, y), button=1)
 
 
+def _keyup(key):
+    return pygame.event.Event(pygame.KEYUP, key=key, mod=0)
+
+
 # --- the conic maths --------------------------------------------------------------
 
 def test_circular_orbit_traces_a_circle():
@@ -247,15 +251,44 @@ def test_overlay_survives_a_near_parabolic_aim(state):
         state.tool.draw_overlay(surface, state, PixelFont(18))
 
 
-def test_the_palette_is_shown_when_not_dragging(state):
-    from src.render import palette
+def test_every_preset_is_a_button_with_its_number_on_it(state):
+    from src.app.tools import PRESETS
     from src.render.pixelfont import PixelFont
-    surface = pygame.Surface((1000, 700))
-    surface.fill(palette.SPACE)
-    state.tool.draw_overlay(surface, state, PixelFont(18))
-    ink = sum(1 for x in range(0, 1000, 2) for y in range(600, 700)
-              if surface.get_at((x, y))[:3] != palette.SPACE[:3])
-    assert ink > 20
+    from src.render.widgets import Metrics
+    rows = state.tool.controls(state, Metrics(PixelFont(18), 1000, 700))
+    presets = [c for row in rows for c in row if c.id == "throw.preset"]
+    assert [c.label for c in presets] == [p.label for p in PRESETS]
+    assert [c.hotkey for c in presets] == [str(p.key) for p in PRESETS]
+
+
+def test_clicking_a_preset_button_selects_it(state):
+    from src.render.pixelfont import PixelFont
+    from src.render.widgets import Metrics
+    rows = state.tool.controls(state, Metrics(PixelFont(18), 1000, 700))
+    gas = next(c for row in rows for c in row
+               if c.id == "throw.preset" and c.label == "Gas giant")
+    assert state.tool.perform(gas, state)
+    assert state.tool.preset_index == gas.payload
+    assert state.tool.controls(state, Metrics(PixelFont(18), 1000, 700))
+
+
+def test_the_circular_button_latches_what_holding_shift_does(state):
+    from src.render.pixelfont import PixelFont
+    from src.render.widgets import Metrics
+    rows = state.tool.controls(state, Metrics(PixelFont(18), 1000, 700))
+    button = next(c for row in rows for c in row if c.id == "throw.circular")
+
+    assert not state.tool.circular
+    state.tool.perform(button, state)
+    assert state.tool.circular
+    assert state.tool.lock_circular
+
+    # Releasing a Shift that was never held must not cancel the latch.
+    state.tool.on_event(_keyup(pygame.K_LSHIFT), state)
+    assert state.tool.circular
+
+    state.tool.perform(button, state)
+    assert not state.tool.circular
 
 
 def test_launching_into_a_full_world_is_refused_quietly(state):

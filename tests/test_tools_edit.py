@@ -128,35 +128,47 @@ def test_editing_a_destroyed_body_is_harmless(state):
     state.tool.on_event(_key(pygame.K_RIGHT), state)
 
 
-def test_overlay_names_the_active_field(state):
-    from src.render import palette
+def _metrics():
     from src.render.pixelfont import PixelFont
-    surface = pygame.Surface((1000, 700))
-    surface.fill(palette.SPACE)
-    state.tool.draw_overlay(surface, state, PixelFont(18))
-    ink = sum(1 for x in range(0, 1000, 2) for y in range(0, 700, 2)
-              if surface.get_at((x, y))[:3] != palette.SPACE[:3])
-    assert ink > 20
+    from src.render.widgets import Metrics
+    return Metrics(PixelFont(18), 1000, 700)
 
 
-def test_overlay_prompts_when_nothing_is_selected(state):
-    from src.render import palette
-    from src.render.pixelfont import PixelFont
+def test_the_panel_shows_a_row_for_every_field(state):
+    rows = state.tool.controls(state, _metrics())
+    labels = [c.label for row in rows for c in row if c.id == "edit.field"]
+    assert len(labels) == 3
+    assert any(label.startswith("Mass") for label in labels)
+    assert any(label.startswith("Density") for label in labels)
+    assert any(label.startswith("Material") for label in labels)
+
+
+def test_the_panel_marks_the_active_field(state):
+    state.tool.field_index = 1
+    rows = state.tool.controls(state, _metrics())
+    active = [c.label for row in rows for c in row
+              if c.id == "edit.field" and c.active]
+    assert len(active) == 1
+    assert active[0].startswith("Density")
+
+
+def test_the_panel_prompts_when_nothing_is_selected(state):
     state.selected_id = None
-    surface = pygame.Surface((1000, 700))
-    surface.fill(palette.SPACE)
-    state.tool.draw_overlay(surface, state, PixelFont(18))
-    ink = sum(1 for x in range(0, 1000, 2) for y in range(0, 700, 2)
-              if surface.get_at((x, y))[:3] != palette.SPACE[:3])
-    assert ink > 20
+    rows = state.tool.controls(state, _metrics())
+    assert any("Click a body" in c.label for row in rows for c in row)
+    assert not any(c.clickable for row in rows for c in row)
 
 
-def test_overlay_survives_every_body_and_every_field(state):
-    from src.render.pixelfont import PixelFont
-    font = PixelFont(18)
-    surface = pygame.Surface((1000, 700))
+def test_the_panel_reports_how_far_from_igniting(state):
+    rows = state.tool.controls(state, _metrics())
+    status = [c.label for row in rows for c in row if c.id == "edit.status"]
+    assert status and status[0].endswith("heavier to ignite")
+
+
+def test_the_panel_survives_every_body_and_every_field(state):
+    metrics = _metrics()
     for body in list(state.sim.world.bodies):
         state.select(body.id)
         for field in range(3):
             state.tool.field_index = field
-            state.tool.draw_overlay(surface, state, font)
+            assert state.tool.controls(state, metrics)

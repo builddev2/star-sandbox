@@ -22,14 +22,24 @@ python -m src.app.main
 
 ## Controls
 
+Everything is a button. Nobody has to be told a shortcut before they can play:
+the tools are down the left, the bodies are listed by name beside them, time
+runs along the bottom, and what you can do to whatever you have selected is
+under its readout on the right. Hover anything to find out what it does.
+
+Every button also has its key printed on it, which is how you stop needing the
+buttons.
+
 | | |
 |---|---|
 | `Space` | pause and resume |
 | `[` `]` | slower / faster (1 hour per second up to 10 years per second) |
-| Wheel | zoom at the cursor |
+| Wheel, `+` `-` | zoom |
+| `H` | back to the whole solar system |
 | Drag | pan |
 | Click | select a body; double-click flies to it |
 | `Tab` | cycle through bodies |
+| `B` | the list of bodies |
 | `F` | follow the selected body |
 | `1` `2` `3` | Look / Throw / Edit |
 | `0` | stop the selected body dead |
@@ -77,13 +87,21 @@ to within 0.02 AU; collisions conserve mass and momentum exactly; and the
 integrator's energy error grows sublinearly rather than spiralling planets
 inward.
 
+The interface is covered the same way: every button is pressed through the real
+frame loop, no two controls are allowed to overlap or hang off the screen, and
+clicking a button is checked not to also throw a comet through it.
+
 ## How it is put together
 
 | | |
 |---|---|
 | `src/` | physics: units, gravity, orbits, collisions, edits. Pure numpy. |
-| `src/render/` | camera, sprites, HUD. Everything that touches pixels. |
-| `src/app/` | frame loop, input, one class per tool. |
+| `src/render/` | camera, sprites, HUD, buttons. Everything that touches pixels. |
+| `src/app/` | frame loop, input, the interface, one class per tool. |
+
+Buttons and keys are never two implementations of the same feature: a control
+describes itself and names an action, and that action is the method the key
+already called. `tests/test_ui.py` asserts every shortcut has a button.
 
 Design notes and the implementation plan are in `docs/superpowers/`.
 

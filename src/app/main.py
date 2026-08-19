@@ -16,6 +16,7 @@ from .config import DEFAULT_S, open_display
 from .input import handle_event
 from .state import AppState
 from .tools import SelectTool
+from .ui import UiLayer
 
 
 def probe(fullscreen=False):
@@ -47,6 +48,9 @@ class App:
         self._build_render_stack()
         self.state = AppState(Simulation(), self.camera, ViewSettings())
         self.state.set_tool(SelectTool)
+        # Lay the buttons out once before the first event, so a click landing in
+        # the opening frame hits a button rather than falling through to space.
+        self.ui.build(self.state, (self.ctx.width, self.ctx.height), self.ctx)
 
     def _build_render_stack(self):
         """(Re)create everything that is sized in pixels.  Called on grid change."""
@@ -54,6 +58,7 @@ class App:
         self.camera.width, self.camera.height = self.ctx.width, self.ctx.height
         self.renderer = WorldRenderer(self.cache, self.font)
         self.hud = Hud(self.font)
+        self.ui = UiLayer(self.font, self.hud)
         self.stars = Starfield(self.ctx.width, self.ctx.height)
         self.cache.clear()
 
@@ -65,11 +70,14 @@ class App:
         """
         grid = self.ctx.s
         for event in pygame.event.get():
-            handle_event(event, self.state, self.ctx)
+            handle_event(event, self.state, self.ctx, self.ui)
         if self.ctx.s != grid or self.ctx.width != self.camera.width:
             self._build_render_stack()
 
         state = self.state
+        # Held steppers keep firing between clicks; this is where they fire.
+        self.ui.update(state, self.ctx)
+
         frame_dt = self.clock.tick(60) / 1000.0
         state.sim.advance(state.days_per_second * frame_dt)
         state.sim.update_trails()
@@ -82,6 +90,10 @@ class App:
                            selected_id=state.selected_id)
         state.tool.draw_overlay(surface, state, self.font)
         self.hud.draw(surface, state)
+        # Built at the end of the frame, from the state that is about to be
+        # shown: next frame's clicks then hit exactly what the eye can see.
+        self.ui.build(state, surface.get_size(), self.ctx)
+        self.ui.draw(surface, state)
         pygame.display.flip()
 
     def run(self):

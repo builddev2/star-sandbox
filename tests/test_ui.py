@@ -1,0 +1,630 @@
+"""The clickable interface: what is on screen, and what pressing it does.
+
+Two things are worth stating about how these tests work.  Controls are found by
+id rather than by coordinate, so moving a panel does not break a test about what
+a button *does*; and clicking is always a real press and release through
+``on_event``, because half the behaviour worth testing lives in the gap between
+those two events.
+"""
+
+import os
+
+import numpy as np
+import pygame
+import pytest
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
+SIZE = (1000, 700)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pygame():
+    pygame.init()
+    pygame.display.set_mode((320, 200))
+    yield
+    pygame.quit()
+
+
+@pytest.fixture
+def state():
+    from src.app.state import AppState
+    from src.app.tools import SelectTool
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.sim import Simulation
+    st = AppState(Simulation(), Camera(*SIZE), ViewSettings())
+    st.set_tool(SelectTool)
+    return st
+
+
+@pytest.fixture
+def ui(state):
+    from src.app.ui import UiLayer
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    font = PixelFont(18)
+    layer = UiLayer(font, Hud(font))
+    layer.build(state, SIZE)
+    return layer
+
+
+def find(ui, cid, payload=None):
+    for control in ui.controls:
+        if control.id == cid and (payload is None or control.payload == payload):
+            return control
+    return None
+
+
+def ids(ui):
+    return {control.id for control in ui.controls}
+
+
+def click(ui, state, control, ctx=None, size=SIZE):
+    """A real press and release on a control, through the event path.
+
+    Rebuilds afterwards at the same size, because that is what the frame loop
+    does and because half these tests then look at the rebuilt controls.
+    """
+    pos = control.rect.center
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1),
+                state, ctx)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=pos, button=1),
+                state, ctx)
+    ui.build(state, size, ctx)
+
+
+def click_id(ui, state, cid, payload=None, ctx=None):
+    control = find(ui, cid, payload)
+    assert control is not None, "no control %r on screen" % cid
+    click(ui, state, control, ctx)
+    return control
+
+
+# --- what is on screen ------------------------------------------------------------
+
+def test_the_whole_interface_is_present_without_a_selection(ui):
+    assert {"tool.look", "tool.throw", "tool.edit", "panel.bodies",
+            "time.pause", "time.slower", "time.faster", "sim.reset",
+            "view.trails", "view.sizes", "view.labels", "view.grid",
+            "view.fullscreen", "view.help"} <= ids(ui)
+
+
+def test_no_control_hangs_off_the_edge_of_the_screen(ui):
+    screen = pygame.Rect(0, 0, *SIZE)
+    for control in ui.controls:
+        assert screen.contains(control.rect), "%s is off screen" % control.id
+
+
+def test_controls_do_not_sit_on_top_of_each_other(ui):
+    """Overlapping buttons mean one of them cannot be clicked."""
+    seen = []
+    for control in ui.controls:
+        for other in seen:
+            assert not control.rect.colliderect(other.rect), \
+                "%s overlaps %s" % (control.id, other.id)
+        seen.append(control)
+
+
+def test_the_active_tool_is_the_lit_button(state, ui):
+    from src.app.tools import LaunchTool
+    assert find(ui, "tool.look").active
+    state.set_tool(LaunchTool)
+    ui.build(state, SIZE)
+    assert find(ui, "tool.throw").active
+    assert not find(ui, "tool.look").active
+
+
+# --- tools ------------------------------------------------------------------------
+
+@pytest.mark.parametrize("cid,name", [("tool.look", "Look"),
+                                      ("tool.throw", "Throw"),
+                                      ("tool.edit", "Edit")])
+def test_each_tool_button_switches_tool(state, ui, cid, name):
+    click_id(ui, state, cid)
+    assert state.tool_name == name
+
+
+def test_the_throw_presets_are_buttons(state, ui):
+    from src.app.tools import PRESETS
+    click_id(ui, state, "tool.throw")
+    for k in range(len(PRESETS)):
+        assert find(ui, "throw.preset", payload=k) is not None
+    click_id(ui, state, "throw.preset", payload=3)
+    assert state.tool.preset_index == 3
+
+
+def test_the_edit_steppers_change_the_body(state, ui):
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    click_id(ui, state, "tool.edit")
+
+    before = float(state.sim.world.mass[state.selected_index])
+    click_id(ui, state, "edit.step", payload=("mass", 3))
+    assert state.sim.world.mass[state.selected_index] > before
+
+    click_id(ui, state, "edit.step", payload=("mass", -3))
+    assert state.sim.world.mass[state.selected_index] == pytest.approx(before)
+
+
+def test_editing_by_button_keeps_radius_derived(state, ui):
+    """The buttons go through the same edits module the keys do."""
+    from src import units
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    click_id(ui, state, "tool.edit")
+    density = units.density_from_mass_radius(
+        float(state.sim.world.mass[state.selected_index]),
+        float(state.sim.world.radius[state.selected_index]))
+
+    for _ in range(5):
+        click_id(ui, state, "edit.step", payload=("mass", 3))
+
+    index = state.selected_index
+    assert float(state.sim.world.radius[index]) == pytest.approx(
+        units.radius_from_mass_density(float(state.sim.world.mass[index]), density),
+        rel=1e-9)
+
+
+def test_the_material_arrows_walk_through_the_substances(state, ui):
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    click_id(ui, state, "tool.edit")
+    first = state.sim.world.bodies[state.selected_index].material.key
+    click_id(ui, state, "edit.step", payload=("material", 1))
+    assert state.sim.world.bodies[state.selected_index].material.key != first
+
+
+# --- time -------------------------------------------------------------------------
+
+def test_the_pause_button_toggles_and_relabels(state, ui):
+    assert not state.sim.paused
+    assert find(ui, "time.pause").label == "Pause"
+    click_id(ui, state, "time.pause")
+    assert state.sim.paused
+    assert find(ui, "time.pause").label == "Play"
+    click_id(ui, state, "time.pause")
+    assert not state.sim.paused
+
+
+def test_the_speed_buttons_step_and_stop_at_the_ends(state, ui):
+    start = state.time_index
+    click_id(ui, state, "time.faster")
+    assert state.time_index == start + 1
+    click_id(ui, state, "time.slower")
+    assert state.time_index == start
+
+    state.time_index = 0
+    ui.build(state, SIZE)
+    assert not find(ui, "time.slower").enabled
+    state.time_index = state.time_index_max
+    ui.build(state, SIZE)
+    assert not find(ui, "time.faster").enabled
+
+
+def test_the_readout_shows_the_current_speed_and_cannot_be_clicked(state, ui):
+    assert find(ui, "time.readout").label == state.time_label
+    assert not find(ui, "time.readout").clickable
+    assert ui.control_at(find(ui, "time.readout").rect.center) is None
+
+
+def test_restart_puts_the_solar_system_back(state, ui):
+    state.sim.world.remove(3)
+    state.select(state.sim.world.bodies[0].id)
+    before = state.sim.world.n
+    click_id(ui, state, "sim.reset")
+    assert state.sim.world.n > before
+    assert state.selected_id is None
+
+
+# --- view toggles -----------------------------------------------------------------
+
+@pytest.mark.parametrize("cid,attr", [("view.trails", "show_trails"),
+                                      ("view.sizes", "real_size"),
+                                      ("view.labels", "show_labels")])
+def test_a_view_toggle_flips_its_flag_and_lights_up(state, ui, cid, attr):
+    before = getattr(state.view, attr)
+    click_id(ui, state, cid)
+    assert getattr(state.view, attr) is not before
+    assert find(ui, cid).active is getattr(state.view, attr)
+
+
+def test_the_zoom_buttons_work_without_a_wheel(state, ui):
+    before = state.camera.zoom
+    click_id(ui, state, "view.zoom", payload=1)
+    assert state.camera.zoom > before
+    click_id(ui, state, "view.zoom", payload=-1)
+    assert state.camera.zoom == pytest.approx(before)
+
+
+def test_going_home_undoes_being_lost(state, ui):
+    state.camera.centre[:] = (900.0, -400.0)
+    state.camera.zoom_by(-60)
+    state.camera.follow_id = state.sim.world.bodies[2].id
+    click_id(ui, state, "view.home")
+    assert tuple(state.camera.centre) == (0.0, 0.0)
+    assert state.camera.follow_id is None
+    assert state.camera.zoom == pytest.approx(
+        SIZE[0] / state.camera.DEFAULT_AU_ACROSS)
+
+
+def test_help_opens_and_closes_from_its_button(state, ui):
+    click_id(ui, state, "view.help")
+    assert state.help_visible
+    assert ui.modal is not None
+
+
+def test_controls_needing_a_display_are_disabled_without_one(ui):
+    assert not find(ui, "view.grid").enabled
+    assert not find(ui, "view.fullscreen").enabled
+
+
+def test_a_disabled_control_does_nothing_when_clicked(state, ui):
+    grid = find(ui, "view.grid")
+    assert ui.control_at(grid.rect.center) is None
+    assert not ui.perform(grid, state, None)
+
+
+# --- the body list ----------------------------------------------------------------
+
+def test_the_list_offers_every_body_by_name(state, ui):
+    names = [c.label for c in ui.controls if c.id == "select.body"]
+    assert "Earth" in names and "Jupiter" in names
+
+
+def test_clicking_a_name_selects_that_body(state, ui):
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    click_id(ui, state, "select.body", payload=earth.id)
+    assert state.selected_id == earth.id
+    assert find(ui, "select.body", payload=earth.id).active
+
+
+def test_the_list_closes_and_the_rail_button_brings_it_back(state, ui):
+    click_id(ui, state, "panel.bodies.close")
+    assert not state.show_body_list
+    assert find(ui, "select.body") is None
+    click_id(ui, state, "panel.bodies")
+    assert state.show_body_list
+    assert find(ui, "select.body") is not None
+
+
+def test_the_list_scrolls_and_the_offset_stays_inside_it(state, ui):
+    # A short window is what forces a scroll; a tall one shows everything.
+    short = (1000, 260)
+    ui.build(state, short)
+    scroll_down = find(ui, "list.scroll", payload=1)
+    assert scroll_down is not None
+
+    click(ui, state, scroll_down, size=short)
+    assert state.body_list_offset == 1
+
+    for _ in range(50):
+        state.scroll_body_list(1)
+    ui.build(state, short)
+    assert state.body_list_offset < state.sim.world.n
+    assert not find(ui, "list.scroll", payload=1).enabled
+    assert find(ui, "list.scroll", payload=-1).enabled
+
+
+def test_a_window_tall_enough_for_every_body_has_no_scroll_buttons(state, ui):
+    ui.build(state, (1000, 1400))
+    assert find(ui, "list.scroll") is None
+    assert state.body_list_offset == 0
+
+
+def test_the_wheel_over_a_panel_scrolls_instead_of_zooming(state, ui):
+    ui.build(state, (1000, 260))
+    row = find(ui, "select.body")
+    ui.mouse = row.rect.center
+    zoom = state.camera.zoom
+    assert ui.on_event(pygame.event.Event(pygame.MOUSEWHEEL, y=-1), state)
+    assert state.body_list_offset == 1
+    assert state.camera.zoom == zoom
+
+
+def test_bodies_destroyed_under_an_open_list_do_not_break_it(state, ui):
+    for _ in range(4):
+        state.scroll_body_list(1)
+    while state.sim.world.n > 2:
+        state.sim.world.remove(state.sim.world.n - 1)
+    ui.build(state, SIZE)
+    assert state.body_list_offset == 0
+    assert len([c for c in ui.controls if c.id == "select.body"]) == 2
+
+
+# --- the selected body ------------------------------------------------------------
+
+def test_the_action_buttons_appear_only_with_a_selection(state, ui):
+    assert find(ui, "body.follow") is None
+    state.select(state.sim.world.bodies[3].id)
+    ui.build(state, SIZE)
+    assert {"body.follow", "body.flyto", "body.stop", "body.delete"} <= ids(ui)
+
+
+def test_follow_toggles_rather_than_only_switching_on(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    click_id(ui, state, "body.follow")
+    assert state.camera.follow_id == body.id
+    assert find(ui, "body.follow").active
+    click_id(ui, state, "body.follow")
+    assert state.camera.follow_id is None
+
+
+def test_fly_to_zooms_in_and_follows(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    before = state.camera.zoom
+    click_id(ui, state, "body.flyto")
+    assert state.camera.zoom > before
+    assert state.camera.follow_id == body.id
+
+
+def test_stop_takes_all_the_speed_away(state, ui):
+    body = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(body.id)
+    ui.build(state, SIZE)
+    assert np.hypot(*state.sim.world.vel[state.selected_index]) > 0
+    click_id(ui, state, "body.stop")
+    index = state.sim.world.index_of(body.id)
+    assert np.allclose(state.sim.world.vel[index], 0.0)
+
+
+def test_delete_removes_the_body_and_clears_the_selection(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    before = state.sim.world.n
+    click_id(ui, state, "body.delete")
+    assert state.sim.world.n == before - 1
+    assert state.sim.world.index_of(body.id) is None
+    assert state.selected_id is None
+
+
+# --- press, release and what the world sees ---------------------------------------
+
+def test_a_press_on_a_button_never_reaches_the_world(state, ui):
+    button = find(ui, "time.pause")
+    assert ui.blocks(button.rect.center)
+    assert ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                          pos=button.rect.center, button=1), state)
+
+
+def test_a_press_on_bare_panel_is_swallowed_too(state, ui):
+    """Otherwise the camera pans when you miss a button by two pixels."""
+    panel = ui.panels[0][0]
+    spot = (panel.right - 1, panel.bottom - 1)
+    assert ui.control_at(spot) is None
+    assert ui.over_panel(spot)
+    assert ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=spot,
+                                          button=1), state)
+
+
+def test_empty_space_is_left_alone_for_the_world(state, ui):
+    spot = (SIZE[0] // 2, SIZE[1] // 2)
+    assert not ui.blocks(spot)
+    assert not ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=spot,
+                                              button=1), state)
+
+
+def test_a_click_dragged_off_a_button_is_cancelled(state, ui):
+    button = find(ui, "time.pause")
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=button.rect.center,
+                                   button=1), state)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(500, 400), button=1),
+                state)
+    assert not state.sim.paused
+
+
+def test_a_drag_that_began_on_a_panel_keeps_being_swallowed(state, ui):
+    button = find(ui, "time.pause")
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=button.rect.center,
+                                   button=1), state)
+    moved = pygame.event.Event(pygame.MOUSEMOTION, pos=(500, 400), rel=(30, 0),
+                               buttons=(1, 0, 0))
+    assert ui.on_event(moved, state)
+
+
+def test_a_drag_that_began_in_space_is_never_stolen(state, ui):
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(500, 400), button=1),
+                state)
+    over_button = find(ui, "time.pause").rect.center
+    moved = pygame.event.Event(pygame.MOUSEMOTION, pos=over_button, rel=(1, 1),
+                               buttons=(1, 0, 0))
+    assert not ui.on_event(moved, state)
+
+
+def test_clicking_a_button_does_not_also_throw_a_body(state, ui):
+    """The whole reason the interface is routed before the tools."""
+    from src.app.input import handle_event
+    from src.app.tools import LaunchTool
+    state.set_tool(LaunchTool)
+    ui.build(state, SIZE)
+    before = state.sim.world.n
+    button = find(ui, "time.pause")
+    for event in (pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=button.rect.center,
+                                     button=1),
+                  pygame.event.Event(pygame.MOUSEBUTTONUP, pos=button.rect.center,
+                                     button=1)):
+        handle_event(event, state, None, ui)
+    assert state.sim.world.n == before
+    assert state.sim.paused
+
+
+# --- holding a stepper ------------------------------------------------------------
+
+def test_a_held_stepper_repeats_but_only_after_a_pause(state, ui):
+    from src.app import ui as ui_module
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    click_id(ui, state, "tool.edit")
+    plus = find(ui, "edit.step", payload=("mass", 3))
+
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=plus.rect.center,
+                                   button=1), state)
+    start = float(state.sim.world.mass[state.selected_index])
+    now = pygame.time.get_ticks()
+
+    assert ui.update(state, None, now=now) == 0
+    assert float(state.sim.world.mass[state.selected_index]) == start
+
+    fired = ui.update(state, None, now=now + ui_module.REPEAT_DELAY_MS
+                      + 3 * ui_module.REPEAT_INTERVAL_MS)
+    assert fired >= 3
+    assert float(state.sim.world.mass[state.selected_index]) > start
+
+
+def test_a_long_stall_cannot_spend_the_frame_repeating(state, ui):
+    from src.app import ui as ui_module
+    state.select(next(b for b in state.sim.world.bodies if b.name == "Earth").id)
+    click_id(ui, state, "tool.edit")
+    plus = find(ui, "edit.step", payload=("mass", 3))
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=plus.rect.center,
+                                   button=1), state)
+    fired = ui.update(state, None, now=pygame.time.get_ticks() + 100_000)
+    assert fired == ui_module.MAX_REPEATS_PER_FRAME
+
+
+def test_releasing_stops_the_repeat(state, ui):
+    state.select(next(b for b in state.sim.world.bodies if b.name == "Earth").id)
+    click_id(ui, state, "tool.edit")
+    plus = find(ui, "edit.step", payload=("mass", 3))
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=plus.rect.center,
+                                   button=1), state)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=plus.rect.center,
+                                   button=1), state)
+    assert ui.update(state, None, now=pygame.time.get_ticks() + 100_000) == 0
+
+
+def test_a_stepper_acts_on_the_way_down(state, ui):
+    """Waiting for the release would make a stepper feel broken."""
+    state.select(next(b for b in state.sim.world.bodies if b.name == "Earth").id)
+    click_id(ui, state, "tool.edit")
+    plus = find(ui, "edit.step", payload=("mass", 3))
+    before = float(state.sim.world.mass[state.selected_index])
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=plus.rect.center,
+                                   button=1), state)
+    assert float(state.sim.world.mass[state.selected_index]) > before
+
+
+# --- the help panel ---------------------------------------------------------------
+
+def test_help_is_modal_and_a_click_outside_puts_it_away(state, ui):
+    state.help_visible = True
+    ui.build(state, SIZE)
+    assert ui.modal is not None
+    outside = (5, SIZE[1] - 5)
+    assert ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=outside,
+                                          button=1), state)
+    assert not state.help_visible
+
+
+def test_a_click_outside_the_help_is_spent_closing_it(state, ui):
+    """It must not also press whatever button was underneath."""
+    state.help_visible = True
+    ui.build(state, SIZE)
+    pause = find(ui, "time.pause")
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pause.rect.center,
+                                   button=1), state)
+    assert not state.help_visible
+    assert not state.sim.paused
+
+
+def test_the_help_close_button_closes_it(state, ui):
+    state.help_visible = True
+    ui.build(state, SIZE)
+    close = ui._modal_control
+    assert close is not None and ui.modal.contains(close.rect)
+    click(ui, state, close)
+    assert not state.help_visible
+
+
+# --- everything at once -----------------------------------------------------------
+
+def test_every_control_of_every_tool_can_be_pressed_without_raising(state, ui):
+    from src.app.tools import EditTool, LaunchTool, SelectTool
+    for tool in (SelectTool, LaunchTool, EditTool):
+        state.set_tool(tool)
+        state.select(state.sim.world.bodies[2].id)
+        ui.build(state, SIZE)
+        for control in list(ui.controls):
+            if control.clickable:
+                ui.perform(control, state, None)
+            ui.build(state, SIZE)
+
+
+def test_the_interface_draws_over_every_tool(state, ui):
+    from src.app.tools import EditTool, LaunchTool, SelectTool
+    from src.render import palette
+    for tool in (SelectTool, LaunchTool, EditTool):
+        state.set_tool(tool)
+        state.select(state.sim.world.bodies[3].id)
+        state.help_visible = tool is EditTool
+        ui.build(state, SIZE)
+        surface = pygame.Surface(SIZE)
+        surface.fill(palette.SPACE)
+        ui.draw(surface, state)
+        ink = sum(1 for x in range(0, SIZE[0], 3) for y in range(0, SIZE[1], 3)
+                  if surface.get_at((x, y))[:3] != palette.SPACE[:3])
+        assert ink > 200
+
+
+def test_hovering_a_control_raises_a_tooltip(state, ui):
+    from src.render import palette
+    button = find(ui, "time.pause")
+    ui.mouse = button.rect.center
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)
+    above = pygame.Rect(button.rect.x, button.rect.y - 40, button.rect.width, 30)
+    ink = sum(1 for x in range(above.left, above.right)
+              for y in range(max(0, above.top), above.bottom)
+              if surface.get_at((x, y))[:3] != palette.SPACE[:3])
+    assert ink > 20
+
+
+def test_a_tiny_window_still_lays_out_without_raising(state, ui):
+    state.select(state.sim.world.bodies[1].id)
+    for size in ((320, 200), (480, 320), (2560, 1440)):
+        ui.build(state, size)
+        assert ui.controls
+
+
+# --- the promise this interface makes ---------------------------------------------
+
+#: Every shortcut a child would otherwise have to memorise, and it is on a
+#: button.  If a key is added without a button, this fails -- which is the point.
+SHORTCUTS_THAT_MUST_BE_BUTTONS = {
+    "Space", "[", "]", "1", "2", "3", "T", "R", "L", "G", "F", "0", "Del",
+    "F5", "?", "B", "Cmd+F", "+", "-", "H",
+}
+
+
+def test_every_shortcut_is_also_a_button(state, ui):
+    from src.app.tools import EditTool, LaunchTool, SelectTool
+    keys = set()
+    for tool in (SelectTool, LaunchTool, EditTool):
+        state.set_tool(tool)
+        state.select(state.sim.world.bodies[3].id)
+        ui.build(state, SIZE)
+        keys |= {c.hotkey for c in ui.controls if c.hotkey}
+    missing = SHORTCUTS_THAT_MUST_BE_BUTTONS - keys
+    assert not missing, "no button for %s" % sorted(missing)
+
+
+def test_selecting_a_body_never_requires_the_keyboard(state, ui):
+    """Tab has a mouse equivalent: the list, by name."""
+    assert [c for c in ui.controls if c.id == "select.body"]
+
+
+def test_every_button_says_what_it_does(state, ui):
+    from src.app.tools import EditTool, LaunchTool, SelectTool
+    for tool in (SelectTool, LaunchTool, EditTool):
+        state.set_tool(tool)
+        state.select(state.sim.world.bodies[3].id)
+        ui.build(state, SIZE)
+        for control in ui.controls:
+            if control.clickable:
+                assert control.hint(), "%s explains nothing" % control.id

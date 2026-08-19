@@ -1,8 +1,12 @@
 """Keyboard and mouse routing.
 
-The active tool sees every mouse event first and can consume it; global keys are
-handled here.  Keeping the split at "tool first, globals second" means a tool can
-capture a drag without the camera also panning underneath it.
+Three layers, in this order: the buttons, then the active tool, then the global
+keys.  Each may consume an event and stop it reaching the next.
+
+The interface has to come first.  The throw tool reads every press in the window
+as an aim, so if the tool went first, clicking "Delete" would fire a comet
+through the button on the way past.  Tool before globals is the same rule one
+level down: a tool can capture a drag without the camera panning underneath it.
 """
 
 import pygame
@@ -10,10 +14,13 @@ import pygame
 from .tools import TOOLS
 
 
-def handle_event(event, state, ctx):
-    """Route one pygame event.  ``ctx`` may be None in tests."""
+def handle_event(event, state, ctx, ui=None):
+    """Route one pygame event.  ``ctx`` and ``ui`` may be None in tests."""
     if event.type == pygame.QUIT:
         state.running = False
+        return
+
+    if ui is not None and ui.on_event(event, state, ctx):
         return
 
     if state.tool is not None and state.tool.on_event(event, state):
@@ -56,6 +63,14 @@ def handle_event(event, state, ctx):
         state.view.show_labels = not state.view.show_labels
     elif key == pygame.K_g:
         state.cycle_grid(ctx)
+    elif key == pygame.K_b:
+        state.show_body_list = not state.show_body_list
+    elif key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+        state.camera.zoom_by(1)
+    elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+        state.camera.zoom_by(-1)
+    elif key == pygame.K_h:
+        state.camera.reset_view()
     elif key == pygame.K_0:
         state.stop_selected()
     elif key in (pygame.K_DELETE, pygame.K_BACKSPACE):

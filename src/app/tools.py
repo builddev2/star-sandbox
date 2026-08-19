@@ -1,8 +1,14 @@
 """Interaction tools.
 
-Each tool owns its own event handling and its own overlay drawing, so adding one
-is a new class rather than another branch in a growing event handler.  Exactly
-one tool is active; the HUD's hint line is whatever it says it is.
+Each tool owns its own event handling, its own overlay drawing, and its own row
+of buttons, so adding one is a new class rather than another branch in a growing
+event handler.  Exactly one tool is active; the HUD's hint line and the panel
+under the tool palette are whatever it says they are.
+
+A tool never draws its own buttons or reads the mouse position to find them.  It
+describes them (``controls``) and says what they mean (``perform``); ``ui.py``
+lays them out, draws them and dispatches the clicks.  That is what keeps a
+tool's mouse-drag handling and its buttons from fighting over the same press.
 """
 
 import math
@@ -14,6 +20,7 @@ import pygame
 from .. import edits, materials, orbits, units
 from ..body import KIND_PLANET, KIND_STAR
 from ..render import palette
+from ..render.widgets import Control
 
 #: A press-and-release within this many pixels counts as a click, not a drag.
 CLICK_SLOP = 4
@@ -24,9 +31,22 @@ DOUBLE_CLICK_MS = 400
 class Tool:
     name = "Tool"
     hint = ""
+    #: Heading for this tool's button panel; no panel is drawn without one.
+    context_title = ""
 
     def on_event(self, event, state):
         """Return True if the event was consumed."""
+        return False
+
+    def controls(self, state, metrics):
+        """Rows of :class:`Control` for the panel under the tool palette.
+
+        A list of lists: each inner list is one row, laid out left to right.
+        """
+        return []
+
+    def perform(self, control, state):
+        """Act on one of this tool's controls.  Return True if handled."""
         return False
 
     def draw_overlay(self, surface, state, font):
@@ -38,8 +58,8 @@ class Tool:
 
 class SelectTool(Tool):
     name = "Look"
-    hint = ("Click a body to inspect it  -  drag to pan  -  wheel to zoom  -  "
-            "double-click to fly to it  -  ? for controls")
+    hint = ("Click a body to see what it is  -  or pick one from the list  -  "
+            "drag to pan, and the + and - buttons zoom  -  double-click to fly to it")
 
     def __init__(self):
         self._press = None
@@ -127,14 +147,47 @@ def preset_body(preset):
 
 class LaunchTool(Tool):
     name = "Throw"
-    hint = ("1-5 pick what to throw  -  press and drag to aim, release to launch  -  "
-            "hold Shift for a perfect circular orbit")
+    hint = ("Pick what to throw on the left  -  then press and drag in space to aim, "
+            "and let go to launch  -  green comes back, red never does")
+
+    context_title = "Throw"
 
     def __init__(self):
         self.preset_index = 0
         self.shift = False
+        #: The circular-orbit button latches what holding Shift does, because a
+        #: child cannot hold Shift and drag a mouse across a trackpad at once.
+        self.lock_circular = False
         self._origin = None          # world position, set on press
         self._cursor = None          # screen position while dragging
+
+    @property
+    def circular(self):
+        """Aim for a circular orbit -- held Shift or the latched button."""
+        return self.shift or self.lock_circular
+
+    # --- buttons ----------------------------------------------------------------
+
+    def controls(self, state, metrics):
+        rows = [[Control("throw.preset", label=preset.label, payload=k,
+                         icon="star" if preset.mass is not None else "circle",
+                         hotkey=str(preset.key),
+                         tooltip="Throw %s" % preset.label.lower(),
+                         active=k == self.preset_index)]
+                for k, preset in enumerate(PRESETS)]
+        rows.append([Control("throw.circular", label="Circular orbit", icon="circle",
+                             hotkey="Shift", active=self.lock_circular,
+                             tooltip="Drop it straight into a perfect round orbit")])
+        return rows
+
+    def perform(self, control, state):
+        if control.id == "throw.preset":
+            self.preset_index = int(control.payload)
+            return True
+        if control.id == "throw.circular":
+            self.lock_circular = not self.lock_circular
+            return True
+        return False
 
     # --- events -----------------------------------------------------------------
 
@@ -209,7 +262,7 @@ class LaunchTool(Tool):
         """(position, velocity) the body would have if released right now."""
         pos = self._origin
         vel = self._drag_velocity(state)
-        if self.shift:
+        if self.circular:
             world = state.sim.world
             index = self._nearest_attractor(world, pos)
             if index is not None:
@@ -261,7 +314,7 @@ class LaunchTool(Tool):
     def draw_overlay(self, surface, state, font):
         preset = PRESETS[self.preset_index]
         if self._origin is None or self._cursor is None:
-            self._draw_palette(surface, state, font)
+            # What can be thrown is on the buttons now, not in a legend here.
             return
 
         camera = state.camera
@@ -289,23 +342,12 @@ class LaunchTool(Tool):
 
         speed = float(np.hypot(vel[0], vel[1]))
         label = "%.4g km/s" % units.to_kms(speed)
-        if self.shift:
+        if self.circular:
             label += "   circular"
         font.draw(surface, self._cursor[0] + 8, self._cursor[1] + 8,
                   label, palette.TEXT)
         font.draw(surface, self._cursor[0] + 8, self._cursor[1] + 8 + font.height,
                   preset.label, palette.TEXT_DIM)
-
-    def _draw_palette(self, surface, state, font):
-        """The row of things you can throw, along the bottom."""
-        line = font.height + 2
-        y = surface.get_height() - line * 2 - 10
-        x = 8
-        for k, preset in enumerate(PRESETS):
-            active = k == self.preset_index
-            text = "%d %s" % (preset.key, preset.label)
-            colour = palette.SELECT if active else palette.TEXT_DIM
-            x += font.draw(surface, x, y, text, colour) + 18
 
 
 EDIT_FIELDS = edits.EDIT_FIELDS
@@ -316,12 +358,73 @@ DRAG_PIXELS_PER_NOTCH = 6.0
 
 class EditTool(Tool):
     name = "Edit"
-    hint = ("Up/Down pick what to change  -  Left/Right or drag to change it  -  "
-            "0 stops it dead  -  make it 84x heavier and it becomes a star")
+    hint = ("Click a body, then use the -- and + buttons  -  or Up/Down to pick a "
+            "row and Left/Right to change it  -  hold a button to go faster")
+    context_title = "Edit"
+
+    #: Notches one press of a stepper applies.  Mass moves three at a time
+    #: because its scrub is a *ratio*: at 1.06 per notch a single one is
+    #: invisible, and igniting Jupiter is eighty of them.
+    CLICK_NOTCHES = {"mass": 3, "density": 1, "material": 1}
 
     def __init__(self):
         self.field_index = 0
         self._drag_x = None
+
+    # --- buttons ----------------------------------------------------------------
+
+    def field_values(self, world, index):
+        """The three editable numbers, formatted the way the panel shows them."""
+        return {
+            "mass": _mass_label(float(world.mass[index])),
+            "density": "%.3g g/cm3" % units.to_gcm3(edits.body_density(world, index)),
+            "material": world.bodies[index].material.name,
+        }
+
+    def status_label(self, world, index):
+        if world.bodies[index].kind == KIND_STAR:
+            return "burning"
+        return "%.0fx heavier to ignite" % edits.ignition_ratio(world, index)
+
+    def controls(self, state, metrics):
+        index = state.selected_index
+        if index is None:
+            return [[Control("edit.none", label="Click a body first", readout=True)]]
+
+        world = state.sim.world
+        values = self.field_values(world, index)
+        rows = []
+        for k, field in enumerate(EDIT_FIELDS):
+            step = self.CLICK_NOTCHES[field]
+            # Material is a list of substances, not a quantity, so it gets
+            # arrows rather than a minus and a plus, and it does not repeat.
+            icons = ("left", "right") if field == "material" else ("minus", "plus")
+            rows.append([
+                Control("edit.step", icon=icons[0], payload=(field, -step),
+                        compact=True, repeat=field != "material",
+                        tooltip="Less %s" % field),
+                Control("edit.field", label="%s  %s" % (field.title(), values[field]),
+                        payload=field, active=k == self.field_index,
+                        tooltip="Or pick this row with Up/Down and change it "
+                                "with Left/Right"),
+                Control("edit.step", icon=icons[1], payload=(field, step),
+                        compact=True, repeat=field != "material",
+                        tooltip="More %s" % field),
+            ])
+        rows.append([Control("edit.status", label=self.status_label(world, index),
+                             readout=True)])
+        return rows
+
+    def perform(self, control, state):
+        if control.id == "edit.field":
+            self.field_index = EDIT_FIELDS.index(control.payload)
+            return True
+        if control.id == "edit.step":
+            field, notches = control.payload
+            self.field_index = EDIT_FIELDS.index(field)
+            self._scrub(state, notches)
+            return True
+        return False
 
     def on_event(self, event, state):
         if event.type == pygame.KEYDOWN:
@@ -379,36 +482,9 @@ class EditTool(Tool):
 
         state.sim.refresh()
 
-    def draw_overlay(self, surface, state, font):
-        index = state.selected_index
-        line = font.height + 3
-        if index is None:
-            font.draw(surface, 12, surface.get_height() // 2 - line,
-                      "Click a body first, then change it", palette.WARN)
-            return
-
-        world = state.sim.world
-        values = {
-            "mass": "%s" % _mass_label(float(world.mass[index])),
-            "density": "%.3g g/cm3" % units.to_gcm3(edits.body_density(world, index)),
-            "material": world.bodies[index].material.name,
-        }
-        y = surface.get_height() // 2 - len(EDIT_FIELDS) * line
-        font.draw(surface, 12, y - line, world.bodies[index].name, palette.SELECT)
-        for k, field in enumerate(EDIT_FIELDS):
-            active = k == self.field_index
-            colour = palette.SELECT if active else palette.TEXT_DIM
-            marker = "> " if active else "  "
-            font.draw(surface, 12, y + k * line,
-                      "%s%-9s %s" % (marker, field, values[field]), colour)
-
-        if world.bodies[index].kind != KIND_STAR:
-            ratio = edits.ignition_ratio(world, index)
-            font.draw(surface, 12, y + len(EDIT_FIELDS) * line + line,
-                      "%.0fx heavier to ignite" % ratio, palette.WARN)
-        else:
-            font.draw(surface, 12, y + len(EDIT_FIELDS) * line + line,
-                      "burning", palette.STAR_GLOW)
+    # This tool draws no overlay: its panel carries every value it used to
+    # print over the world, and the inspector already names the body.  Two
+    # copies of the same number is one of them eventually being wrong.
 
 
 def _mass_label(mass):
@@ -424,3 +500,8 @@ TOOLS = {
     pygame.K_2: LaunchTool,
     pygame.K_3: EditTool,
 }
+
+#: The same three tools addressed by name, for the buttons.  Keyed off the tool
+#: rather than duplicated, so the two routes cannot disagree about what "Throw"
+#: means.
+TOOL_BY_NAME = {cls.name.lower(): cls for cls in TOOLS.values()}
