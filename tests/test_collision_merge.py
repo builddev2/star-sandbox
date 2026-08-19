@@ -90,5 +90,5 @@ def test_hypervelocity_impact_is_catastrophic():
     fast = 500.0 / units.AUD_TO_KMS
     world = _pair(units.EARTH_MASS, r, (0.0, 0.0),
                   units.EARTH_MASS * 0.1, r * 0.5, (fast, 0.0), r)
-    c = collisions.Collision(0, 1, 0.5, fast)
+    c = collisions.Collision(0, 1, 0.5, fast, v_impact=fast)
     assert collisions.is_catastrophic(world, c) is True

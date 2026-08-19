@@ -12,6 +12,7 @@ other until ``no_collide_until``; without that they re-merge on the next substep
 and the planet appears to flicker and reassemble.
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -30,6 +31,14 @@ class Collision:
     s: float
     #: Relative speed at the end of the step, AU/day.
     v_rel: float
+    #: Speed at contact, AU/day: ``v_rel`` with the pair's mutual escape
+    #: velocity folded in.  A body released from rest at contact separation
+    #: still arrives at escape speed, and ``v_rel`` alone -- measured once at
+    #: the end of the step -- misses that gravitational focusing entirely.
+    v_impact: float = 0.0
+    #: Normalised impact parameter at contact: 0 is dead centre, 1 is a graze
+    #: along the line where the two surfaces just touch.
+    b: float = 0.0
 
 
 def find_collisions(world, prev_pos):
@@ -83,25 +92,40 @@ def find_collisions(world, prev_pos):
             continue
         big, small = (a, b) if mass[a] >= mass[b] else (b, a)
         dv = vel[small] - vel[big]
-        out.append(Collision(big, small, float(s[a, b]),
-                             float(np.hypot(dv[0], dv[1]))))
+        v_rel = float(np.hypot(dv[0], dv[1]))
+        sep = float(radii[big] + radii[small])
+        v_esc = math.sqrt(2.0 * units.G * float(mass[big] + mass[small]) / sep) \
+            if sep > 0.0 else 0.0
+        v_impact = math.hypot(v_rel, v_esc)
+        miss = math.sqrt(max(float(dist2[a, b]), 0.0))
+        impact_b = min(miss / sep, 1.0) if sep > 0.0 else 0.0
+        out.append(Collision(big, small, float(s[a, b]), v_rel, v_impact, impact_b))
 
     out.sort(key=lambda c: c.s)
     return out
 
 
 def impact_energy(world, c):
-    """Kinetic energy of the impact in the pair's centre-of-mass frame.
+    """Kinetic energy of the impact in the pair's centre-of-mass frame, at contact.
 
     Using the reduced mass is what makes this the energy actually available to do
     damage: the part of the kinetic energy that is not just the pair drifting.
+    ``v_impact`` rather than ``v_rel`` is what makes it the energy on arrival,
+    not the energy however far apart the two bodies happened to be when the
+    swept-collision test last sampled them.
     """
     mi, mj = world.mass[c.i], world.mass[c.j]
     total = mi + mj
     if total <= 0.0:
         return 0.0
     reduced = mi * mj / total
-    return 0.5 * reduced * c.v_rel * c.v_rel
+    return 0.5 * reduced * c.v_impact * c.v_impact
+
+
+def specific_impact_energy(world, c):
+    """Impact kinetic energy per unit total mass -- the Q_R of the literature."""
+    total = float(world.mass[c.i] + world.mass[c.j])
+    return impact_energy(world, c) / total if total > 0.0 else 0.0
 
 
 def binding_of_target(world, c):
@@ -110,7 +134,11 @@ def binding_of_target(world, c):
 
 
 def is_catastrophic(world, c):
-    """True when the impact carries more energy than the target's self-gravity."""
+    """True when the impact carries more energy than the target's self-gravity.
+
+    Superseded by :func:`classify`, which compares against the target's real
+    disruption threshold instead of gravity alone; kept until that lands.
+    """
     return bool(impact_energy(world, c) >= binding_of_target(world, c))
 
 

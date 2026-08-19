@@ -14,7 +14,8 @@ def _impact(target_mass=units.EARTH_MASS, ratio=0.1, speed_kms=500.0):
     world.add("Target", ROCK, target_mass, r, np.zeros(2), np.zeros(2))
     world.add("Bullet", ROCK, target_mass * ratio, r * 0.5,
               np.array([r, 0.0]), np.array([-speed_kms / units.AUD_TO_KMS, 0.0]))
-    c = collisions.Collision(0, 1, 0.5, speed_kms / units.AUD_TO_KMS)
+    speed = speed_kms / units.AUD_TO_KMS
+    c = collisions.Collision(0, 1, 0.5, speed, v_impact=speed)
     return world, c
 
 

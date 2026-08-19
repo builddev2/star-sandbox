@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from src import collisions, materials, units
 from src.world import World
@@ -108,3 +109,62 @@ def test_event_immunity_expires():
     world.time = 9.0
     prev = _stepped(world, 1.0)
     assert len(collisions.find_collisions(world, prev)) == 1
+
+
+# --- impact geometry ----------------------------------------------------------------
+
+def test_impact_speed_folds_in_gravitational_focusing_even_at_zero_relative_speed():
+    """Two bodies motionless relative to each other but already touching still
+    arrive at their mutual escape velocity -- that is what free-fall from
+    contact separation means -- and v_rel alone would report zero."""
+    r = units.EARTH_RADIUS
+    m = units.EARTH_MASS
+    world = _world_with([
+        (m, r, (0.0, 0.0), (0.0, 0.0)),
+        (m, r, (r, 0.0), (0.0, 0.0)),
+    ])
+    prev = _stepped(world, 1.0)
+    hits = collisions.find_collisions(world, prev)
+    assert hits
+    assert hits[0].v_rel == 0.0
+    v_esc = units.escape_velocity(2.0 * m, 2.0 * r)
+    assert hits[0].v_impact == pytest.approx(v_esc, rel=1e-9)
+
+
+def test_head_on_impact_parameter_is_near_zero():
+    r = units.EARTH_RADIUS
+    world = _world_with([
+        (units.EARTH_MASS, r, (0.0, 0.0), (0.0, 0.0)),
+        (units.EARTH_MASS * 1e-6, r * 0.01, (0.01, 0.0), (-1.0, 0.0)),
+    ])
+    prev = _stepped(world, 1.0)
+    hits = collisions.find_collisions(world, prev)
+    assert hits
+    assert hits[0].b < 0.05
+
+
+def test_grazing_impact_parameter_is_near_one():
+    r = units.EARTH_RADIUS
+    world = _world_with([
+        (units.EARTH_MASS, r, (0.0, 0.0), (0.0, 0.0)),
+        (units.EARTH_MASS * 1e-6, r * 0.01, (0.01, 1.008 * r), (-1.0, 0.0)),
+    ])
+    prev = _stepped(world, 1.0)
+    hits = collisions.find_collisions(world, prev)
+    assert hits
+    assert hits[0].b > 0.9
+
+
+def test_impact_energy_uses_contact_speed_not_end_of_step_speed():
+    """A pair released from rest at contact separation must be assessed at
+    the escape-velocity impact it is actually about to suffer, not as a
+    motionless graze that could never do any damage."""
+    r = units.EARTH_RADIUS
+    m = units.EARTH_MASS
+    world = _world_with([
+        (m, r, (0.0, 0.0), (0.0, 0.0)),
+        (m, r, (r, 0.0), (0.0, 0.0)),
+    ])
+    prev = _stepped(world, 1.0)
+    c = collisions.find_collisions(world, prev)[0]
+    assert collisions.impact_energy(world, c) > 0.0
