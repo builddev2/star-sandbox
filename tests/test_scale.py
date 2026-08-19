@@ -50,6 +50,17 @@ def test_the_sun_stays_a_small_fraction_of_the_view():
     assert _px(units.SUN_RADIUS) < 0.05 * H
 
 
+def test_the_sun_is_drawn_smaller_than_earths_orbit():
+    """Otherwise Earth is drawn inside the star, which is both wrong and the
+    exact failure the floor cap exists to prevent."""
+    earth_orbit_px = 1.0 * WIDE_ZOOM
+    assert _px(units.SUN_RADIUS) < earth_orbit_px
+
+
+def test_the_sun_is_still_the_biggest_thing_on_screen():
+    assert _px(units.SUN_RADIUS) > _px(units.JUPITER_RADIUS)
+
+
 def test_true_scale_takes_over_continuously_when_zoomed_in():
     """No mode switch, no pop: as you zoom in, the true size overtakes the floor
     and from then on the drawing is honest."""

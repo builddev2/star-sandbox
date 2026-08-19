@@ -30,7 +30,10 @@ REF_HEIGHT = 360.0
 FLOOR_BASE = 2.0
 FLOOR_EXP = 0.35
 FLOOR_MIN = 1.0
-FLOOR_MAX = 14.0
+#: The ceiling is what keeps the Sun's drawn disc smaller than Earth's orbit at
+#: full-system zoom.  Uncapped, the 0.35 power puts the Sun at 31px against an
+#: orbit only 24.7px across, and Earth is drawn *inside* the star.
+FLOOR_MAX = 6.0
 
 
 def _floor(r_true, unit):

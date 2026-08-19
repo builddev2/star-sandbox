@@ -32,7 +32,10 @@ HIGHLIGHT_SCALE = 0.62
 #: Below this many pixels there is no room for texture; draw a flat dot.
 DETAIL_THRESHOLD = 4
 #: Glow radius as a multiple of a star's disc radius.
-GLOW_SCALE = 2.6
+GLOW_SCALE = 2.2
+#: Peak brightness of the halo just outside the disc, as a fraction of the
+#: star's own colour.  Additive, so this is how much it lifts the background.
+GLOW_STRENGTH = 0.55
 
 
 def _shade(tone, factor):
@@ -100,15 +103,21 @@ def _make_body(material, seed, px, lit_angle, is_star):
         size = int(px * GLOW_SCALE) * 2 + 1
         centre = size // 2
         surface = pygame.Surface((size, size), pygame.SRCALPHA)
-        # Glow: concentric rings fading outward, blended additively at draw time.
-        steps = max(4, px)
+
+        # The glow is blitted with BLEND_ADD, and **BLEND_ADD ignores alpha** --
+        # it adds raw channel values.  So the falloff has to live in the colour
+        # itself; encoding it as alpha produces a solid white disc that swallows
+        # everything within a couple of AU of the star.
+        steps = max(6, px)
         for k in range(steps, 0, -1):
-            radius = int(px + (px * (GLOW_SCALE - 1.0)) * (k / steps))
-            alpha = int(80 * (1.0 - k / steps) ** 2)
-            pygame.draw.circle(surface, tuple(light) + (alpha,),
+            fraction = k / steps
+            radius = int(px + (px * (GLOW_SCALE - 1.0)) * fraction)
+            falloff = (1.0 - fraction) ** 2.2 * GLOW_STRENGTH
+            pygame.draw.circle(surface, _shade(light, falloff) + (255,),
                                (centre, centre), radius)
-        pygame.draw.circle(surface, light, (centre, centre), px)
-        pygame.draw.circle(surface, (255, 255, 255), (centre, centre),
+
+        pygame.draw.circle(surface, tuple(light) + (255,), (centre, centre), px)
+        pygame.draw.circle(surface, (255, 255, 255, 255), (centre, centre),
                            max(1, int(px * 0.72)))
         return surface
 
