@@ -7,11 +7,15 @@ import pygame
 from ..render import palette
 from ..render.camera import Camera
 from ..render.draw import ViewSettings, WorldRenderer
+from ..render.hud import Hud
 from ..render.pixelfont import PixelFont
 from ..render.sprites import SpriteCache
 from ..render.starfield import Starfield
 from ..sim import Simulation
 from .config import DEFAULT_S, open_display
+from .input import handle_event
+from .state import AppState
+from .tools import SelectTool
 
 
 def probe(fullscreen=False):
@@ -20,7 +24,6 @@ def probe(fullscreen=False):
     ctx = open_display(fullscreen=fullscreen)
     info = {
         "desktop_size": pygame.display.get_desktop_sizes(),
-        "internal_surface": ctx.surface.get_size(),
         "window_size": pygame.display.get_window_size(),
         "driver": pygame.display.get_driver(),
         "default_S": DEFAULT_S,
@@ -29,46 +32,67 @@ def probe(fullscreen=False):
         "font_px": ctx.font_px,
     }
     for key, value in info.items():
-        print("%-18s %s" % (key, value))
+        print("%-16s %s" % (key, value))
     pygame.quit()
     return info
 
 
-def main():
-    pygame.init()
-    ctx = open_display()
-    clock = pygame.time.Clock()
+class App:
+    def __init__(self, fullscreen=True):
+        pygame.init()
+        self.ctx = open_display(fullscreen=fullscreen)
+        self.clock = pygame.time.Clock()
+        self.cache = SpriteCache()
+        self.camera = Camera(self.ctx.width, self.ctx.height)
+        self._build_render_stack()
+        self.state = AppState(Simulation(), self.camera, ViewSettings())
+        self.state.set_tool(SelectTool)
 
-    sim = Simulation()
-    camera = Camera(ctx.width, ctx.height)
-    font = PixelFont(ctx.font_px)
-    renderer = WorldRenderer(SpriteCache(), font)
-    stars = Starfield(ctx.width, ctx.height)
-    view = ViewSettings()
+    def _build_render_stack(self):
+        """(Re)create everything that is sized in pixels.  Called on grid change."""
+        self.font = PixelFont(self.ctx.font_px)
+        self.camera.width, self.camera.height = self.ctx.width, self.ctx.height
+        self.renderer = WorldRenderer(self.cache, self.font)
+        self.hud = Hud(self.font)
+        self.stars = Starfield(self.ctx.width, self.ctx.height)
+        self.cache.clear()
 
-    running = True
-    while running:
+    def step_once(self):
+        """One frame: events, physics, drawing.
+
+        Extracted from the loop so the smoke test can drive the real application
+        without owning the loop.
+        """
+        grid = self.ctx.s
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
-            elif event.type == pygame.MOUSEWHEEL:
-                mx, my = pygame.mouse.get_pos()
-                camera.zoom_by(event.y, mx, my)
+            handle_event(event, self.state, self.ctx)
+        if self.ctx.s != grid or self.ctx.width != self.camera.width:
+            self._build_render_stack()
 
-        frame_dt = clock.tick(60) / 1000.0
-        sim.advance(30.0 * frame_dt)
-        sim.update_trails()
-        camera.update_follow(sim.world)
+        state = self.state
+        frame_dt = self.clock.tick(60) / 1000.0
+        state.sim.advance(state.days_per_second * frame_dt)
+        state.sim.update_trails()
+        state.camera.update_follow(state.sim.world)
 
-        ctx.surface.fill(palette.SPACE)
-        stars.draw(ctx.surface, camera)
-        renderer.draw(ctx.surface, sim, camera, view)
+        surface = self.ctx.surface
+        surface.fill(palette.SPACE)
+        self.stars.draw(surface, state.camera)
+        self.renderer.draw(surface, state.sim, state.camera, state.view,
+                           selected_id=state.selected_id)
+        state.tool.draw_overlay(surface, state, self.font)
+        self.hud.draw(surface, state)
         pygame.display.flip()
 
-    pygame.quit()
-    return 0
+    def run(self):
+        while self.state.running:
+            self.step_once()
+        pygame.quit()
+        return 0
+
+
+def main():
+    return App().run()
 
 
 if __name__ == "__main__":
