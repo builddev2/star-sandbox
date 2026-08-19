@@ -146,3 +146,127 @@ def merge(world, c):
     world.remove(j)
     # remove() swap-removes, so i may no longer be the survivor's row.
     return world.index_of(survivor.id)
+
+
+#: Fewer than this and a shattering reads as a bad merge rather than a break-up.
+MIN_FRAGMENTS = 6
+#: More than this and the world fills with debris the O(n^2) kernel cannot afford.
+MAX_FRAGMENTS = 12
+
+#: Fragments are placed on a circle this many target-radii out, so they start
+#: clear of one another rather than interpenetrating.
+FRAGMENT_RING = 1.15
+#: Immunity lasts long enough for fragments to travel this many target radii.
+IMMUNITY_RADII = 5.0
+
+
+class CollisionResolver:
+    """Owns the RNG and the event counter for collision outcomes.
+
+    Kept as an object rather than module functions so that tests are
+    deterministic and independent: two resolvers with the same seed produce the
+    same debris field, and no global state leaks between tests.
+    """
+
+    def __init__(self, seed=1234):
+        self.rng = np.random.default_rng(seed)
+        self._next_event_id = 1
+
+    # --- outcomes --------------------------------------------------------------
+
+    def shatter(self, world, c):
+        """Break the pair into fragments.  Returns their indices.
+
+        Falls back to :func:`merge` when there is not room for a credible number
+        of fragments -- a two-piece "shattering" looks like a bug.
+        """
+        i, j = c.i, c.j
+        mi, mj = float(world.mass[i]), float(world.mass[j])
+        total = mi + mj
+        r_big = float(world.radius[i])
+
+        momentum = mi * world.vel[i] + mj * world.vel[j]
+        centre = (mi * world.pos[i] + mj * world.pos[j]) / total
+        drift = momentum / total
+
+        di = units.density_from_mass_radius(mi, r_big)
+        dj = units.density_from_mass_radius(mj, float(world.radius[j]))
+        density = (mi * di + mj * dj) / total
+
+        # How badly did the impact overshoot what held the target together?
+        binding = binding_of_target(world, c)
+        excess = impact_energy(world, c) / binding if binding > 0.0 else 1.0
+        excess = max(excess, 1.0)
+
+        wanted = int(MIN_FRAGMENTS + 2.0 * np.log2(excess))
+        room = world.capacity - (world.n - 2)
+        count = int(min(wanted, MAX_FRAGMENTS, room))
+        if count < MIN_FRAGMENTS:
+            # A two-piece "shattering" reads as a bug, not a break-up.
+            merge(world, c)
+            return []
+
+        parent = world.bodies[i]
+        material = parent.material
+        event_id = self._next_event_id
+        self._next_event_id += 1
+
+        # Mass split: one dominant remnant, the rest a random partition.
+        remnant_share = float(np.clip(0.50 - 0.08 * np.log2(excess), 0.30, 0.50))
+        weights = self.rng.random(count - 1) + 0.15
+        weights *= (1.0 - remnant_share) / weights.sum()
+        shares = np.concatenate(([remnant_share], weights))
+        masses = shares * total
+
+        kick = units.escape_velocity(total, r_big)
+        angles = (np.arange(count) / count) * 2.0 * np.pi
+        angles += self.rng.normal(0.0, 0.25, count)
+        directions = np.stack([np.cos(angles), np.sin(angles)], axis=1)
+        speeds = kick * self.rng.uniform(0.55, 1.45, count)
+        # The remnant keeps most of the mass, so give it least of the kick.
+        speeds[0] *= 0.35
+
+        positions = centre + directions * (FRAGMENT_RING * r_big)
+        velocities = drift + directions * speeds[:, None]
+
+        # Correct so total momentum is exactly what it was before the impact.
+        error = (masses[:, None] * velocities).sum(axis=0) - momentum
+        velocities -= error / total
+
+        world.remove_many([i, j])
+
+        made = []
+        for k in range(count):
+            mass = float(masses[k])
+            body = world.add(
+                "Fragment", material, mass,
+                units.radius_from_mass_density(mass, density),
+                positions[k], velocities[k],
+                kind=KIND_DEBRIS, seed=int(self.rng.integers(0, 1 << 30)),
+            )
+            if body is None:
+                break
+            body.event_id = event_id
+            body.no_collide_until = world.time + IMMUNITY_RADII * r_big / max(kick, 1e-12)
+            made.append(world.index_of(body.id))
+        return made
+
+    # --- driver ----------------------------------------------------------------
+
+    def resolve(self, world, integrator, prev_pos):
+        """Detect and resolve every collision from the step just taken.
+
+        Returns the number of events.  Indices shift as bodies are removed, so
+        only the first collision of a batch is trusted directly; the rest are
+        re-detected on the next call, which is one substep later and invisible.
+        """
+        hits = find_collisions(world, prev_pos)
+        if not hits:
+            return 0
+        c = hits[0]
+        if is_catastrophic(world, c):
+            self.shatter(world, c)
+        else:
+            merge(world, c)
+        integrator.refresh(world)
+        return 1
