@@ -101,3 +101,36 @@ def test_the_sun_orbits_nothing():
     world = scenarios.solar_system()
     names = [b.name for b in world.bodies]
     assert orbits.dominant_attractor(world, names.index("Sun")) is None
+
+
+def test_periapsis_is_positive_for_an_escaping_body():
+    """r(1-e)/(1+e) goes negative once e > 1, which made the inspector report a
+    negative closest approach and left the aiming preview with nothing to draw."""
+    import numpy as np
+    mu = units.G
+    pos = np.array([1.0, 0.0])
+    for factor in (1.05, 1.3, 3.0):
+        vel = np.array([0.0, math.sqrt(2.0 * mu) * factor])
+        el = orbits.elements_from_state(mu, pos, vel)
+        assert el["bound"] is False
+        assert el["e"] > 1.0
+        assert el["periapsis"] > 0.0, "e=%.3f gave periapsis %.3g" % (
+            el["e"], el["periapsis"])
+        assert el["periapsis"] <= 1.0 + 1e-12
+
+
+def test_semi_latus_rectum_is_consistent_for_bound_orbits():
+    for a, e in ((1.0, 0.0), (2.5, 0.3), (0.8, 0.7)):
+        pos, vel = orbits.state_from_elements(units.G, a, e, 0.3, 1.1)
+        el = orbits.elements_from_state(units.G, pos, vel)
+        assert el["p"] == pytest.approx(a * (1 - e * e), rel=1e-9)
+
+
+def test_bound_is_a_real_bool_even_with_numpy_inputs():
+    """mu is usually a numpy scalar; a leaking np.bool_ breaks `is True`."""
+    import numpy as np
+    mu = np.float64(units.G)
+    pos, vel = orbits.state_from_elements(mu, 1.0, 0.1, 0.0, 0.0)
+    el = orbits.elements_from_state(mu, np.asarray(pos), np.asarray(vel))
+    assert el["bound"] is True
+    assert type(el["bound"]) is bool
