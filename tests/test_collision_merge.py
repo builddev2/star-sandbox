@@ -80,8 +80,8 @@ def test_gentle_touch_is_not_catastrophic():
     r = units.EARTH_RADIUS
     world = _pair(units.EARTH_MASS, r, (0.0, 0.0),
                   units.MOON_MASS, r * 0.27, (1e-5, 0.0), r)
-    c = collisions.Collision(0, 1, 0.5, 1e-5)
-    assert collisions.is_catastrophic(world, c) is False
+    c = collisions.Collision(0, 1, 0.5, 1e-5, v_impact=1e-5)
+    assert collisions.classify(world, c) != collisions.DISRUPT
 
 
 def test_hypervelocity_impact_is_catastrophic():
@@ -91,4 +91,4 @@ def test_hypervelocity_impact_is_catastrophic():
     world = _pair(units.EARTH_MASS, r, (0.0, 0.0),
                   units.EARTH_MASS * 0.1, r * 0.5, (fast, 0.0), r)
     c = collisions.Collision(0, 1, 0.5, fast, v_impact=fast)
-    assert collisions.is_catastrophic(world, c) is True
+    assert collisions.classify(world, c) == collisions.DISRUPT

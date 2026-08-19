@@ -129,17 +129,52 @@ def specific_impact_energy(world, c):
 
 
 def binding_of_target(world, c):
-    """Gravitational binding energy of the larger body: what holds it together."""
+    """Gravitational binding energy of the larger body: what holds it together.
+
+    Used only by the fragment-speed budget in :meth:`CollisionResolver.shatter`
+    -- how hard the debris has to be thrown to actually escape -- not by
+    :func:`classify`, which compares against the real disruption threshold
+    instead of gravity alone.
+    """
     return units.binding_energy(world.mass[c.i], world.radius[c.i])
 
 
-def is_catastrophic(world, c):
-    """True when the impact carries more energy than the target's self-gravity.
+ACCRETE = "accrete"
+GRAZE = "graze"
+DISRUPT = "disrupt"
 
-    Superseded by :func:`classify`, which compares against the target's real
-    disruption threshold instead of gravity alone; kept until that lands.
+#: Below this mass ratio the smaller body cannot survive a graze -- it is a
+#: bullet, not a second planet, and simply buries itself regardless of angle.
+GRAZE_MIN_MASS_RATIO = 0.02
+
+
+def threshold_of_target(world, c):
+    """Specific energy needed to disperse the pair, in simulation units."""
+    material = world.bodies[c.i].material
+    density = units.density_from_mass_radius(float(world.mass[c.i]),
+                                             float(world.radius[c.i]))
+    return units.disruption_threshold(float(world.radius[c.i]), density,
+                                      material.toughness)
+
+
+def classify(world, c):
+    """Which of the three outcomes this impact is.
+
+    A graze needs both a shallow-enough angle (b past the target's own
+    critical impact parameter -- for the Sun against an asteroid that is
+    0.99999, correctly ruling a graze out) and a projectile heavy enough to
+    survive being deflected rather than simply erased.  Anything else is
+    accretion or disruption, decided by the specific impact energy against
+    the target's own disruption threshold.
     """
-    return bool(impact_energy(world, c) >= binding_of_target(world, c))
+    r_i, r_j = float(world.radius[c.i]), float(world.radius[c.j])
+    b_crit = r_i / (r_i + r_j) if (r_i + r_j) > 0.0 else 0.0
+    ratio = float(world.mass[c.j] / world.mass[c.i]) if world.mass[c.i] > 0.0 else 0.0
+    if c.b > b_crit and ratio >= GRAZE_MIN_MASS_RATIO:
+        return GRAZE
+    if specific_impact_energy(world, c) >= threshold_of_target(world, c):
+        return DISRUPT
+    return ACCRETE
 
 
 def merge(world, c):
@@ -292,9 +327,13 @@ class CollisionResolver:
         if not hits:
             return 0
         c = hits[0]
-        if is_catastrophic(world, c):
+        outcome = classify(world, c)
+        if outcome == DISRUPT:
             self.shatter(world, c)
         else:
+            # GRAZE falls back to a plain merge until Task 5 gives it its own
+            # handler; classify() already keeps the Sun-vs-asteroid case out
+            # of this branch via b_crit, so nothing regresses in the meantime.
             merge(world, c)
         integrator.refresh(world)
         return 1
