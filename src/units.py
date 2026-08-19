@@ -63,6 +63,34 @@ STANDARD_GRAVITY = 9.80665                   # m/s^2
 
 FOUR_THIRDS_PI = 4.0 / 3.0 * math.pi
 
+#: 1 (AU/day)^2 expressed in J/kg (== m^2/s^2).  Specific energies -- the
+#: energy per unit mass an impact delivers -- are quoted in J/kg in every
+#: paper, and in AU^2/day^2 in here.
+SPECIFIC_ENERGY_SI = (AU_M / SEC_PER_DAY) ** 2
+
+#: Benz & Asphaug (1999) basalt fit for the catastrophic-disruption specific
+#: energy, converted from erg/g and centimetres to J/kg and metres.  The first
+#: term is material strength and falls with size; the second is self-gravity
+#: and rises with it.  They cross near 200 m, which is why a boulder is harder
+#: to break apart than a mountain is.
+QD_STRENGTH_SI = 608.0
+QD_STRENGTH_EXP = -0.38
+QD_GRAVITY_SI = 1.574e-2
+QD_GRAVITY_EXP = 1.36
+
+
+def disruption_threshold(radius, density, toughness=1.0):
+    """Specific energy needed to disperse half of a body, in simulation units.
+
+    ``radius`` and ``density`` are in simulation units; ``toughness`` scales
+    the strength branch only, because how hard a material is to crack is
+    chemistry, while its self-gravity is not.
+    """
+    r_m = max(radius * AU_M, 1.0e-3)
+    strength = toughness * QD_STRENGTH_SI * r_m ** QD_STRENGTH_EXP
+    gravity = QD_GRAVITY_SI * to_gcm3(density) * r_m ** QD_GRAVITY_EXP
+    return (strength + gravity) / SPECIFIC_ENERGY_SI
+
 
 # --- Sphere geometry ----------------------------------------------------------------
 
