@@ -368,3 +368,128 @@ def test_dragging_far_enough_actually_escapes(state):
     el = orbits.elements_from_state(mu, world.pos[index] - world.pos[attractor],
                                     world.vel[index] - world.vel[attractor])
     assert el["bound"] is False, "e=%.3f -- cannot throw anything free" % el["e"]
+
+
+# --- target lock --------------------------------------------------------------
+
+def _find(world, name):
+    return next(b for b in world.bodies if b.name == name)
+
+
+def test_pressing_x_then_clicking_a_body_locks_it_as_the_target(state):
+    world = state.sim.world
+    mars = _find(world, "Mars")
+    sx, sy = state.camera.world_to_screen(world.pos[world.index_of(mars.id)])
+
+    state.tool.on_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x, mod=0), state)
+    assert state.tool.picking_target
+    state.tool.on_event(_down(int(sx), int(sy)), state)
+
+    assert state.tool.target_id == mars.id
+    assert not state.tool.picking_target
+
+
+def test_clicking_empty_space_while_picking_clears_the_target(state):
+    world = state.sim.world
+    mars = _find(world, "Mars")
+    state.tool.target_id = mars.id
+
+    state.tool.on_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x, mod=0), state)
+    state.tool.on_event(_down(2, 2), state)          # a corner, nothing drawn there
+
+    assert state.tool.target_id is None
+
+
+def test_x_is_a_toggle(state):
+    state.tool.on_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x, mod=0), state)
+    assert state.tool.picking_target
+    state.tool.on_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x, mod=0), state)
+    assert not state.tool.picking_target
+
+
+def test_a_locked_target_produces_a_launch_velocity_that_actually_intercepts_it(state):
+    """Drives the tool's internal drag state directly, at an exact position
+    and speed, rather than through pixel-rounded mouse events: direction is
+    irrelevant once a target is locked, but position and speed are exactly
+    what the solve uses, and even a sub-pixel difference in either can flip
+    which of a mortar problem's two firing solutions comes back shortest."""
+    from src import orbits, units
+    from src.app.tools import DRAG_FRACTION
+    world = state.sim.world
+    mars = _find(world, "Mars")
+    state.tool.target_id = mars.id
+
+    # Launch from well clear of every planet, so the Sun is unambiguously
+    # what the throw orbits -- matching the tool's own _nearest_attractor.
+    launch_world = np.array([0.2, 0.0])
+    mu = units.G * float(world.mass[0])
+    rel = launch_world - world.pos[0]
+    speed = 2.0 * math.sqrt(mu / float(np.hypot(*rel)))     # comfortably reachable
+
+    reference_speed = state.tool._reference_speed(state, launch_world)
+    span = max(1.0, DRAG_FRACTION * state.camera.height)
+    length = speed / reference_speed * span
+    origin_screen = state.camera.world_to_screen(launch_world)
+
+    state.tool._origin = launch_world
+    state.tool._cursor = (origin_screen[0], origin_screen[1] - length)
+    state.tool._launch(state)
+
+    index = world.n - 1
+    assert world.bodies[index].name != "Mars"        # a new body was added
+
+    target_index = world.index_of(mars.id)
+    target_rel = world.pos[target_index] - world.pos[0]
+    target_vel_rel = world.vel[target_index] - world.vel[0]
+    expected = orbits.solve_intercept(mu, rel, speed, target_rel, target_vel_rel)
+    assert expected["hit"], "test setup must pick a reachable geometry"
+
+    got = world.vel[index] - world.vel[0]
+    assert got == pytest.approx(expected["velocity"], abs=1e-6)
+
+
+def test_target_lock_persists_across_multiple_throws(state):
+    world = state.sim.world
+    mars = _find(world, "Mars")
+    state.tool.target_id = mars.id
+
+    for _ in range(2):
+        state.tool.on_event(_down(500, 300), state)
+        state.tool.on_event(_move(560, 300, (60, 0)), state)
+        state.tool.on_event(_up(560, 300), state)
+
+    assert state.tool.target_id == mars.id
+
+
+def test_a_target_that_gets_removed_clears_the_lock(state):
+    world = state.sim.world
+    mars = _find(world, "Mars")
+    state.tool.target_id = mars.id
+    world.remove(world.index_of(mars.id))
+
+    assert state.tool._target_index(world) is None
+    assert state.tool.target_id is None
+
+
+def test_the_target_button_toggles_picking(state):
+    from src.app.tools import LaunchTool
+    control = next(c for row in state.tool.controls(state, None) for c in row
+                   if c.id == "throw.target")
+    assert state.tool.perform(control, state)
+    assert state.tool.picking_target
+
+
+def test_an_unreachable_target_falls_back_to_the_plain_drag(state):
+    """A target too far away at this speed must not leave the throw unusable."""
+    world = state.sim.world
+    mars = _find(world, "Mars")
+    state.tool.target_id = mars.id
+
+    state.tool.on_event(_down(500, 300), state)
+    state.tool.on_event(_move(600, 300, (100, 0)), state)   # a feeble, short drag
+    state.tool.on_event(_up(600, 300), state)
+
+    index = world.n - 1
+    # Same behaviour as the plain (untargeted) drag test: rightward drag,
+    # rightward launch velocity.
+    assert world.vel[index][0] > 0

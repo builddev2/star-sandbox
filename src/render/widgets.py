@@ -438,6 +438,10 @@ def draw_icon(surface, name, rect, colour):
         pygame.draw.line(surface, colour, (cx, cy - r), (cx, cy + r), 1)
         pygame.draw.line(surface, colour, (cx - r + 1, cy - r + 1), (cx + r - 1, cy + r - 1), 1)
         pygame.draw.line(surface, colour, (cx - r + 1, cy + r - 1), (cx + r - 1, cy - r + 1), 1)
+    elif name == "target":
+        pygame.draw.circle(surface, colour, (cx, cy), r, 1)
+        pygame.draw.circle(surface, colour, (cx, cy), max(1, r - 2), 1)
+        surface.set_at((cx, cy), colour)
     elif name == "power":
         # The gap sits at the top, where the stem goes through it: pygame's
         # angles run counterclockwise from three o'clock, so the top is pi/2.

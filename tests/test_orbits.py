@@ -148,10 +148,47 @@ def test_propagate_matches_state_from_elements_after_a_known_fraction_of_a_perio
     assert vel1 == pytest.approx(vel0, abs=1e-9)
 
 
-def test_propagate_leaves_an_unbound_body_unmoved():
+def test_propagate_moves_a_hyperbolic_body_along_its_own_path():
+    """A throw fast enough to escape still needs to lead a moving target, so a
+    hyperbolic body must propagate too, not just an elliptical one."""
     mu = units.G * 1.0
     pos = np.array([1.0, 0.0])
-    vel = np.array([0.0, 5.0])          # far past escape velocity
+    vel = np.array([0.0, 3.0])          # far past escape velocity
+    el0 = orbits.elements_from_state(mu, pos, vel)
+    assert el0["bound"] is False and el0["a"] < 0.0
+
+    pos1, vel1 = orbits.propagate(mu, pos, vel, 0.05)
+    assert not np.allclose(pos1, pos), "a hyperbolic body must actually move"
+
+    # The propagated state must still lie on the same conic (same a, e).
+    el1 = orbits.elements_from_state(mu, pos1, vel1)
+    assert el1["a"] == pytest.approx(el0["a"], rel=1e-9)
+    assert el1["e"] == pytest.approx(el0["e"], rel=1e-9)
+
+
+def test_propagate_and_flight_time_agree_on_a_hyperbolic_path():
+    mu = units.G * 1.0
+    pos = np.array([1.0, 0.0])
+    vel = np.array([0.0, 3.0])
+    el = orbits.elements_from_state(mu, pos, vel)
+    h = pos[0] * vel[1] - pos[1] * vel[0]
+
+    dt = 0.08
+    pos1, vel1 = orbits.propagate(mu, pos, vel, dt)
+    el1 = orbits.elements_from_state(mu, pos1, vel1)
+
+    t = orbits._orbit_flight_time(mu, el["a"], el["e"], el["true_anomaly"],
+                                  el1["true_anomaly"], h > 0.0)
+    assert t == pytest.approx(dt, rel=1e-6)
+
+
+def test_propagate_leaves_a_parabolic_body_unmoved():
+    """The e == 1 knife edge is rare enough (an exact escape trajectory) that
+    Barker's equation is not worth carrying; it is a documented no-op."""
+    mu = units.G * 1.0
+    pos = np.array([1.0, 0.0])
+    speed = math.sqrt(2.0 * mu / 1.0)   # exactly escape velocity: e == 1
+    vel = np.array([0.0, speed])
     pos1, vel1 = orbits.propagate(mu, pos, vel, 10.0)
     assert pos1 == pytest.approx(pos)
     assert vel1 == pytest.approx(vel)
@@ -204,5 +241,32 @@ def test_solve_intercept_leads_a_moving_target_onto_a_real_collision():
     # Fly the projectile forward exactly `t` days on its own solved orbit...
     proj_pos, _ = orbits.propagate(mu, launch, result["velocity"], t)
     # ...and fly the real target forward the same amount, independently.
+    real_target_pos, _ = orbits.propagate(mu, target_pos, target_vel, t)
+    assert proj_pos == pytest.approx(real_target_pos, abs=1e-3)
+
+
+def test_solve_intercept_leads_a_moving_target_even_on_an_unbound_throw():
+    """A throw fast enough to escape must still get a real (non-None) flight
+    time and lead the target -- the earlier bug: an unbound root's flight
+    time silently came back None, the fixed-point loop gave up after one
+    pass, and the projectile aimed at the target's position when the drag
+    started rather than where it would actually be."""
+    mu = units.G * 1.0
+    r_t = 2.0
+    v_t = math.sqrt(mu / r_t)
+    target_pos = np.array([0.0, r_t])
+    target_vel = np.array([-v_t, 0.0])
+
+    launch = np.array([0.2, 0.0])
+    speed = 2.0 * math.sqrt(mu / 0.2)          # comfortably past escape here
+    el = orbits.elements_from_state(mu, launch, np.array([0.0, speed]))
+    assert el["bound"] is False, "test setup must actually be unbound"
+
+    result = orbits.solve_intercept(mu, launch, speed, target_pos, target_vel)
+    assert result["hit"]
+    t = result["flight_time"]
+    assert t is not None and t > 0.0
+
+    proj_pos, _ = orbits.propagate(mu, launch, result["velocity"], t)
     real_target_pos, _ = orbits.propagate(mu, target_pos, target_vel, t)
     assert proj_pos == pytest.approx(real_target_pos, abs=1e-3)

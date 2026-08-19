@@ -34,6 +34,7 @@ KEY_HELP = (
     ("B", "the list of bodies"),
     ("F", "follow the selected body"),
     ("1 2 3", "Look / Throw / Edit"),
+    ("X", "lock a guaranteed-hit target (Throw)"),
     ("0", "stop the selected body dead"),
     ("T", "orbit trails on and off"),
     ("R", "real sizes (everything is a dot)"),
