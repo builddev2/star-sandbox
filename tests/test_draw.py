@@ -74,7 +74,10 @@ def test_drawing_the_solar_system_marks_the_surface(parts):
     parts["surface"].fill(palette.SPACE)
     parts["renderer"].draw(parts["surface"], parts["sim"], parts["camera"],
                            parts["view"])
-    assert pygame.transform.average_color(parts["surface"])[:3] != palette.SPACE[:3]
+    # Pixel count, not average colour: a dozen small discs on a 640x400 surface
+    # move the mean by less than one unit and round straight back to the
+    # background, which is how this test passed a solid-white blown-out Sun.
+    assert _ink(parts["surface"], palette.SPACE) > 500
 
 
 def test_drawing_an_empty_world_does_not_crash(parts):
