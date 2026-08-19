@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from .. import materials, orbits, units
+from .. import edits, materials, orbits, units
 from ..body import KIND_PLANET, KIND_STAR
 from ..render import palette
 
@@ -308,7 +308,119 @@ class LaunchTool(Tool):
             x += font.draw(surface, x, y, text, colour) + 18
 
 
+EDIT_FIELDS = edits.EDIT_FIELDS
+
+#: Screen pixels of horizontal drag per scrub notch.
+DRAG_PIXELS_PER_NOTCH = 6.0
+
+
+class EditTool(Tool):
+    name = "Edit"
+    hint = ("Up/Down pick what to change  -  Left/Right or drag to change it  -  "
+            "0 stops it dead  -  make it 84x heavier and it becomes a star")
+
+    def __init__(self):
+        self.field_index = 0
+        self._drag_x = None
+
+    def on_event(self, event, state):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_DOWN:
+                self.field_index = min(len(EDIT_FIELDS) - 1, self.field_index + 1)
+                return True
+            if event.key == pygame.K_UP:
+                self.field_index = max(0, self.field_index - 1)
+                return True
+            if event.key == pygame.K_RIGHT:
+                self._scrub(state, 1)
+                return True
+            if event.key == pygame.K_LEFT:
+                self._scrub(state, -1)
+                return True
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            index = state.pick_body_at(*event.pos)
+            if index is not None:
+                state.selected_id = state.sim.world.bodies[index].id
+            self._drag_x = event.pos[0]
+            return True
+
+        if event.type == pygame.MOUSEMOTION and self._drag_x is not None:
+            travelled = event.pos[0] - self._drag_x
+            notches = int(travelled / DRAG_PIXELS_PER_NOTCH)
+            if notches:
+                self._scrub(state, notches)
+                self._drag_x += notches * DRAG_PIXELS_PER_NOTCH
+            return True
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self._drag_x = None
+            return True
+
+        return False
+
+    def _scrub(self, state, notches):
+        index = state.selected_index
+        if index is None:
+            return
+        world = state.sim.world
+        field = EDIT_FIELDS[self.field_index]
+
+        if field == "mass":
+            edits.set_mass(world, index,
+                           edits.scrub_mass(float(world.mass[index]), notches))
+        elif field == "density":
+            current = units.to_gcm3(edits.body_density(world, index))
+            edits.set_density(
+                world, index,
+                units.from_gcm3(edits.scrub_density_gcm3(current, notches)))
+        else:
+            edits.cycle_material(world, index, 1 if notches > 0 else -1)
+
+        state.sim.refresh()
+
+    def draw_overlay(self, surface, state, font):
+        index = state.selected_index
+        line = font.height + 3
+        if index is None:
+            font.draw(surface, 12, surface.get_height() // 2 - line,
+                      "Click a body first, then change it", palette.WARN)
+            return
+
+        world = state.sim.world
+        values = {
+            "mass": "%s" % _mass_label(float(world.mass[index])),
+            "density": "%.3g g/cm3" % units.to_gcm3(edits.body_density(world, index)),
+            "material": world.bodies[index].material.name,
+        }
+        y = surface.get_height() // 2 - len(EDIT_FIELDS) * line
+        font.draw(surface, 12, y - line, world.bodies[index].name, palette.SELECT)
+        for k, field in enumerate(EDIT_FIELDS):
+            active = k == self.field_index
+            colour = palette.SELECT if active else palette.TEXT_DIM
+            marker = "> " if active else "  "
+            font.draw(surface, 12, y + k * line,
+                      "%s%-9s %s" % (marker, field, values[field]), colour)
+
+        if world.bodies[index].kind != KIND_STAR:
+            ratio = edits.ignition_ratio(world, index)
+            font.draw(surface, 12, y + len(EDIT_FIELDS) * line + line,
+                      "%.0fx heavier to ignite" % ratio, palette.WARN)
+        else:
+            font.draw(surface, 12, y + len(EDIT_FIELDS) * line + line,
+                      "burning", palette.STAR_GLOW)
+
+
+def _mass_label(mass):
+    if mass >= 0.02:
+        return "%.3g Suns" % mass
+    if mass >= 0.3 * units.JUPITER_MASS:
+        return "%.3g Jupiters" % units.to_jupiter_masses(mass)
+    return "%.3g Earths" % units.to_earth_masses(mass)
+
+
 TOOLS = {
     pygame.K_1: SelectTool,
     pygame.K_2: LaunchTool,
+    pygame.K_3: EditTool,
 }
