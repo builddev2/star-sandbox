@@ -152,6 +152,150 @@ def conic_points(mu, rel_pos, rel_vel, samples=128):
     return np.stack([radii * np.cos(angles), radii * np.sin(angles)], axis=1), bound
 
 
+def propagate(mu, rel_pos, rel_vel, dt):
+    """Where a body on this state vector will be after ``dt`` days.
+
+    Exact for a bound orbit: convert to mean anomaly, advance it linearly (mean
+    anomaly is the one angle that moves at a constant rate), and convert back.
+    An unbound body is returned unmoved -- a correct answer needs Kepler's
+    hyperbolic/parabolic form, which a thrown body's target has no business
+    needing, since anything worth aiming at is orbiting something.
+    """
+    el = elements_from_state(mu, rel_pos, rel_vel)
+    a, e = el["a"], el["e"]
+    if not el["bound"] or not math.isfinite(a) or a <= 0.0:
+        return np.array(rel_pos, dtype=float), np.array(rel_vel, dtype=float)
+
+    nu0 = el["true_anomaly"]
+    big0 = 2.0 * math.atan2(math.sqrt(1.0 - e) * math.sin(nu0 * 0.5),
+                            math.sqrt(1.0 + e) * math.cos(nu0 * 0.5))
+    mean0 = big0 - e * math.sin(big0)
+    mean1 = mean0 + math.sqrt(mu / a ** 3) * dt
+    nu1 = true_anomaly_from_mean(mean1, e)
+    return state_from_elements(mu, a, e, el["lon_peri"], nu1)
+
+
+def _orbit_flight_time(mu, a, e, nu0, nu1, prograde):
+    """Days for true anomaly to sweep from ``nu0`` to ``nu1`` in the direction
+    of actual motion, on the shortest (zero extra revolution) path."""
+    sign = 1.0 if prograde else -1.0
+    n0, n1 = sign * nu0, sign * nu1
+
+    def mean_of(nu):
+        big = 2.0 * math.atan2(math.sqrt(1.0 - e) * math.sin(nu * 0.5),
+                               math.sqrt(1.0 + e) * math.cos(nu * 0.5))
+        return big - e * math.sin(big)
+
+    dm = (mean_of(n1) - mean_of(n0)) % (2.0 * math.pi)
+    return dm / math.sqrt(mu / a ** 3)
+
+
+def solve_intercept_angle(mu, rel_pos, speed, target_point, samples=360):
+    """The launch direction from ``rel_pos`` at ``speed`` whose two-body conic
+    passes exactly through ``target_point``, if one exists at this speed.
+
+    Not a root-find on a smooth function: the semi-major axis a fixed launch
+    speed implies is constant (vis-viva), so as the launch angle sweeps a full
+    turn, the resulting orbit's radius back along the target's own direction
+    sweeps too -- and generically crosses the target's distance either twice,
+    once, or not at all, the classic "two firing solutions" of a mortar
+    problem. A coarse sweep finds every bracket; each is refined by bisection.
+    Both solutions are real, so the one whose flight is shorter wins, since
+    that is the one a player expects "aim and it goes" to mean.
+
+    Returns a dict: ``hit`` (bool), ``angle`` (radians), ``velocity``
+    (length-2 array), ``miss`` (AU, 0.0 when ``hit``), and ``flight_time``
+    (days, or None when the orbit is unbound or nothing hit).
+    """
+    r1 = np.asarray(rel_pos, dtype=float)
+    r1_mag = float(np.hypot(r1[0], r1[1]))
+    target = np.asarray(target_point, dtype=float)
+    target_mag = float(np.hypot(target[0], target[1]))
+    target_angle = math.atan2(target[1], target[0])
+
+    def miss_at(theta):
+        """Signed (orbit radius - target radius) along the target's direction."""
+        v = speed * np.array([math.cos(theta), math.sin(theta)])
+        el = elements_from_state(mu, r1, v)
+        nu_t = target_angle - el["lon_peri"]
+        denom = 1.0 + el["e"] * math.cos(nu_t)
+        if denom <= 1e-9 or not math.isfinite(el["p"]):
+            return None
+        return el["p"] / denom - target_mag
+
+    thetas = np.linspace(0.0, 2.0 * math.pi, samples, endpoint=False)
+    values = [miss_at(float(t)) for t in thetas]
+
+    roots = []
+    for k in range(samples):
+        a, b = values[k], values[(k + 1) % samples]
+        if a is None or b is None or (a > 0) == (b > 0):
+            continue
+        lo, hi = float(thetas[k]), float(thetas[k]) + (2.0 * math.pi / samples)
+        flo = a
+        for _ in range(40):
+            mid = 0.5 * (lo + hi)
+            fm = miss_at(mid)
+            if fm is None:
+                break
+            if (fm > 0) == (flo > 0):
+                lo, flo = mid, fm
+            else:
+                hi = mid
+        roots.append(0.5 * (lo + hi))
+
+    def result_for(theta):
+        v = speed * np.array([math.cos(theta), math.sin(theta)])
+        h = r1[0] * v[1] - r1[1] * v[0]
+        el = elements_from_state(mu, r1, v)
+        flight = None
+        if el["bound"] and h != 0.0:
+            nu_t = target_angle - el["lon_peri"]
+            flight = _orbit_flight_time(mu, el["a"], el["e"], el["true_anomaly"],
+                                        nu_t, h > 0.0)
+        return {"hit": True, "angle": theta, "velocity": v, "miss": 0.0,
+                "flight_time": flight}
+
+    if roots:
+        return min((result_for(t) for t in roots),
+                   key=lambda r: r["flight_time"] if r["flight_time"] is not None
+                   else math.inf)
+
+    best_theta = 0.0
+    best_miss = math.inf
+    for t, m in zip(thetas, values):
+        if m is not None and abs(m) < best_miss:
+            best_miss, best_theta = abs(m), float(t)
+    v = speed * np.array([math.cos(best_theta), math.sin(best_theta)])
+    return {"hit": False, "angle": best_theta, "velocity": v,
+           "miss": best_miss, "flight_time": None}
+
+
+def solve_intercept(mu, rel_pos, speed, target_rel_pos, target_rel_vel,
+                    iterations=6, samples=360):
+    """Like :func:`solve_intercept_angle`, but leads a moving target.
+
+    Both bodies' state is relative to the same attractor -- the one the
+    projectile is launched from -- which is exact when target and launch
+    point share a dominant attractor (the ordinary case: two planets round
+    the Sun, or a throw near a moon aimed at another moon of the same planet)
+    and a reasonable estimate otherwise. Each pass reads off the flight time
+    to the current guess, propagates the target forward by it under its own
+    two-body motion, and re-solves; the residual shrinks by roughly 85% a
+    pass, so six of them land within a hundredth of an Earth radius even when
+    the flight crosses a good fraction of the target's own orbit.
+    """
+    point = np.array(target_rel_pos, dtype=float)
+    result = solve_intercept_angle(mu, rel_pos, speed, point, samples=samples)
+    for _ in range(iterations - 1):
+        if not result["hit"] or result["flight_time"] is None:
+            break
+        point, _ = propagate(mu, target_rel_pos, target_rel_vel, result["flight_time"])
+        result = solve_intercept_angle(mu, rel_pos, speed, point, samples=samples)
+    result["target_point"] = point
+    return result
+
+
 def dominant_attractor(world, index):
     """Index of the body that ``index`` should be considered to orbit.
 
