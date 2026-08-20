@@ -38,6 +38,9 @@ to run it. This spec covers the layer that makes it a program.
 - Throw new bodies in with a live exact-orbit aiming preview
 - Edit existing bodies' mass, density and material; zero their velocity
 - Collisions: merge, or shatter when the impact exceeds binding energy
+  ([superseded](2026-08-18-collision-physics-and-impact-effects-design.md) by a real
+  disruption threshold, a hit-and-run graze outcome, tidal/thermal destruction near a
+  star, and impact visuals)
 - Pixel-art rendering at Retina resolution, fullscreen
 
 ### Out (v1)

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (353 tests, ~37s)
+python selftest.py                      # whole suite (422 tests, ~40-50s)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -26,14 +26,15 @@ Three layers, enforced by `tests/test_layering.py`:
 
 | | |
 |---|---|
-| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. |
-| `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets. Everything that touches pixels. |
+| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star), both emitting the plain-data `ImpactEvent`. |
+| `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
 
 `App.step_once()` (`src/app/main.py`) is one frame: events → `ui.update` (held steppers) →
-`sim.advance` → `sim.update_trails` → camera follow → draw world → draw HUD →
-`ui.build` → `ui.draw`. It is factored out of `run()` so `tests/test_smoke.py` can drive
-the real application headless.
+refresh `world.contact_radius` from the camera → `sim.advance` → `sim.update_trails` →
+camera follow → drain `sim.impacts` into `state.effects` → draw world → `effects.update` /
+`effects.draw` → draw the tool overlay → draw HUD → `ui.build` → `ui.draw`. It is factored
+out of `run()` so `tests/test_smoke.py` can drive the real application headless.
 
 The interface is built **at the end of the frame**, from the state about to be shown, so
 the next frame's clicks hit exactly what is on screen.
@@ -55,6 +56,18 @@ or fast time scales.
 - **Mass and density are set; radius is always derived** (`src/edits.py`). There is no
   code path allowed to produce an inconsistent mass/radius/density triple. Kind follows
   mass: crossing `units.STAR_MASS_THRESHOLD` ignites a body, dropping below extinguishes it.
+- **`World.contact_radius` is not `World.radius`.** Every collision *outcome* the physics
+  computes (energy, impact parameter, disruption threshold, fragment count, ...) uses the
+  true `radius`. Only the yes/no question "did these two touch" in `find_collisions` uses
+  `contact_radius`, which the app layer refreshes once a frame from what the camera actually
+  draws (`render/scale.contact_radii_au`, `World.clamp_contact_radii`) — otherwise a shot
+  aimed at what is on screen misses whatever the drawn-radius floor inflated. A mutation of
+  `radius` (merge, graze, accretion, ablation) must reset `contact_radius` to match, so it is
+  never left below true size in the substeps before the next frame's refresh.
+- **Collision and disruption thresholds are `units.disruption_threshold`, never gravitational
+  binding energy alone.** Binding energy alone puts the shatter point at roughly escape
+  velocity, which is far too easy to reach; the real threshold has a material-strength branch
+  (scaled by `Material.toughness`) that dominates for anything smaller than ~100 m.
 - **Every action has a button, and every button carries its hotkey.** A control never
   reimplements a key: it names an action that is the same `AppState` or tool method the
   key already called. `tests/test_ui.py` reads the shortcut list out of `hud.KEY_HELP` and
@@ -77,9 +90,28 @@ or fast time scales.
   years per second the integrator wants thousands of substeps per frame; without the cap
   the window stops responding. It degrades to slow motion and the HUD reports `last_ratio`.
 - **Collision detection is swept, not point-in-time** (`collisions.py`). A fast projectile
-  is outside the target both before and after a step. Fragments from one shattering share
-  an `event_id` and ignore each other until `no_collide_until`, otherwise they re-merge on
-  the next substep.
+  is outside the target both before and after a step. Fragments from one shattering (or a
+  graze, or cratering ejecta) share an `event_id` and ignore each other until
+  `no_collide_until`, otherwise they re-merge on the next substep.
+- **A collision is one of three outcomes, not a merge/shatter binary**: `classify()` picks
+  accretion, a hit-and-run graze, or disruption from the specific impact energy against
+  `disruption_threshold` and the impact angle against the target's own critical impact
+  parameter — a graze needs both a shallow angle and a projectile heavy enough to survive
+  being deflected (`GRAZE_MIN_MASS_RATIO`). Fragment speeds and the largest-remnant mass
+  (Leinhardt & Stewart) are bounded by the energy the impact actually delivered above the
+  threshold, not handed out at a flat multiple of escape velocity.
+- **Destruction does not require contact** (`destruction.py`). A body can be torn apart by a
+  star's tide (`tidal_stress_ratio`, gravity-only tidal stress is a pure density ratio,
+  independent of the body's own size — the classic Roche result) or boiled away by its heat
+  (`equilibrium_temperature` against `Material.vapour_temperature_k`), run once a substep
+  over stars only. Like `CollisionResolver.resolve()`, only the single worst violation is
+  handled per call, since removing a body shifts every index after it.
+- **Impact effects advance on wall-clock time, never simulated time** (`render/effects.py`).
+  A physics quantity (`ImpactEvent.vel`, AU/day) must never be used as a particle's
+  real-second world velocity — that was a real bug: a flash inheriting it directly shot off
+  screen within one frame. Every particle's velocity is a purpose-built AU-per-real-second
+  visual speed, with no contribution from the physics velocity at all, so an impact looks
+  the same at any time-scale.
 - **Drawn radius is a floor, not a multiplier** (`render/scale.py`):
   `max(zoom * r_true, floor(r_true))`, floor ∝ `r_true**0.35` and clamped to `FLOOR_MAX`.
   Size ordering survives while nothing inflates far enough to swallow the orbits around
