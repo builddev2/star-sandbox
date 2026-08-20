@@ -128,15 +128,21 @@ class EffectField:
         flash_peak = scale_r * (1.5 + 0.6 * magnitude)
 
         pos = event.pos
-        vel = event.vel
         tones = event.tones
+        # event.vel is a physics quantity in AU/day; every particle velocity
+        # below is instead a purpose-built AU-per-real-second visual speed,
+        # exactly so that no particle's screen motion depends on how fast the
+        # bodies happened to be moving in simulated time (see module
+        # docstring). Only its *direction* is worth keeping, for the flare's
+        # orientation.
+        no_drift = np.zeros(2)
 
-        self._add(_Particle("flash", pos, vel, FLASH_LIFE_S,
+        self._add(_Particle("flash", pos, no_drift, FLASH_LIFE_S,
                             scale_r * 0.3, flash_peak, (255, 255, 255), tones[2]))
-        self._add(_Particle("ring", pos, vel, RING_LIFE_S,
+        self._add(_Particle("ring", pos, no_drift, RING_LIFE_S,
                             scale_r * 0.5, flash_peak * 2.2, tones[2], tones[1]))
         if magnitude > 0.3:
-            self._add(_Particle("ring", pos, vel, RING_LIFE_S * 1.3,
+            self._add(_Particle("ring", pos, no_drift, RING_LIFE_S * 1.3,
                                 scale_r * 0.5, flash_peak * 3.2, tones[1], tones[0]))
 
         n_sparks = int(np.clip(6 + 4.0 * magnitude, 6, 40))
@@ -145,7 +151,7 @@ class EffectField:
         for k in range(n_sparks):
             direction = np.array([math.cos(angles[k]), math.sin(angles[k])])
             travel = SPARK_TRAVEL_RADII * scale_r * speeds[k]
-            spark_vel = vel + direction * (travel / SPARK_LIFE_S)
+            spark_vel = direction * (travel / SPARK_LIFE_S)
             self._add(_Particle("spark", pos, spark_vel, SPARK_LIFE_S * speeds[k],
                                 scale_r * 0.12, scale_r * 0.03,
                                 (255, 250, 235), tones[1], seed=float(k)))
@@ -157,14 +163,15 @@ class EffectField:
             for k in range(n_plume):
                 direction = np.array([math.cos(angles[k]), math.sin(angles[k])])
                 travel = PLUME_TRAVEL_RADII * scale_r * speeds[k]
-                plume_vel = vel + direction * (travel / PLUME_LIFE_S)
+                plume_vel = direction * (travel / PLUME_LIFE_S)
                 self._add(_Particle("plume", pos, plume_vel, PLUME_LIFE_S,
                                     scale_r * 0.4, scale_r * 0.9,
                                     tones[1], tones[0]))
 
         if event.on_star:
-            arc_angle = math.atan2(vel[1], vel[0]) if np.hypot(*vel) > 0 else 0.0
-            self._add(_Particle("flare", pos, np.zeros(2), FLARE_LIFE_S,
+            vx, vy = event.vel
+            arc_angle = math.atan2(vy, vx) if math.hypot(vx, vy) > 0 else 0.0
+            self._add(_Particle("flare", pos, no_drift, FLARE_LIFE_S,
                                 scale_r * 1.2, scale_r * 3.0,
                                 (255, 250, 220), palette.STAR_GLOW, seed=arc_angle))
 

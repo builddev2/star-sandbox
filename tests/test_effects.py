@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import pygame
 import pytest
 
@@ -78,19 +79,24 @@ def test_a_star_impact_spawns_a_flare_and_a_planet_impact_does_not():
 
 def test_effects_drift_with_the_impact_velocity():
     from src.render.effects import EffectField
+    # A large event.vel (AU/day, a physics quantity) must never leak into a
+    # particle's real-second screen velocity -- that was a real bug caught
+    # by this test: a flash inheriting event.vel directly as an AU-per-
+    # real-second drift shot clean off-screen within a single frame, even
+    # though a flash is supposed to mark a fixed point.
     field = EffectField(seed=1)
-    field.spawn(_event(pos=(0.0, 0.0), vel=(0.0, 0.0)))
+    field.spawn(_event(pos=(0.0, 0.0), vel=(5.0, 0.0)))
     flash = next(p for p in field.particles if p.kind == "flash")
-    start = flash.pos.copy()
     field.update(0.2)
-    # The flash inherits the impact's own (here zero) drift; give it a real
-    # one and confirm the position actually moves with it.
-    field2 = EffectField(seed=1)
-    field2.spawn(_event(pos=(0.0, 0.0), vel=(1.0, 0.0)))
-    moving_flash = next(p for p in field2.particles if p.kind == "flash")
-    field2.update(0.2)
-    assert moving_flash.pos[0] == pytest.approx(0.2, rel=1e-6)
-    assert start[0] == pytest.approx(flash.pos[0])   # the zero-velocity one didn't
+    assert flash.pos[0] == pytest.approx(0.0, abs=1e-9), \
+        "the flash must stay put regardless of the impact's physics velocity"
+
+    # A spark, by contrast, does move outward -- on its own purpose-built
+    # visual speed, not the physics one.
+    spark = next(p for p in field.particles if p.kind == "spark")
+    start = spark.pos.copy()
+    field.update(0.2)
+    assert not np.allclose(spark.pos, start)
 
 
 def test_update_and_draw_survive_an_empty_or_full_field_without_raising():

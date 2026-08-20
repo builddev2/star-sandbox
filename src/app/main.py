@@ -92,12 +92,18 @@ class App:
         state.sim.advance(state.days_per_second * frame_dt)
         state.sim.update_trails()
         state.camera.update_follow(state.sim.world)
+        for impact in state.sim.impacts:
+            state.effects.spawn(impact)
 
         surface = self.ctx.surface
         surface.fill(palette.SPACE)
         self.stars.draw(surface, state.camera)
         self.renderer.draw(surface, state.sim, state.camera, state.view,
                            selected_id=state.selected_id)
+        # Wall-clock, not simulated time: an impact must look the same at
+        # any time-scale, and frame_dt is real seconds.
+        state.effects.update(frame_dt)
+        state.effects.draw(surface, state.camera)
         state.tool.draw_overlay(surface, state, self.font)
         self.hud.draw(surface, state)
         # Built at the end of the frame, from the state that is about to be
