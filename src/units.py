@@ -127,6 +127,37 @@ def hill_radius(mass, primary_mass, distance):
     return distance * (mass / (3.0 * primary_mass)) ** (1.0 / 3.0)
 
 
+def strength_acceleration(radius, toughness=1.0):
+    """Acceleration a material's own strength can resist, in simulation units.
+
+    Reuses the strength branch of the disruption threshold (a specific
+    energy, J/kg) spread over the body's own radius to get an acceleration --
+    the same quantity that resists being blown apart by an impact also
+    resists being pulled apart by a tide, since both ask whether cohesion can
+    outrun the disturbance.
+    """
+    r_m = max(radius * AU_M, 1.0e-3)
+    specific_si = toughness * QD_STRENGTH_SI * r_m ** QD_STRENGTH_EXP  # J/kg
+    accel_si = specific_si / r_m                                       # m/s^2
+    return accel_si / AUD2_TO_MS2
+
+
+#: The Sun's effective surface temperature, kelvin -- the anchor point for
+#: the mass-temperature scaling below.
+SUN_TEMPERATURE_K = 5772.0
+
+
+def star_temperature(mass):
+    """Effective surface temperature of a star, in kelvin.
+
+    A serviceable main-sequence approximation (T ~ M^0.5) anchored at the
+    Sun: good enough to make a red dwarf noticeably cooler and a blue giant
+    scorching, without pulling in a full stellar-structure model to decide
+    whether a comet boils.
+    """
+    return SUN_TEMPERATURE_K * math.sqrt(max(mass, 0.0))
+
+
 def circular_speed(mu, radius):
     """Speed of a circular orbit of radius ``radius`` about gravitational parameter mu."""
     return math.sqrt(mu / radius)

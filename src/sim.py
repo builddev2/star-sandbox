@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from . import orbits, scenarios
+from . import destruction, orbits, scenarios
 from .collisions import CollisionResolver
 from .integrator import Integrator
 
@@ -70,6 +70,9 @@ class Simulation:
             self._prev[:world.n] = world.pos[:world.n]
             self.integrator.step(world, dt)
             self.events += self.resolver.resolve(world, self.integrator, self._prev)
+            if destruction.apply(world, self.resolver, dt):
+                self.integrator.refresh(world)
+                self.events += 1
             done += dt
             if time.perf_counter() - started >= budget_s:
                 break

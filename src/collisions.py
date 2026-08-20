@@ -421,6 +421,61 @@ class CollisionResolver:
             body.no_collide_until = until
         return idx
 
+    def tidal_disrupt(self, world, i, k):
+        """Break body ``i`` apart under star ``k``'s tide.
+
+        Similar in spirit to :meth:`shatter`, but there is only one body: a
+        tide pulls without merging into anything, and the star that raised
+        it does not move. Returns the fragment indices, or an empty list if
+        there is no room to spare for them -- the body is left alone rather
+        than silently deleted.
+        """
+        mass = float(world.mass[i])
+        r = float(world.radius[i])
+        if mass <= 0.0 or r <= 0.0:
+            return []
+        density = units.density_from_mass_radius(mass, r)
+        material = world.bodies[i].material
+        pos_i, vel_i = world.pos[i].copy(), world.vel[i].copy()
+
+        room = world.capacity - (world.n - 1)
+        count = min(MIN_FRAGMENTS, MAX_FRAGMENTS, room)
+        if count < MIN_FRAGMENTS:
+            return []
+
+        weights = self.rng.random(count) + 0.15
+        weights /= weights.sum()
+        masses = weights * mass
+
+        v_esc = units.escape_velocity(mass, r)
+        angles = (np.arange(count) / count) * 2.0 * np.pi
+        angles += self.rng.normal(0.0, 0.25, count)
+        directions = np.stack([np.cos(angles), np.sin(angles)], axis=1)
+        speeds = v_esc * self.rng.uniform(0.5, 1.2, count)
+
+        positions = pos_i + directions * (FRAGMENT_RING * r)
+        velocities = vel_i + directions * speeds[:, None]
+
+        world.remove(i)
+        event_id = self._next_event_id
+        self._next_event_id += 1
+        until = world.time + IMMUNITY_RADII * r / max(v_esc, 1e-12)
+        made = []
+        for m in range(count):
+            frag_mass = float(masses[m])
+            body = world.add(
+                "Debris", material, frag_mass,
+                units.radius_from_mass_density(frag_mass, density),
+                positions[m], velocities[m],
+                kind=KIND_DEBRIS, seed=int(self.rng.integers(0, 1 << 30)),
+            )
+            if body is None:
+                break
+            body.event_id = event_id
+            body.no_collide_until = until
+            made.append(world.index_of(body.id))
+        return made
+
     def shatter(self, world, c):
         """Break the pair into fragments.  Returns their indices.
 
