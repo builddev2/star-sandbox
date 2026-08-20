@@ -207,3 +207,32 @@ def test_holding_the_mass_button_ignites_a_planet(app):
 
     index = app.state.sim.world.index_of(jupiter.id)
     assert app.state.sim.world.bodies[index].kind == KIND_STAR
+
+
+def test_the_app_survives_a_real_collision(app):
+    """Drive two bodies into each other through the real frame loop and
+    confirm the app does not raise, and that the effects layer actually
+    receives and draws something for it."""
+    from src import materials, units
+    world = app.state.sim.world
+    world.clear()
+    rock = materials.get("rock")
+    r = units.EARTH_RADIUS
+    world.add("A", rock, units.EARTH_MASS, r, np.array([0.0, 0.0]),
+             np.array([0.0, 0.0]))
+    world.add("B", rock, units.EARTH_MASS, r, np.array([0.5 * r, 0.0]),
+             np.array([0.0, 0.0]))
+    app.state.sim.refresh()
+    app.state.time_index = app.state.time_index_max
+
+    hit = False
+    for _ in range(60):
+        app.step_once()
+        if app.state.sim.impacts or app.state.effects.count > 0:
+            hit = True
+            break
+    assert hit, "the collision must actually be detected and reach the effects layer"
+    # The outcome itself (merge, or a cascade of further fragment-on-fragment
+    # hits within the same wide-timescale frame) is not the point here -- the
+    # frame loop surviving it, end to end, is.
+    assert world.n >= 1

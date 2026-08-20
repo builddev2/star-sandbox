@@ -30,6 +30,12 @@ class World:
         self.acc = np.zeros((capacity, 2), dtype=np.float64)
         self.mass = np.zeros(capacity, dtype=np.float64)
         self.radius = np.zeros(capacity, dtype=np.float64)
+        #: The radius collisions actually test against.  Equal to ``radius``
+        #: unless the render layer has stretched it to match what is drawn --
+        #: see ``render/scale.contact_radii_au``. Physics that decides an
+        #: *outcome* (energy, fragment count, ...) always uses the true
+        #: ``radius``; only "did these two touch" uses this one.
+        self.contact_radius = np.zeros(capacity, dtype=np.float64)
         self.n = 0
 
         self.bodies = []
@@ -50,6 +56,7 @@ class World:
         self.acc[i] = 0.0
         self.mass[i] = mass
         self.radius[i] = radius
+        self.contact_radius[i] = radius
         self.n += 1
 
         body = Body(self._next_id, name, material, kind, born_day=self.time, seed=seed)
@@ -67,6 +74,7 @@ class World:
                 arr[index] = arr[last]
             self.mass[index] = self.mass[last]
             self.radius[index] = self.radius[last]
+            self.contact_radius[index] = self.contact_radius[last]
             moved = self.bodies[last]
             self.bodies[index] = moved
             self._by_id[moved.id] = index
@@ -111,6 +119,10 @@ class World:
     def radii(self):
         return self.radius[:self.n]
 
+    @property
+    def contact_radii(self):
+        return self.contact_radius[:self.n]
+
     # --- diagnostics -----------------------------------------------------------------
 
     def total_momentum(self):
@@ -150,3 +162,28 @@ class World:
         if total <= 0.0:
             return
         self.vel[:n] -= self.total_momentum() / total
+
+    def clamp_contact_radii(self, candidate):
+        """Clip candidate contact radii so none reaches halfway to whatever
+        body is nearest, however far the render layer's own zoom-only cap
+        stretched them.
+
+        A planet and its innermost moon can sit close enough that even eight
+        times the planet's true radius (render/scale.MAX_AIM_FACTOR) reaches
+        past the halfway point at wide-enough zoom -- Jupiter and Io are
+        0.0028 AU apart, and at the camera's widest zoom Jupiter's own drawn
+        floor alone stretches its contact radius past half of that. The
+        render layer cannot know this: it never sees another body's
+        position. This is the layer that does, so this is where the second,
+        geometry-aware half of the cap lives.
+        """
+        n = self.n
+        candidate = np.asarray(candidate, dtype=np.float64)
+        if n < 2:
+            return candidate
+        pos = self.pos[:n]
+        d = pos[:, None, :] - pos[None, :, :]
+        dist = np.sqrt(np.einsum("ijk,ijk->ij", d, d))
+        np.fill_diagonal(dist, np.inf)
+        nearest = dist.min(axis=1)
+        return np.maximum(np.minimum(candidate, 0.5 * nearest), self.radius[:n])

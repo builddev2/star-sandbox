@@ -63,6 +63,34 @@ STANDARD_GRAVITY = 9.80665                   # m/s^2
 
 FOUR_THIRDS_PI = 4.0 / 3.0 * math.pi
 
+#: 1 (AU/day)^2 expressed in J/kg (== m^2/s^2).  Specific energies -- the
+#: energy per unit mass an impact delivers -- are quoted in J/kg in every
+#: paper, and in AU^2/day^2 in here.
+SPECIFIC_ENERGY_SI = (AU_M / SEC_PER_DAY) ** 2
+
+#: Benz & Asphaug (1999) basalt fit for the catastrophic-disruption specific
+#: energy, converted from erg/g and centimetres to J/kg and metres.  The first
+#: term is material strength and falls with size; the second is self-gravity
+#: and rises with it.  They cross near 200 m, which is why a boulder is harder
+#: to break apart than a mountain is.
+QD_STRENGTH_SI = 608.0
+QD_STRENGTH_EXP = -0.38
+QD_GRAVITY_SI = 1.574e-2
+QD_GRAVITY_EXP = 1.36
+
+
+def disruption_threshold(radius, density, toughness=1.0):
+    """Specific energy needed to disperse half of a body, in simulation units.
+
+    ``radius`` and ``density`` are in simulation units; ``toughness`` scales
+    the strength branch only, because how hard a material is to crack is
+    chemistry, while its self-gravity is not.
+    """
+    r_m = max(radius * AU_M, 1.0e-3)
+    strength = toughness * QD_STRENGTH_SI * r_m ** QD_STRENGTH_EXP
+    gravity = QD_GRAVITY_SI * to_gcm3(density) * r_m ** QD_GRAVITY_EXP
+    return (strength + gravity) / SPECIFIC_ENERGY_SI
+
 
 # --- Sphere geometry ----------------------------------------------------------------
 
@@ -97,6 +125,37 @@ def binding_energy(mass, radius):
 def hill_radius(mass, primary_mass, distance):
     """Radius of the region where ``mass`` dominates ``primary_mass`` gravitationally."""
     return distance * (mass / (3.0 * primary_mass)) ** (1.0 / 3.0)
+
+
+def strength_acceleration(radius, toughness=1.0):
+    """Acceleration a material's own strength can resist, in simulation units.
+
+    Reuses the strength branch of the disruption threshold (a specific
+    energy, J/kg) spread over the body's own radius to get an acceleration --
+    the same quantity that resists being blown apart by an impact also
+    resists being pulled apart by a tide, since both ask whether cohesion can
+    outrun the disturbance.
+    """
+    r_m = max(radius * AU_M, 1.0e-3)
+    specific_si = toughness * QD_STRENGTH_SI * r_m ** QD_STRENGTH_EXP  # J/kg
+    accel_si = specific_si / r_m                                       # m/s^2
+    return accel_si / AUD2_TO_MS2
+
+
+#: The Sun's effective surface temperature, kelvin -- the anchor point for
+#: the mass-temperature scaling below.
+SUN_TEMPERATURE_K = 5772.0
+
+
+def star_temperature(mass):
+    """Effective surface temperature of a star, in kelvin.
+
+    A serviceable main-sequence approximation (T ~ M^0.5) anchored at the
+    Sun: good enough to make a red dwarf noticeably cooler and a blue giant
+    scorching, without pulling in a full stellar-structure model to decide
+    whether a comet boils.
+    """
+    return SUN_TEMPERATURE_K * math.sqrt(max(mass, 0.0))
 
 
 def circular_speed(mu, radius):

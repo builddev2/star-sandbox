@@ -9,6 +9,7 @@ import math
 
 from .. import units
 from ..render import scale
+from ..render.effects import EffectField
 
 #: Days of simulation per second of real time, coarsest last.
 TIME_SCALES = (
@@ -33,6 +34,7 @@ class AppState:
         self.sim = sim
         self.camera = camera
         self.view = view
+        self.effects = EffectField()
         self.selected_id = None
         self.time_index = DEFAULT_TIME_INDEX
         self.running = True

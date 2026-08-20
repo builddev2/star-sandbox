@@ -152,6 +152,217 @@ def conic_points(mu, rel_pos, rel_vel, samples=128):
     return np.stack([radii * np.cos(angles), radii * np.sin(angles)], axis=1), bound
 
 
+def _hyperbolic_mean_from_true(e, nu):
+    """Hyperbolic mean anomaly for a true anomaly on an e > 1 conic."""
+    big_h = 2.0 * math.atanh(math.sqrt((e - 1.0) / (e + 1.0)) * math.tan(nu * 0.5))
+    return e * math.sinh(big_h) - big_h
+
+
+def _true_from_hyperbolic_mean(mean_h, e, tol=1e-12, max_iter=60):
+    """Invert Kepler's hyperbolic equation M = e sinh H - H by Newton's method."""
+    big_h = (math.copysign(math.log(2.0 * abs(mean_h) / e + 1.8), mean_h)
+            if mean_h != 0.0 else 0.0)
+    for _ in range(max_iter):
+        f = e * math.sinh(big_h) - big_h - mean_h
+        fp = e * math.cosh(big_h) - 1.0
+        step = f / fp
+        big_h -= step
+        if abs(step) < tol:
+            break
+    return 2.0 * math.atan(math.sqrt((e + 1.0) / (e - 1.0)) * math.tanh(big_h * 0.5))
+
+
+def propagate(mu, rel_pos, rel_vel, dt):
+    """Where a body on this state vector will be after ``dt`` days.
+
+    Exact for a bound orbit or a hyperbolic one: convert to mean (or
+    hyperbolic mean) anomaly, advance it linearly -- the one angle that moves
+    at a constant rate on either conic -- and convert back. A throw fast
+    enough to be on an unbound path is exactly the kind of throw whose target
+    most needs leading, since it covers the distance in a hurry; only the
+    knife-edge parabolic case (e == 1 to within roundoff) is left unmoved,
+    since Barker's equation for that one case is not worth carrying.
+    """
+    el = elements_from_state(mu, rel_pos, rel_vel)
+    a, e = el["a"], el["e"]
+    nu0 = el["true_anomaly"]
+    if el["bound"] and math.isfinite(a) and a > 0.0:
+        big0 = 2.0 * math.atan2(math.sqrt(1.0 - e) * math.sin(nu0 * 0.5),
+                                math.sqrt(1.0 + e) * math.cos(nu0 * 0.5))
+        mean0 = big0 - e * math.sin(big0)
+        mean1 = mean0 + math.sqrt(mu / a ** 3) * dt
+        nu1 = true_anomaly_from_mean(mean1, e)
+    elif math.isfinite(a) and a < 0.0 and e > 1.0 + 1e-9:
+        mean0 = _hyperbolic_mean_from_true(e, nu0)
+        mean1 = mean0 + math.sqrt(mu / (-a) ** 3) * dt
+        nu1 = _true_from_hyperbolic_mean(mean1, e)
+    else:
+        return np.array(rel_pos, dtype=float), np.array(rel_vel, dtype=float)
+    return state_from_elements(mu, a, e, el["lon_peri"], nu1)
+
+
+def _orbit_flight_time(mu, a, e, nu0, nu1, prograde):
+    """Days for true anomaly to sweep from ``nu0`` to ``nu1`` in the direction
+    of actual motion.  Bound orbits take the shortest (zero extra revolution)
+    path; a hyperbolic one has no revolutions to begin with.  Returns None for
+    the parabolic knife edge, or if ``nu1`` would need to lie behind the body
+    on a path with no way back round to it.
+    """
+    sign = 1.0 if prograde else -1.0
+    n0, n1 = sign * nu0, sign * nu1
+
+    if a > 0.0 and e < 1.0:
+        def mean_of(nu):
+            big = 2.0 * math.atan2(math.sqrt(1.0 - e) * math.sin(nu * 0.5),
+                                   math.sqrt(1.0 + e) * math.cos(nu * 0.5))
+            return big - e * math.sin(big)
+        dm = (mean_of(n1) - mean_of(n0)) % (2.0 * math.pi)
+        return dm / math.sqrt(mu / a ** 3)
+
+    if a < 0.0 and e > 1.0 + 1e-9:
+        dm = _hyperbolic_mean_from_true(e, n1) - _hyperbolic_mean_from_true(e, n0)
+        if dm <= 0.0:
+            return None
+        return dm / math.sqrt(mu / (-a) ** 3)
+
+    return None
+
+
+def solve_intercept_angle(mu, rel_pos, speed, target_point, samples=360):
+    """The launch direction from ``rel_pos`` at ``speed`` whose two-body conic
+    passes exactly through ``target_point``, if one exists at this speed.
+
+    Not a root-find on a smooth function: the semi-major axis a fixed launch
+    speed implies is constant (vis-viva), so as the launch angle sweeps a full
+    turn, the resulting orbit's radius back along the target's own direction
+    sweeps too -- and generically crosses the target's distance either twice,
+    once, or not at all, the classic "two firing solutions" of a mortar
+    problem. A coarse sweep finds every bracket; each is refined by bisection.
+    A near-radial solution can sit inside one coarse interval too narrow for
+    the sweep to see the sign change at all -- eccentricity spikes sharply as
+    a trajectory approaches purely radial -- so a second pass zooms into the
+    sharpest dips of the coarse sweep and looks again there before giving up.
+    Of every root found, the one whose flight is shortest wins, since that is
+    the one a player expects "aim and it goes" to mean.
+
+    Returns a dict: ``hit`` (bool), ``angle`` (radians), ``velocity``
+    (length-2 array), ``miss`` (AU, 0.0 when ``hit``), and ``flight_time``
+    (days, or None when the orbit is unbound or nothing hit).
+    """
+    r1 = np.asarray(rel_pos, dtype=float)
+    target = np.asarray(target_point, dtype=float)
+    target_mag = float(np.hypot(target[0], target[1]))
+    target_angle = math.atan2(target[1], target[0])
+
+    def miss_at(theta):
+        """Signed (orbit radius - target radius) along the target's direction."""
+        v = speed * np.array([math.cos(theta), math.sin(theta)])
+        el = elements_from_state(mu, r1, v)
+        nu_t = target_angle - el["lon_peri"]
+        denom = 1.0 + el["e"] * math.cos(nu_t)
+        if denom <= 1e-9 or not math.isfinite(el["p"]):
+            return None
+        return el["p"] / denom - target_mag
+
+    def bisect(lo, hi, flo):
+        for _ in range(40):
+            mid = 0.5 * (lo + hi)
+            fm = miss_at(mid)
+            if fm is None:
+                return mid
+            if (fm > 0) == (flo > 0):
+                lo, flo = mid, fm
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    def brackets(thetas, values, step, wrap):
+        """Sign changes between neighbouring samples, each refined to a root.
+
+        Every sample is spaced by exactly ``step``, so the upper edge of a
+        bracket is always ``lo + step`` -- never the next array value modulo
+        the array length, which for the last sample of a periodic sweep would
+        wrap back past zero and hand bisection a negative-width interval.
+        """
+        found = []
+        span = len(thetas) if wrap else len(thetas) - 1
+        for k in range(span):
+            a, b = values[k], values[(k + 1) % len(thetas)]
+            if a is None or b is None or (a > 0) == (b > 0):
+                continue
+            found.append(bisect(float(thetas[k]), float(thetas[k]) + step, a))
+        return found
+
+    thetas = np.linspace(0.0, 2.0 * math.pi, samples, endpoint=False)
+    values = [miss_at(float(t)) for t in thetas]
+    coarse_step = 2.0 * math.pi / samples
+    roots = brackets(thetas, values, coarse_step, wrap=True)
+
+    if not roots:
+        dips = [(abs(values[k]), k) for k in range(samples)
+               if values[k] is not None
+               and values[k - 1] is not None and values[(k + 1) % samples] is not None
+               and abs(values[k]) < abs(values[k - 1])
+               and abs(values[k]) < abs(values[(k + 1) % samples])]
+        dips.sort()
+        for _, k in dips[:4]:
+            fine = np.linspace(thetas[k] - coarse_step, thetas[k] + coarse_step, 32)
+            fine_step = float(fine[1] - fine[0])
+            fvalues = [miss_at(float(t)) for t in fine]
+            roots.extend(brackets(fine, fvalues, fine_step, wrap=False))
+
+    def result_for(theta):
+        v = speed * np.array([math.cos(theta), math.sin(theta)])
+        h = r1[0] * v[1] - r1[1] * v[0]
+        el = elements_from_state(mu, r1, v)
+        flight = None
+        if h != 0.0 and math.isfinite(el["a"]):
+            nu_t = target_angle - el["lon_peri"]
+            flight = _orbit_flight_time(mu, el["a"], el["e"], el["true_anomaly"],
+                                        nu_t, h > 0.0)
+        return {"hit": True, "angle": theta, "velocity": v, "miss": 0.0,
+                "flight_time": flight}
+
+    if roots:
+        return min((result_for(t) for t in roots),
+                   key=lambda r: r["flight_time"] if r["flight_time"] is not None
+                   else math.inf)
+
+    best_theta = 0.0
+    best_miss = math.inf
+    for t, m in zip(thetas, values):
+        if m is not None and abs(m) < best_miss:
+            best_miss, best_theta = abs(m), float(t)
+    v = speed * np.array([math.cos(best_theta), math.sin(best_theta)])
+    return {"hit": False, "angle": best_theta, "velocity": v,
+           "miss": best_miss, "flight_time": None}
+
+
+def solve_intercept(mu, rel_pos, speed, target_rel_pos, target_rel_vel,
+                    iterations=6, samples=360):
+    """Like :func:`solve_intercept_angle`, but leads a moving target.
+
+    Both bodies' state is relative to the same attractor -- the one the
+    projectile is launched from -- which is exact when target and launch
+    point share a dominant attractor (the ordinary case: two planets round
+    the Sun, or a throw near a moon aimed at another moon of the same planet)
+    and a reasonable estimate otherwise. Each pass reads off the flight time
+    to the current guess, propagates the target forward by it under its own
+    two-body motion, and re-solves; the residual shrinks by roughly 85% a
+    pass, so six of them land within a hundredth of an Earth radius even when
+    the flight crosses a good fraction of the target's own orbit.
+    """
+    point = np.array(target_rel_pos, dtype=float)
+    result = solve_intercept_angle(mu, rel_pos, speed, point, samples=samples)
+    for _ in range(iterations - 1):
+        if not result["hit"] or result["flight_time"] is None:
+            break
+        point, _ = propagate(mu, target_rel_pos, target_rel_vel, result["flight_time"])
+        result = solve_intercept_angle(mu, rel_pos, speed, point, samples=samples)
+    result["target_point"] = point
+    return result
+
+
 def dominant_attractor(world, index):
     """Index of the body that ``index`` should be considered to orbit.
 

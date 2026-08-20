@@ -115,3 +115,50 @@ def test_energy_is_stable_with_moons_present():
         sim.advance(20.0, budget_s=10.0)
     drift = abs((sim.world.total_energy() - e0) / e0)
     assert drift < 1e-5, "energy drift %.3g" % drift
+
+
+# --- impact events -------------------------------------------------------------------
+
+def _colliding_world():
+    from src import materials
+    from src.world import World
+    rock = materials.get("rock")
+    r = units.EARTH_RADIUS
+    world = World(8)
+    world.add("A", rock, units.EARTH_MASS, r, np.array([0.0, 0.0]), np.array([0.0, 0.0]))
+    world.add("B", rock, units.EARTH_MASS, r, np.array([0.5 * r, 0.0]), np.array([0.0, 0.0]))
+    return world
+
+
+def test_a_collision_records_an_impact_event():
+    from src.collisions import ACCRETE, DISRUPT, GRAZE
+    sim = Simulation(world=_colliding_world())
+    sim.advance(1.0, budget_s=1.0)
+    assert len(sim.impacts) >= 1
+    event = sim.impacts[0]
+    assert event.outcome in (ACCRETE, GRAZE, DISRUPT)
+    assert event.target_radius > 0.0
+    assert len(event.tones) == 3
+
+
+def test_impacts_are_cleared_at_the_start_of_each_advance():
+    sim = Simulation(world=_colliding_world())
+    sim.advance(1.0, budget_s=1.0)
+    assert sim.impacts, "test setup must actually produce an event"
+    sim.advance(0.01, budget_s=1.0)
+    assert sim.impacts == []
+
+
+def test_impact_events_hold_only_plain_data():
+    sim = Simulation(world=_colliding_world())
+    sim.advance(1.0, budget_s=1.0)
+    assert sim.impacts
+    for event in sim.impacts:
+        assert isinstance(event.pos, tuple) and len(event.pos) == 2
+        assert isinstance(event.vel, tuple) and len(event.vel) == 2
+        assert isinstance(event.energy, float)
+        assert isinstance(event.outcome, str)
+        assert isinstance(event.target_radius, float)
+        assert isinstance(event.projectile_radius, float)
+        assert isinstance(event.tones, tuple)
+        assert isinstance(event.on_star, bool)

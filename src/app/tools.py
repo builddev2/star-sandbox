@@ -148,7 +148,8 @@ def preset_body(preset):
 class LaunchTool(Tool):
     name = "Throw"
     hint = ("Pick what to throw on the left  -  then press and drag in space to aim, "
-            "and let go to launch  -  green comes back, red never does")
+            "and let go to launch  -  green comes back, red never does  -  "
+            "X, then click a body, aims a guaranteed hit on it")
 
     context_title = "Throw"
 
@@ -158,6 +159,16 @@ class LaunchTool(Tool):
         #: The circular-orbit button latches what holding Shift does, because a
         #: child cannot hold Shift and drag a mouse across a trackpad at once.
         self.lock_circular = False
+        #: True for the one click after pressing X: the next thing clicked
+        #: becomes the target rather than starting a throw.
+        self.picking_target = False
+        #: Body id of the locked target, or None.  Persists across throws so
+        #: several shots at the same body do not need re-aiming each time.
+        self.target_id = None
+        #: Whether the most recent _tentative() found a real intercept for the
+        #: locked target -- cached so the overlay's status label does not pay
+        #: for a second angle-sweep the same frame.
+        self._last_target_hit = None
         self._origin = None          # world position, set on press
         self._cursor = None          # screen position while dragging
 
@@ -178,7 +189,19 @@ class LaunchTool(Tool):
         rows.append([Control("throw.circular", label="Circular orbit", icon="circle",
                              hotkey="Shift", active=self.lock_circular,
                              tooltip="Drop it straight into a perfect round orbit")])
+        rows.append([Control("throw.target", label=self._target_label(state),
+                             icon="target", hotkey="X",
+                             active=self.picking_target or self.target_id is not None,
+                             tooltip="Click a body to aim a guaranteed hit on it")])
         return rows
+
+    def _target_label(self, state):
+        if self.picking_target:
+            return "Click a body..."
+        index = self._target_index(state.sim.world)
+        if index is not None:
+            return "Target: %s" % state.sim.world.bodies[index].name
+        return "Target lock"
 
     def perform(self, control, state):
         if control.id == "throw.preset":
@@ -186,6 +209,9 @@ class LaunchTool(Tool):
             return True
         if control.id == "throw.circular":
             self.lock_circular = not self.lock_circular
+            return True
+        if control.id == "throw.target":
+            self.picking_target = not self.picking_target
             return True
         return False
 
@@ -200,10 +226,20 @@ class LaunchTool(Tool):
             if event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
                 self.shift = True
                 return True
+            if event.key == pygame.K_x:
+                self.picking_target = not self.picking_target
+                return True
 
         if event.type == pygame.KEYUP and event.key in (pygame.K_LSHIFT,
                                                         pygame.K_RSHIFT):
             self.shift = False
+            return True
+
+        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                and self.picking_target):
+            index = state.pick_body_at(event.pos[0], event.pos[1])
+            self.target_id = state.sim.world.bodies[index].id if index is not None else None
+            self.picking_target = False
             return True
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -262,6 +298,15 @@ class LaunchTool(Tool):
         """(position, velocity) the body would have if released right now."""
         pos = self._origin
         vel = self._drag_velocity(state)
+        speed = float(np.hypot(vel[0], vel[1]))
+        self._last_target_hit = None
+        if self.target_id is not None and speed > 0.0:
+            solved = self._solve_target(state, pos, speed)
+            if solved is not None:
+                self._last_target_hit = solved["hit"]
+                if solved["hit"]:
+                    attractor_vel = state.sim.world.vel[solved["attractor"]]
+                    return pos, attractor_vel + solved["velocity"]
         if self.circular:
             world = state.sim.world
             index = self._nearest_attractor(world, pos)
@@ -276,6 +321,40 @@ class LaunchTool(Tool):
                         tangent = -tangent
                     vel = world.vel[index] + tangent * math.sqrt(mu / r)
         return pos, vel
+
+    def _target_index(self, world):
+        """Row of the locked target, clearing the lock if it no longer exists."""
+        if self.target_id is None:
+            return None
+        index = world.index_of(self.target_id)
+        if index is None:
+            self.target_id = None
+        return index
+
+    def _solve_target(self, state, pos, speed):
+        """Intercept solution for the locked target at this speed, or None.
+
+        Both bodies are expressed relative to whatever the launch point's own
+        gravity treats as dominant -- see :func:`orbits.solve_intercept` for
+        why that is exact for the ordinary case and an estimate otherwise.
+        """
+        world = state.sim.world
+        target = self._target_index(world)
+        if target is None:
+            return None
+        attractor = self._nearest_attractor(world, pos)
+        if attractor is None or attractor == target:
+            return None
+        rel = pos - world.pos[attractor]
+        r = float(np.hypot(rel[0], rel[1]))
+        if r <= 0.0:
+            return None
+        mu = units.G * float(world.mass[attractor])
+        target_rel = world.pos[target] - world.pos[attractor]
+        target_vel_rel = world.vel[target] - world.vel[attractor]
+        result = orbits.solve_intercept(mu, rel, speed, target_rel, target_vel_rel)
+        result["attractor"] = attractor
+        return result
 
     @staticmethod
     def _nearest_attractor(world, pos):
@@ -313,12 +392,23 @@ class LaunchTool(Tool):
 
     def draw_overlay(self, surface, state, font):
         preset = PRESETS[self.preset_index]
+        camera = state.camera
+        world = state.sim.world
+
+        target = self._target_index(world)
+        if target is not None:
+            tx, ty = camera.world_to_screen(world.pos[target])
+            tx, ty = int(tx), int(ty)
+            pygame.draw.circle(surface, palette.SELECT, (tx, ty), 6, 1)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                pygame.draw.line(surface, palette.SELECT,
+                                 (tx + dx * 8, ty + dy * 8),
+                                 (tx + dx * 11, ty + dy * 11), 1)
+
         if self._origin is None or self._cursor is None:
             # What can be thrown is on the buttons now, not in a legend here.
             return
 
-        camera = state.camera
-        world = state.sim.world
         pos, vel = self._tentative(state)
 
         start = camera.world_to_screen(pos)
@@ -344,6 +434,10 @@ class LaunchTool(Tool):
         label = "%.4g km/s" % units.to_kms(speed)
         if self.circular:
             label += "   circular"
+        if target is not None:
+            label += "   locked on %s" % world.bodies[target].name \
+                     if self._last_target_hit else \
+                     "   %s out of range" % world.bodies[target].name
         font.draw(surface, self._cursor[0] + 8, self._cursor[1] + 8,
                   label, palette.TEXT)
         font.draw(surface, self._cursor[0] + 8, self._cursor[1] + 8 + font.height,
