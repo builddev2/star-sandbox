@@ -125,8 +125,9 @@ def test_resolver_returns_event_count_and_refreshes_the_integrator():
     prev = world.pos.copy()
     world.pos[:world.n] += world.vel[:world.n] * 1.0
     resolver = collisions.CollisionResolver(seed=1)
-    events = resolver.resolve(world, integrator, prev)
+    events, event = resolver.resolve(world, integrator, prev)
     assert events == 1
+    assert event is not None and event.outcome == collisions.DISRUPT
     # Accelerations must match the post-collision configuration.
     expected = np.zeros_like(world.acc)
     integrator.accelerations(world.pos, world.mass, world.n, expected)

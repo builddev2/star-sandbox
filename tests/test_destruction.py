@@ -37,7 +37,9 @@ def test_a_comet_passing_close_to_the_sun_is_boiled_away():
     resolver = collisions.CollisionResolver(seed=1)
     gone = False
     for _ in range(20000):
-        if destruction.apply(world, resolver, 0.02):
+        count, event = destruction.apply(world, resolver, 0.02)
+        if count:
+            assert event is not None and event.outcome == "vaporise"
             gone = world.n == 1
             break
     assert gone, "an icy body a few solar radii out must eventually boil away"
@@ -84,8 +86,9 @@ def test_a_loosely_bound_rubble_pile_is_torn_apart_inside_the_roche_limit():
     assert ratio >= 1.0, "test setup must actually be past the tidal limit"
 
     resolver = collisions.CollisionResolver(seed=1)
-    events = destruction.apply(world, resolver, 0.5)
+    events, event = destruction.apply(world, resolver, 0.5)
     assert events == 1
+    assert event is not None and event.outcome == "tidal"
     assert world.n > 1, "tidal disruption makes fragments, not nothing"
     assert all(b.kind != "star" for b in world.bodies[1:])
 

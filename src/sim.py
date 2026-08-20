@@ -32,6 +32,9 @@ class Simulation:
         self.paused = False
         self.last_ratio = 1.0
         self.events = 0
+        #: ImpactEvent records from the frame just advanced, for the effects
+        #: layer to draw.  Cleared at the top of every advance() call.
+        self.impacts = []
         self._seed = seed
 
     # --- lifecycle --------------------------------------------------------------
@@ -43,6 +46,7 @@ class Simulation:
         self.resolver = CollisionResolver(self._seed)
         self.last_ratio = 1.0
         self.events = 0
+        self.impacts = []
 
     def refresh(self):
         """Recompute cached accelerations.  Call after any edit to mass or membership."""
@@ -57,6 +61,7 @@ class Simulation:
         can tell the child the sim is running behind.
         """
         self.events = 0
+        self.impacts = []
         if self.paused or days <= 0.0:
             self.last_ratio = 0.0 if self.paused else 1.0
             return 0.0
@@ -69,10 +74,16 @@ class Simulation:
             dt = min(self.integrator.dt, days - done)
             self._prev[:world.n] = world.pos[:world.n]
             self.integrator.step(world, dt)
-            self.events += self.resolver.resolve(world, self.integrator, self._prev)
-            if destruction.apply(world, self.resolver, dt):
+            count, event = self.resolver.resolve(world, self.integrator, self._prev)
+            self.events += count
+            if event is not None:
+                self.impacts.append(event)
+            d_count, d_event = destruction.apply(world, self.resolver, dt)
+            if d_count:
                 self.integrator.refresh(world)
-                self.events += 1
+                self.events += d_count
+            if d_event is not None:
+                self.impacts.append(d_event)
             done += dt
             if time.perf_counter() - started >= budget_s:
                 break

@@ -20,6 +20,7 @@ import numpy as np
 
 from . import units
 from .body import KIND_STAR
+from .collisions import ImpactEvent
 
 #: Below this mass, an ablating body is "gone" rather than a vanishingly
 #: small remnant still worth tracking -- about 2e11 kg, a few hundred
@@ -71,14 +72,32 @@ def _bodies_and_stars(world):
     return bodies, stars
 
 
+def _event(world, i, outcome):
+    """Snapshot body ``i`` as an :class:`ImpactEvent`, before it changes."""
+    pos = world.pos[i]
+    vel = world.vel[i]
+    body = world.bodies[i]
+    return ImpactEvent(
+        pos=(float(pos[0]), float(pos[1])),
+        vel=(float(vel[0]), float(vel[1])),
+        energy=0.0,          # no second body to measure a contact energy against
+        outcome=outcome,
+        target_radius=float(world.radius[i]),
+        projectile_radius=0.0,
+        tones=body.material.tones,
+        on_star=False,
+    )
+
+
 def apply(world, resolver, dt):
     """Tidal disruption and thermal ablation near a star.
 
-    Returns the number of bodies destroyed (0 or 1) this call.
+    Returns ``(count, event)`` -- the number of bodies destroyed (0 or 1)
+    this call, and an :class:`ImpactEvent` describing it, or ``None``.
     """
     bodies, stars = _bodies_and_stars(world)
     if not bodies or not stars:
-        return 0
+        return 0, None
 
     worst_ratio, worst_i, worst_k = 0.0, None, None
     for i in bodies:
@@ -87,8 +106,9 @@ def apply(world, resolver, dt):
             if ratio > worst_ratio:
                 worst_ratio, worst_i, worst_k = ratio, i, k
     if worst_ratio >= 1.0:
+        event = _event(world, worst_i, "tidal")
         resolver.tidal_disrupt(world, worst_i, worst_k)
-        return 1
+        return 1, event
 
     vaporised = None
     for i in bodies:
@@ -109,6 +129,7 @@ def apply(world, resolver, dt):
         world.contact_radius[i] = world.radius[i]
 
     if vaporised is not None:
+        event = _event(world, vaporised, "vaporise")
         world.remove(vaporised)
-        return 1
-    return 0
+        return 1, event
+    return 0, None

@@ -41,6 +41,26 @@ class Collision:
     b: float = 0.0
 
 
+@dataclass(frozen=True)
+class ImpactEvent:
+    """A plain-data record of one destructive event, for the render layer.
+
+    Built from the pair *before* it is mutated, so it describes what
+    happened, not what is left afterward -- the survivor's post-merge radius
+    is not "the impact." Holds only floats and tuples, no numpy arrays or
+    surfaces, so it stays on the physics side of the render/physics split
+    that ``tests/test_layering.py`` enforces.
+    """
+    pos: tuple            # (x, y) AU, where the impact happened
+    vel: tuple            # (vx, vy) AU/day, relative velocity at impact
+    energy: float          # sim units, kinetic energy at contact
+    outcome: str            # ACCRETE, GRAZE, DISRUPT, "tidal", or "vaporise"
+    target_radius: float
+    projectile_radius: float
+    tones: tuple            # (dark, mid, light) RGB, the target's material
+    on_star: bool
+
+
 def find_collisions(world, prev_pos):
     """Every pair whose swept paths came within the sum of their radii.
 
@@ -575,15 +595,18 @@ class CollisionResolver:
     def resolve(self, world, integrator, prev_pos):
         """Detect and resolve every collision from the step just taken.
 
-        Returns the number of events.  Indices shift as bodies are removed, so
-        only the first collision of a batch is trusted directly; the rest are
-        re-detected on the next call, which is one substep later and invisible.
+        Returns ``(count, event)`` -- the number of events (0 or 1) and an
+        :class:`ImpactEvent` describing it, or ``None``. Indices shift as
+        bodies are removed, so only the first collision of a batch is
+        trusted directly; the rest are re-detected on the next call, which
+        is one substep later and invisible.
         """
         hits = find_collisions(world, prev_pos)
         if not hits:
-            return 0
+            return 0, None
         c = hits[0]
         outcome = classify(world, c)
+        event = self._build_event(world, c, outcome)
         if outcome == DISRUPT:
             self.shatter(world, c)
         elif outcome == GRAZE:
@@ -591,4 +614,22 @@ class CollisionResolver:
         else:
             self.accrete(world, c)
         integrator.refresh(world)
-        return 1
+        return 1, event
+
+    @staticmethod
+    def _build_event(world, c, outcome):
+        """Snapshot a collision as an :class:`ImpactEvent`, before anything
+        about the pair changes."""
+        pos = world.pos[c.j]
+        vel = world.vel[c.j] - world.vel[c.i]
+        target = world.bodies[c.i]
+        return ImpactEvent(
+            pos=(float(pos[0]), float(pos[1])),
+            vel=(float(vel[0]), float(vel[1])),
+            energy=impact_energy(world, c),
+            outcome=outcome,
+            target_radius=float(world.radius[c.i]),
+            projectile_radius=float(world.radius[c.j]),
+            tones=target.material.tones,
+            on_star=target.kind == KIND_STAR,
+        )
