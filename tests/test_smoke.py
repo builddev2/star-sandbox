@@ -236,3 +236,74 @@ def test_the_app_survives_a_real_collision(app):
     # hits within the same wide-timescale frame) is not the point here -- the
     # frame loop surviving it, end to end, is.
     assert world.n >= 1
+
+
+# --- resizing the real window ------------------------------------------------------
+
+def _resize(size):
+    return pygame.event.Event(pygame.VIDEORESIZE, {"size": size, "w": size[0],
+                                                   "h": size[1]})
+
+
+def test_resizing_the_window_carries_through_the_whole_frame_loop(app):
+    """A drag on the window edge has to reach the camera, the starfield and the
+    interface, not just the surface -- each of them is sized in pixels and each
+    is rebuilt from a different place."""
+    from src.app.config import clamp_window
+    app.step_once()
+    smaller = clamp_window((app.ctx.width - 160, app.ctx.height - 120))
+
+    pygame.event.post(_resize(smaller))
+    app.step_once()
+
+    assert (app.ctx.width, app.ctx.height) == smaller
+    assert app.ctx.surface.get_size() == smaller
+    assert (app.camera.width, app.camera.height) == smaller
+    assert (app.stars.width, app.stars.height) == smaller
+    assert app.state.running
+
+    # And the interface was rebuilt against the new size, so its buttons are
+    # somewhere a mouse can still reach them.
+    screen = pygame.Rect(0, 0, *smaller)
+    assert app.ui.controls
+    assert all(screen.contains(c.rect) for c in app.ui.controls)
+
+
+def test_the_window_cannot_be_dragged_smaller_than_the_interface(app):
+    from src.app.config import MIN_WINDOW
+    pygame.event.post(_resize((80, 60)))
+    app.step_once()
+    assert (app.ctx.width, app.ctx.height) == MIN_WINDOW
+    app.step_once()
+    assert app.state.running
+
+
+def test_the_window_size_button_actually_resizes_the_window(app):
+    """The bug this replaces: the button was there, and pressing it did nothing."""
+    app.step_once()
+    button = next(c for c in app.ui.controls if c.id == "view.window")
+    before = app.ctx.window
+
+    pygame.event.post(_press(button.rect.center))
+    pygame.event.post(_release(button.rect.center))
+    app.step_once()
+    app.step_once()
+
+    assert app.ctx.window != before
+    assert (app.camera.width, app.camera.height) == (app.ctx.width, app.ctx.height)
+    assert app.state.running
+
+
+def test_a_resize_does_not_lose_the_simulation(app):
+    for _ in range(5):
+        app.step_once()
+    before = app.state.sim.world.time
+    names = [b.name for b in app.state.sim.world.bodies[:app.state.sim.world.n]]
+
+    pygame.event.post(_resize((720, 540)))
+    for _ in range(5):
+        app.step_once()
+
+    world = app.state.sim.world
+    assert world.time > before
+    assert [b.name for b in world.bodies[:world.n]] == names

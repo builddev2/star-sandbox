@@ -27,6 +27,7 @@ import pygame
 from ..render import palette
 from ..render.widgets import Control, Metrics, draw_button, draw_panel, draw_tooltip
 from . import tools as tools_module
+from .config import WINDOW_FRACTIONS
 
 #: Milliseconds a stepper is held before it starts repeating, and the gap
 #: between repeats after that.  A deliberate single click never repeats, while
@@ -54,13 +55,14 @@ VIEW_BUTTONS = (
     ("view.sizes", "sizes", "", "R", "Real sizes -- everything becomes a dot"),
     ("view.labels", "labels", "", "L", "Name labels"),
     ("view.grid", "grid", "", "G", "Chunkier pixels"),
+    ("view.window", "window", "", "W", "Window size"),
     ("view.fullscreen", "fullscreen", "", "Cmd+F", "Fullscreen"),
     ("view.help", "", "?", "?", "Every keyboard shortcut"),
 )
 
 #: Controls that need a DisplayContext to do anything, and so are drawn
 #: disabled when there is not one (headless tests, and the smoke test).
-NEEDS_DISPLAY = ("view.grid", "view.fullscreen")
+NEEDS_DISPLAY = ("view.grid", "view.window", "view.fullscreen")
 
 
 def layout_row(controls, x, y, metrics, width):
@@ -211,8 +213,10 @@ class UiLayer:
     def _build_view_buttons(self, state, m, ctx):
         """Icon toggles along the right of the top bar, then the way out.
 
-        The sandbox opens fullscreen, where there is no window close box at all,
-        so without this button a mouse is genuinely unable to leave the program.
+        The quit button stays even now the sandbox opens in an ordinary window
+        with a close box of its own: fullscreen has no window chrome at all, and
+        a mouse that cannot leave the program is not a state to be one keystroke
+        away from.
         """
         y = (m.top_h - m.btn_h) // 2
         if state.quit_armed:
@@ -235,14 +239,30 @@ class UiLayer:
             "view.sizes": state.view.real_size,
             "view.labels": state.view.show_labels,
             "view.grid": ctx is not None and ctx.s != 1,
+            "view.window": ctx is not None and not ctx.fullscreen
+            and ctx.fraction_index != 0,
             "view.fullscreen": ctx is not None and ctx.fullscreen,
             "view.help": state.help_visible,
         }
         x -= m.icon_btn_w
         for cid, icon, label, key, tip in reversed(VIEW_BUTTONS):
+            enabled = ctx is not None or cid not in NEEDS_DISPLAY
+            if cid == "view.grid" and ctx is not None:
+                # Nothing to step through in a window only the finest grid
+                # fits in, and a button that does nothing is worse than one
+                # that says so.
+                enabled = len(ctx.usable_grids) > 1
+            if cid == "view.window" and ctx is not None:
+                # The one tooltip that has to say what pressing again will do:
+                # a cycle button is otherwise a button whose effect you can only
+                # find out by pressing it.
+                nxt = WINDOW_FRACTIONS[(ctx.fraction_index + 1)
+                                       % len(WINDOW_FRACTIONS)][1]
+                tip = "Window size: %s -- click for %s" % (
+                    ctx.window_size_label, nxt.lower())
             control = Control(cid, label=label, icon=icon, hotkey=key, tooltip=tip,
                               compact=True, active=flags.get(cid, False),
-                              enabled=ctx is not None or cid not in NEEDS_DISPLAY)
+                              enabled=enabled)
             self._place([(control, pygame.Rect(x, y, m.icon_btn_w, m.btn_h))])
             x -= m.icon_btn_w + m.gap
 
@@ -528,6 +548,11 @@ class UiLayer:
             return True
         if cid == "view.grid":
             state.cycle_grid(ctx)
+            return True
+        if cid == "view.window":
+            if ctx is None:
+                return False
+            state.cycle_window_size(ctx)
             return True
         if cid == "view.fullscreen":
             if ctx is None:

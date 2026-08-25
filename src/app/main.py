@@ -31,6 +31,8 @@ def probe(fullscreen=False):
         "buffer": (ctx.width, ctx.height),
         "upscale": ctx.upscale,
         "font_px": ctx.font_px,
+        "resizable": ctx.resizable,
+        "window_preset": ctx.window_size_label,
     }
     for key, value in info.items():
         print("%-16s %s" % (key, value))
@@ -39,7 +41,7 @@ def probe(fullscreen=False):
 
 
 class App:
-    def __init__(self, fullscreen=True):
+    def __init__(self, fullscreen=False):
         pygame.init()
         self.ctx = open_display(fullscreen=fullscreen)
         self.clock = pygame.time.Clock()
@@ -68,10 +70,20 @@ class App:
         Extracted from the loop so the smoke test can drive the real application
         without owning the loop.
         """
-        grid = self.ctx.s
+        # Everything sized in pixels is rebuilt when the buffer changes shape --
+        # a grid switch, a drag on the window edge, a size preset, fullscreen.
+        # Compared after the events rather than inside them, so a window dragged
+        # across several sizes in one frame costs one rebuild, not several.
+        was = (self.ctx.width, self.ctx.height)
         for event in pygame.event.get():
-            handle_event(event, self.state, self.ctx, self.ui)
-        if self.ctx.s != grid or self.ctx.width != self.camera.width:
+            handle_event(self.ctx.map_event(event), self.state, self.ctx, self.ui)
+        # Safety net for a resize that reached us through a path we do not
+        # listen for -- a maximise, a macOS tile, a window moved by script.
+        # One cheap SDL call a frame, and a no-op whenever nothing moved.
+        if pygame.display.get_window_size() != self.ctx.window:
+            self.ctx.resize()
+            self.state.on_resize(self.ctx)
+        if (self.ctx.width, self.ctx.height) != was:
             self._build_render_stack()
 
         state = self.state
@@ -110,7 +122,7 @@ class App:
         # shown: next frame's clicks then hit exactly what the eye can see.
         self.ui.build(state, surface.get_size(), self.ctx)
         self.ui.draw(surface, state)
-        pygame.display.flip()
+        self.ctx.present()
 
     def run(self):
         while self.state.running:

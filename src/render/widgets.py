@@ -381,6 +381,15 @@ def draw_icon(surface, name, rect, colour):
             for gy in range(3):
                 surface.set_at((min(x + 1 + gx * step, rect.right - 1),
                                 min(y + 1 + gy * step, rect.bottom - 1)), colour)
+    elif name == "window":
+        # A screen with a window filling part of it.  Deliberately not the
+        # fullscreen corner brackets next door: that one is a mode, this one is
+        # a size, and at 26 pixels the two have to be told apart at a glance.
+        pygame.draw.rect(surface, colour,
+                         pygame.Rect(x + 1, cy - r, max(4, w - 3), 2 * r), 1)
+        pygame.draw.rect(surface, colour,
+                         pygame.Rect(x + 2, cy - r + 1,
+                                     max(2, (w - 5) // 2), max(1, 2 * r - 2)))
     elif name == "fullscreen":
         # Four corner brackets.  The arms stay short so they read as corners
         # rather than joining up into a plain box.

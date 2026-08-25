@@ -20,6 +20,15 @@ def handle_event(event, state, ctx, ui=None):
         state.running = False
         return
 
+    # Before the interface, not after: every control was laid out against the
+    # old size, and one of them would otherwise get a click meant for a rectangle
+    # that has already moved.
+    if event.type == pygame.VIDEORESIZE:
+        if ctx is not None:
+            ctx.resize(event.size)
+            state.on_resize(ctx)
+        return
+
     if ui is not None and ui.on_event(event, state, ctx):
         return
 
@@ -27,7 +36,10 @@ def handle_event(event, state, ctx, ui=None):
         return
 
     if event.type == pygame.MOUSEWHEEL:
-        mx, my = pygame.mouse.get_pos()
+        # A wheel event carries no position of its own, so it has to be asked
+        # for -- and asked for through ctx, which is what puts it in the same
+        # internal pixels every other coordinate in the program is in.
+        mx, my = ctx.mouse_pos() if ctx is not None else pygame.mouse.get_pos()
         state.camera.zoom_by(event.y, mx, my)
         return
 
@@ -39,6 +51,13 @@ def handle_event(event, state, ctx, ui=None):
 
     if command and key == pygame.K_q:
         state.running = False
+    elif command and key == pygame.K_w:
+        # Cmd+W means close the window everywhere else on this platform, and
+        # would otherwise fall through to the plain W below and resize it --
+        # the one keystroke where guessing wrong is unrecoverable, since
+        # nothing here is saved.  Same two-press confirmation as the quit
+        # button, for the same reason.
+        state.request_quit()
     elif command and key == pygame.K_f:
         if ctx is not None:
             ctx.toggle_fullscreen()
@@ -63,6 +82,8 @@ def handle_event(event, state, ctx, ui=None):
         state.view.show_labels = not state.view.show_labels
     elif key == pygame.K_g:
         state.cycle_grid(ctx)
+    elif key == pygame.K_w:
+        state.cycle_window_size(ctx)
     elif key == pygame.K_b:
         state.show_body_list = not state.show_body_list
     elif key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):

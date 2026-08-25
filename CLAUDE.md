@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (422 tests, ~40-50s)
+python selftest.py                      # whole suite (553 tests, ~50s)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -30,11 +30,13 @@ Three layers, enforced by `tests/test_layering.py`:
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
 
-`App.step_once()` (`src/app/main.py`) is one frame: events → `ui.update` (held steppers) →
-refresh `world.contact_radius` from the camera → `sim.advance` → `sim.update_trails` →
-camera follow → drain `sim.impacts` into `state.effects` → draw world → `effects.update` /
-`effects.draw` → draw the tool overlay → draw HUD → `ui.build` → `ui.draw`. It is factored
-out of `run()` so `tests/test_smoke.py` can drive the real application headless.
+`App.step_once()` (`src/app/main.py`) is one frame: events (each one put through
+`ctx.map_event` first) → reconcile the window size → rebuild the pixel-sized stack if the
+buffer changed shape → `ui.update` (held steppers) → refresh `world.contact_radius` from
+the camera → `sim.advance` → `sim.update_trails` → camera follow → drain `sim.impacts`
+into `state.effects` → draw world → `effects.update` / `effects.draw` → draw the tool
+overlay → draw HUD → `ui.build` → `ui.draw` → `ctx.present`. It is factored out of `run()`
+so `tests/test_smoke.py` can drive the real application headless.
 
 The interface is built **at the end of the frame**, from the state about to be shown, so
 the next frame's clicks hit exactly what is on screen.
@@ -79,6 +81,13 @@ or fast time scales.
 - Pixel-size constants scale by `internal_height / scale.REF_HEIGHT` (360); interface sizes
   come from `widgets.Metrics`, which derives every one of them from the font. Neither may
   hard-code a pixel count, because the `G` grid switch changes both.
+- **Nothing may cache a size across frames.** The window is resizable, so the buffer can
+  change shape at any frame boundary. `ui.build` already runs from the current size every
+  frame; anything else sized in pixels (font, camera, starfield, sprite cache) is rebuilt
+  by `App._build_render_stack`, which `step_once` calls whenever the buffer changed.
+- **Mouse coordinates are internal pixels everywhere.** `ctx.map_event` translates every
+  event on the way in and `ctx.mouse_pos()` is how a wheel event finds the pointer, so no
+  reader of `event.pos` — interface, tools, effects — knows the grid exists.
 
 ### Design decisions worth knowing before changing them
 
@@ -127,6 +136,25 @@ or fast time scales.
   opened twice — a fullscreen window is shorter than the desktop by the menu-bar strip,
   and sizing the buffer to the desktop leaves SDL scaling by a non-integer factor that
   smears the pixel grid. See that module's docstring for the measured numbers.
+- **The window is `RESIZABLE`, and the upscale is ours, not SDL's** (`app/config.py`).
+  `pygame.SCALED` pins the window's *minimum* size to the buffer, so a desktop-sized
+  buffer made the window un-shrinkable — and a second `set_mode` with `SCALED` raises
+  "failed to create renderer" on the cocoa driver, which `_open` caught and turned into
+  "keep the display we had", so the fullscreen toggle and the grid switch silently did
+  nothing. A plain `RESIZABLE` window has neither problem. `DisplayContext.present` does
+  the coarse-grid upscale itself, by exactly `s`, and `map_event` / `to_internal` do the
+  mouse translation `SCALED` used to do for us.
+- **Nothing may touch `pygame._sdl2.video.Window`.** It is the only way to move, minimise
+  or set a minimum size on a window in pygame 2.6, and the object
+  `Window.from_display_module()` returns destroys the real SDL window when it is
+  garbage-collected — the program then segfaults some frames later, inside
+  `pygame.event.get`, a long way from the call that did it.
+- **The interface has a smallest buffer it fits in, and a coarser grid is a divisor**
+  (`config.MIN_INTERNAL`, `min_internal`, `grid_fits`). So which pixel grids are on offer
+  is a property of the *window*: `ctx.usable_grids` drops the coarse ones in a narrow
+  window, `cycle_grid` steps through only those, and shrinking the window steps `s` back
+  down rather than laying controls out off the edge. `tests/test_layout.py` builds every
+  panel of every tool at the floor and fails if anything lands outside.
 - **Body colours live on `Material`, not in `render/palette.py`**, because they are a
   property of the substance rather than of the theme.
 - **A control is a description, not a widget object** (`render/widgets.py`). One `Control`
