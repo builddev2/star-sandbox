@@ -45,6 +45,7 @@ buttons.
 | `0` | stop the selected body dead |
 | `T` `R` `L` | trails / real sizes / labels |
 | `G` | pixel grid size |
+| `W` | window size -- two thirds, half, a third, full width |
 | `Del` | delete the selected body |
 | `F5` | start over |
 | `?` | controls |

@@ -42,6 +42,7 @@ KEY_HELP = (
     ("G", "pixel grid size"),
     ("Del", "delete the selected body"),
     ("F5", "start the solar system over"),
+    ("W", "window size -- two thirds, half, a third"),
     ("Cmd+F", "fullscreen"),
     ("?", "this help"),
     ("Esc", "deselect, or close this help"),
@@ -253,10 +254,18 @@ class Hud:
                        state.hint, palette.TEXT_DIM)
 
     def help_rect(self, width, height):
-        """Where the help panel goes.  ``ui.py`` hangs its close button off this."""
+        """Where the help panel goes.  ``ui.py`` hangs its close button off this.
+
+        Never wider or taller than what it is being drawn into.  This is the
+        one panel whose size comes from its contents rather than from the
+        window, so it is the one that can outgrow a small window, and a panel
+        hanging over the edge takes its own close button with it.
+        """
         char = self.font.width("X")
-        panel_w = max(char * 46, self.font.width(HELP_INTRO)) + PAD * 4
-        panel_h = (len(KEY_HELP) + 4) * self.line + PAD * 2
+        panel_w = min(max(char * 46, self.font.width(HELP_INTRO)) + PAD * 4,
+                      max(1, width - 2 * PAD))
+        panel_h = min((len(KEY_HELP) + 4) * self.line + PAD * 2,
+                      max(1, height - 2 * PAD))
         return pygame.Rect((width - panel_w) // 2, (height - panel_h) // 2,
                            panel_w, panel_h)
 
@@ -264,11 +273,20 @@ class Hud:
         char = self.font.width("X")
         rect = self.help_rect(surface.get_width(), surface.get_height())
         self._panel(surface, rect)
-        self.font.draw(surface, rect.x + PAD, rect.y + PAD, "Controls", palette.SELECT)
-        self.font.draw(surface, rect.x + PAD, rect.y + PAD + self.line,
-                       HELP_INTRO, palette.TEXT_DIM)
-        for k, (keys, description) in enumerate(KEY_HELP):
-            y = rect.y + PAD + (k + 3) * self.line
-            self.font.draw(surface, rect.x + PAD, y, keys, palette.ACCENT)
-            self.font.draw(surface, rect.x + PAD + char * 13, y,
-                           description, palette.TEXT)
+        # Clipped to the panel: a description is as long as it needs to be to
+        # read well, and text spilling across the world behind it looks like a
+        # crash rather than like a window that is a little too small.
+        previous = surface.get_clip()
+        surface.set_clip(rect.clip(previous) if previous else rect)
+        try:
+            self.font.draw(surface, rect.x + PAD, rect.y + PAD, "Controls",
+                           palette.SELECT)
+            self.font.draw(surface, rect.x + PAD, rect.y + PAD + self.line,
+                           HELP_INTRO, palette.TEXT_DIM)
+            for k, (keys, description) in enumerate(KEY_HELP):
+                y = rect.y + PAD + (k + 3) * self.line
+                self.font.draw(surface, rect.x + PAD, y, keys, palette.ACCENT)
+                self.font.draw(surface, rect.x + PAD + char * 13, y,
+                               description, palette.TEXT)
+        finally:
+            surface.set_clip(previous)

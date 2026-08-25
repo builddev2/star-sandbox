@@ -230,12 +230,28 @@ class AppState:
         self.body_list_offset = 0
 
     def cycle_grid(self, ctx):
-        """Step the pixel grid.  Sprites are sized in pixels, so the cache dies."""
+        """Step the pixel grid.  Sprites are sized in pixels, so the cache dies.
+
+        Cycles the grids this window is actually big enough for, which in a
+        third-of-the-screen window is fewer than in a fullscreen one.
+        """
         if ctx is None:
             return
-        from .config import GRID_CHOICES
-        nxt = GRID_CHOICES[(GRID_CHOICES.index(ctx.s) + 1) % len(GRID_CHOICES)]
-        ctx.set_grid(nxt)
+        choices = ctx.usable_grids
+        here = choices.index(ctx.s) if ctx.s in choices else -1
+        ctx.set_grid(choices[(here + 1) % len(choices)])
+        self.on_resize(ctx)
+
+    def cycle_window_size(self, ctx):
+        """Step the window through the size presets.  Leaves fullscreen behind.
+
+        A cycle rather than four buttons because the toolbar is already eight
+        icons wide, and three presses is a cheaper way through four choices
+        than three more things to read.
+        """
+        if ctx is None:
+            return
+        ctx.cycle_window_size()
         self.on_resize(ctx)
 
     def on_resize(self, ctx):
