@@ -173,3 +173,90 @@ def test_help_overlay_lists_every_binding():
     assert len(KEY_HELP) >= 12
     surface = pygame.Surface((1000, 700))
     Hud(PixelFont(14)).draw_help(surface)
+
+
+def _labelled(rows, label):
+    """The single inspector row starting with ``label``, or None."""
+    for text, _colour in rows:
+        if text.startswith(label):
+            return text
+    return None
+
+
+def test_anything_that_orbits_something_reports_a_farthest_distance(state):
+    """Every body the inspector says orbits another must show how far it gets.
+
+    "Closest" without "Farthest" reads as a missing number rather than as an
+    unbounded orbit, and there is no body in the scenario for which the pair
+    should be split up.
+    """
+    from src.render.hud import Hud, orbit_facts
+    from src.render.pixelfont import PixelFont
+    hud = Hud(PixelFont(14))
+    world = state.sim.world
+    checked = 0
+    for body in list(world.bodies):
+        state.select(body.id)
+        index = state.selected_index
+        rows = hud._rows(state, index)
+        if orbit_facts(world, index) is None:
+            assert _labelled(rows, "Farthest") is None, body.name
+            continue
+        checked += 1
+        assert _labelled(rows, "Farthest") is not None, body.name
+    assert checked > 0
+
+
+def test_an_escaping_body_still_says_how_far_it_goes(state):
+    """A hyperbolic body is still shown as orbiting something, so it still
+    needs the row -- and the honest answer is that it never comes back."""
+    from src import materials, units
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    world = state.sim.world
+    fast = np.array([0.0, np.sqrt(2 * units.G / 3.0) * 1.6])
+    body = world.add("Runaway", materials.get("rock"), 1e-12,
+                     units.EARTH_RADIUS * 0.1, np.array([3.0, 0.0]), fast)
+    state.select(body.id)
+    rows = Hud(PixelFont(14))._rows(state, state.selected_index)
+
+    assert _labelled(rows, "Orbits") is not None
+    farthest = _labelled(rows, "Farthest")
+    assert farthest is not None
+    assert "never" in farthest
+
+
+def test_an_escaping_body_does_not_report_a_negative_distance(state):
+    """Semi-major axis is negative on a hyperbola; printing it gave
+    "Distance   -1.44e+11 m", which is both wrong and in exponent notation."""
+    from src import materials, units
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    world = state.sim.world
+    fast = np.array([0.0, np.sqrt(2 * units.G / 3.0) * 1.6])
+    body = world.add("Runaway", materials.get("rock"), 1e-12,
+                     units.EARTH_RADIUS * 0.1, np.array([3.0, 0.0]), fast)
+    state.select(body.id)
+    rows = Hud(PixelFont(14))._rows(state, state.selected_index)
+
+    distance = _labelled(rows, "Distance")
+    assert "-" not in distance, distance
+    assert "e+" not in distance and "e-" not in distance, distance
+
+
+def test_the_farthest_row_fits_the_inspector_panel(state):
+    """The panel is a fixed character width; a row wider than it is clipped."""
+    from src import materials, units
+    from src.render.hud import Hud, PANEL_WIDTH_CHARS, orbit_facts
+    from src.render.pixelfont import PixelFont
+    world = state.sim.world
+    fast = np.array([0.0, np.sqrt(2 * units.G / 3.0) * 1.6])
+    world.add("Runaway", materials.get("rock"), 1e-12,
+              units.EARTH_RADIUS * 0.1, np.array([3.0, 0.0]), fast)
+    hud = Hud(PixelFont(14))
+    for body in list(world.bodies):
+        state.select(body.id)
+        if orbit_facts(world, state.selected_index) is None:
+            continue
+        row = _labelled(hud._rows(state, state.selected_index), "Farthest")
+        assert len(row) <= PANEL_WIDTH_CHARS, row

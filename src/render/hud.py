@@ -82,7 +82,16 @@ def format_speed(speed):
 
 
 def orbit_facts(world, index):
-    """Osculating orbit of ``index`` about whatever it is bound to."""
+    """Osculating orbit of ``index`` about whatever it is bound to.
+
+    ``distance_label``, ``closest_label`` and ``farthest_label`` are formatted
+    here rather than in the inspector because an unbound path needs *words*
+    where a closed orbit has a number.  Semi-major axis is negative on a
+    hyperbola and apoapsis does not exist at all, so a body thrown past escape
+    velocity read "Distance   -1.44e+11 m" and then simply omitted its farthest
+    distance -- a hole in the readout, where what is true is that it never
+    comes back.
+    """
     attractor = orbits.dominant_attractor(world, index)
     if attractor is None:
         return None
@@ -90,21 +99,33 @@ def orbit_facts(world, index):
     rel_pos = world.pos[index] - world.pos[attractor]
     rel_vel = world.vel[index] - world.vel[attractor]
     el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+    bound = el["bound"]
 
-    if not el["bound"]:
+    if not bound:
         period_label = "escaping"
     elif el["period"] >= 2.0 * units.DAYS_PER_YEAR:
         period_label = "%.1f yr" % units.to_years(el["period"])
     else:
         period_label = "%.1f days" % el["period"]
 
+    # An open path has no average distance to quote, so quote where it is now.
+    separation = float(np.hypot(rel_pos[0], rel_pos[1]))
+    distance_label = format_length(el["a"] if bound else separation)
+    farthest_label = (format_length(el["apoapsis"]) if el["apoapsis"] is not None
+                      else "never returns")
+
     return {
         "attractor": world.bodies[attractor].name,
         "a": el["a"],
         "e": el["e"],
+        "bound": bound,
+        "distance": separation,
         "period_label": period_label,
+        "distance_label": distance_label,
         "periapsis": el["periapsis"],
         "apoapsis": el["apoapsis"],
+        "closest_label": format_length(el["periapsis"]),
+        "farthest_label": farthest_label,
         "speed": float(np.hypot(rel_vel[0], rel_vel[1])),
     }
 
@@ -182,15 +203,16 @@ class Hud:
             rows += [
                 ("", palette.TEXT),
                 ("Orbits     %s" % facts["attractor"], palette.ACCENT),
-                ("Distance   %s" % format_length(facts["a"]), palette.TEXT),
+                ("Distance   %s" % facts["distance_label"], palette.TEXT),
                 ("Stretch    %.3f" % facts["e"], palette.TEXT),
                 ("One lap    %s" % facts["period_label"], palette.TEXT),
-                ("Closest    %s" % format_length(facts["periapsis"]), palette.TEXT),
+                # Closest and farthest are a pair: whatever the body is doing,
+                # both rows are always there, so neither reads as a number the
+                # readout failed to work out.
+                ("Closest    %s" % facts["closest_label"], palette.TEXT),
+                ("Farthest   %s" % facts["farthest_label"], palette.TEXT),
+                ("Speed      %s" % format_speed(facts["speed"]), palette.TEXT),
             ]
-            if facts["apoapsis"] is not None:
-                rows.append(("Farthest   %s" % format_length(facts["apoapsis"]),
-                             palette.TEXT))
-            rows.append(("Speed      %s" % format_speed(facts["speed"]), palette.TEXT))
 
         if body.kind != KIND_STAR and mass > 0.0:
             rows += [
