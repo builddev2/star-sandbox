@@ -199,9 +199,12 @@ def test_holding_the_mass_button_ignites_a_planet(app):
     pygame.event.post(_press(plus.rect.center))
     app.step_once()
 
-    # Hold it for a simulated few seconds' worth of repeats.
+    # Hold it for a simulated couple of seconds' worth of repeats -- long
+    # enough to ignite (around k=20) but short of edits.MAX_MASS, which now
+    # collapses the body into a black hole (around k=60) rather than capping
+    # it as a star.
     now = pygame.time.get_ticks()
-    for k in range(120):
+    for k in range(40):
         app.ui.update(app.state, app.ctx, now=now + 400 + k * 60)
         app.step_once()
 

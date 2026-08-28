@@ -135,3 +135,128 @@ def test_singularity_never_boils_and_never_shatters():
     from src import materials
     assert materials.SINGULARITY.vapour_temperature_k == math.inf
     assert materials.SINGULARITY.toughness > 1e6
+
+
+# --- collapse and editing ------------------------------------------------------
+
+@pytest.fixture
+def world_with_sun():
+    from src import materials, units as u
+    from src.body import KIND_STAR
+    from src.world import World
+    import numpy as np
+    w = World()
+    w.add("Sun", materials.get("hydrogen"), 1.0, u.SUN_RADIUS,
+          np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    return w
+
+
+def test_collapse_turns_a_star_into_a_black_hole(world_with_sun):
+    from src import edits
+    from src.body import KIND_BLACK_HOLE
+    edits.collapse(world_with_sun, 0)
+    body = world_with_sun.bodies[0]
+    assert body.kind == KIND_BLACK_HOLE
+    assert body.material.key == "singularity"
+    assert body.disk > 0.0
+
+
+def test_collapse_conserves_mass_exactly(world_with_sun):
+    """Collapsing the Sun gives a 1 solar mass hole, which nature could not
+    make -- but inventing two extra solar masses to respect the TOV limit is
+    worse than allowing it."""
+    from src import edits
+    edits.collapse(world_with_sun, 0)
+    assert float(world_with_sun.mass[0]) == pytest.approx(1.0)
+
+
+def test_collapse_sets_the_radius_to_the_horizon(world_with_sun):
+    from src import edits
+    edits.collapse(world_with_sun, 0)
+    assert float(world_with_sun.radius[0]) == pytest.approx(
+        units.schwarzschild_radius(1.0))
+    assert float(world_with_sun.contact_radius[0]) == pytest.approx(
+        float(world_with_sun.radius[0]))
+
+
+def test_collapse_clears_the_trail_and_the_rings(world_with_sun):
+    from src import edits
+    world_with_sun.bodies[0].rings = True
+    world_with_sun.bodies[0].trail.maybe_append((1.0, 2.0), None)
+    edits.collapse(world_with_sun, 0)
+    assert not world_with_sun.bodies[0].rings
+    assert world_with_sun.bodies[0].trail.count == 0
+
+
+def test_collapse_is_idempotent(world_with_sun):
+    from src import edits
+    edits.collapse(world_with_sun, 0)
+    world_with_sun.bodies[0].spin = 0.1
+    edits.collapse(world_with_sun, 0)
+    assert world_with_sun.bodies[0].spin == 0.1     # not reset a second time
+
+
+def test_a_star_scrubbed_past_the_threshold_collapses(world_with_sun):
+    from src import edits
+    from src.body import KIND_BLACK_HOLE
+    edits.set_mass(world_with_sun, 0, units.COLLAPSE_MASS_THRESHOLD)
+    assert world_with_sun.bodies[0].kind == KIND_BLACK_HOLE
+
+
+def test_a_star_below_the_threshold_stays_a_star(world_with_sun):
+    from src import edits
+    from src.body import KIND_STAR
+    edits.set_mass(world_with_sun, 0, units.COLLAPSE_MASS_THRESHOLD * 0.99)
+    assert world_with_sun.bodies[0].kind == KIND_STAR
+
+
+def test_collapse_is_one_way(world_with_sun):
+    """Losing mass leaves a smaller black hole, never a star again."""
+    from src import edits
+    from src.body import KIND_BLACK_HOLE
+    edits.collapse(world_with_sun, 0)
+    edits.set_mass(world_with_sun, 0, 1e-6)
+    assert world_with_sun.bodies[0].kind == KIND_BLACK_HOLE
+
+
+def test_black_hole_radius_follows_the_horizon_not_the_density(world_with_sun):
+    from src import edits
+    edits.collapse(world_with_sun, 0)
+    edits.set_mass(world_with_sun, 0, 20.0)
+    assert float(world_with_sun.radius[0]) == pytest.approx(
+        units.schwarzschild_radius(20.0))
+    assert float(world_with_sun.contact_radius[0]) == pytest.approx(
+        float(world_with_sun.radius[0]))
+
+
+def test_max_mass_is_the_collapse_threshold():
+    from src import edits
+    assert edits.MAX_MASS == units.COLLAPSE_MASS_THRESHOLD
+
+
+def test_spin_scrub_is_clamped_to_the_thorne_limit():
+    from src import edits
+    assert edits.scrub_spin(0.99, +100) == pytest.approx(units.MAX_SPIN)
+    assert edits.scrub_spin(0.01, -100) == 0.0
+
+
+def test_disk_scrub_is_clamped_to_zero_and_one():
+    from src import edits
+    assert edits.scrub_disk(0.9, +100) == 1.0
+    assert edits.scrub_disk(0.1, -100) == 0.0
+
+
+def test_edit_fields_depend_on_the_kind(world_with_sun):
+    from src import edits
+    star = world_with_sun.bodies[0]
+    assert edits.edit_fields(star) == ("mass", "density", "material")
+    edits.collapse(world_with_sun, 0)
+    assert edits.edit_fields(star) == ("mass", "spin", "disk")
+
+
+def test_cycle_material_refuses_to_touch_a_black_hole(world_with_sun):
+    """SINGULARITY is not in MATERIALS, so cycling would raise ValueError."""
+    from src import edits
+    edits.collapse(world_with_sun, 0)
+    edits.cycle_material(world_with_sun, 0, 1)
+    assert world_with_sun.bodies[0].material.key == "singularity"

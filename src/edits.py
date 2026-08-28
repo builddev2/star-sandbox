@@ -13,17 +13,35 @@ Imports numpy and nothing from pygame -- ``tests/test_layering.py`` asserts it.
 """
 
 from . import materials, units
-from .body import KIND_PLANET, KIND_STAR
+from .body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
+                   KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR)
 
-#: A body may not be lighter than a small asteroid or heavier than a large star.
+#: A body may not be lighter than a small asteroid, nor heavier than the point
+#: where a star stops being possible -- past units.COLLAPSE_MASS_THRESHOLD the
+#: core collapses instead, so the scrub tops out exactly where nature does.
 MIN_MASS = 1e-16
-MAX_MASS = 50.0
+MAX_MASS = units.COLLAPSE_MASS_THRESHOLD
 
 #: Ratio per scrub notch for mass, and g/cm^3 per notch for density.
 MASS_NOTCH = 1.06
 DENSITY_NOTCH = 0.15
+#: Linear per-notch steps for the two black hole controls.  Spin's range is
+#: under 1.0 and disk's is exactly 1.0, so neither wants a ratio scrub.
+SPIN_NOTCH = 0.02
+DISK_NOTCH = 0.05
 
-EDIT_FIELDS = ("mass", "density", "material")
+PLANET_EDIT_FIELDS = ("mass", "density", "material")
+BLACK_HOLE_EDIT_FIELDS = ("mass", "spin", "disk")
+#: Retained for callers that predate black holes and only ever meant the
+#: ordinary case.
+EDIT_FIELDS = PLANET_EDIT_FIELDS
+
+
+def edit_fields(body):
+    """The editable fields for this body -- a black hole has no density or
+    composition to speak of, so it is offered spin and accretion instead."""
+    return BLACK_HOLE_EDIT_FIELDS if body.kind == KIND_BLACK_HOLE \
+        else PLANET_EDIT_FIELDS
 
 
 # --- scrubbing --------------------------------------------------------------------
@@ -45,6 +63,18 @@ def scrub_density_gcm3(gcm3, notches):
                      materials.MAX_DENSITY_GCM3))
 
 
+def scrub_spin(spin, notches):
+    """Linear scrub, clamped to the Thorne limit."""
+    value = float(spin) + notches * SPIN_NOTCH
+    return float(min(max(value, 0.0), units.MAX_SPIN))
+
+
+def scrub_disk(disk, notches):
+    """Linear scrub over the whole feeding range, 0 (starved) to 1."""
+    value = float(disk) + notches * DISK_NOTCH
+    return float(min(max(value, 0.0), 1.0))
+
+
 # --- reading ----------------------------------------------------------------------
 
 def body_density(world, index):
@@ -53,7 +83,13 @@ def body_density(world, index):
 
 
 def ignition_ratio(world, index):
-    """How many times heavier this body must become before it lights up."""
+    """How many times heavier this body must become before it lights up.
+
+    Zero for a black hole: it is never going to ignite, and the caller shows a
+    different line entirely.
+    """
+    if world.bodies[index].kind == KIND_BLACK_HOLE:
+        return 0.0
     mass = float(world.mass[index])
     if mass <= 0.0:
         return float("inf")
@@ -63,20 +99,72 @@ def ignition_ratio(world, index):
 # --- writing ----------------------------------------------------------------------
 
 def _refresh_kind(world, index):
+    """Kind follows mass -- except that collapse is one-way."""
     body = world.bodies[index]
-    if float(world.mass[index]) >= units.STAR_MASS_THRESHOLD:
+    if body.kind == KIND_BLACK_HOLE:
+        # Nothing un-collapses.  A hole that loses mass is a smaller hole.
+        return
+    mass = float(world.mass[index])
+    if mass >= units.COLLAPSE_MASS_THRESHOLD:
+        collapse(world, index)
+    elif mass >= units.STAR_MASS_THRESHOLD:
         body.kind = KIND_STAR
     elif body.kind == KIND_STAR:
         body.kind = KIND_PLANET
 
 
 def set_mass(world, index, mass):
-    """Set mass, holding density constant, so the radius follows."""
-    density = body_density(world, index)
+    """Set mass so the radius follows.
+
+    For an ordinary body density is held constant and the radius derived from
+    it; for a black hole there is no density to hold -- the radius *is* the
+    Schwarzschild radius, and it is set by ``_refresh_kind`` reaching
+    ``collapse`` or by the branch below.
+    """
+    body = world.bodies[index]
     mass = float(min(max(float(mass), MIN_MASS), MAX_MASS))
+
+    if body.kind == KIND_BLACK_HOLE:
+        world.mass[index] = mass
+        world.radius[index] = units.schwarzschild_radius(mass)
+        world.contact_radius[index] = world.radius[index]
+        return
+
+    density = body_density(world, index)
     world.mass[index] = mass
     world.radius[index] = units.radius_from_mass_density(mass, density)
     _refresh_kind(world, index)
+
+
+def set_spin(world, index, spin):
+    world.bodies[index].spin = float(min(max(float(spin), 0.0), units.MAX_SPIN))
+
+
+def set_disk(world, index, disk):
+    world.bodies[index].disk = float(min(max(float(disk), 0.0), 1.0))
+
+
+def collapse(world, index):
+    """Collapse a body into a black hole.  One-way, and mass is conserved.
+
+    Collapsing the Sun leaves a one-solar-mass hole, which is below the
+    Tolman-Oppenheimer-Volkoff limit and so something nature does not make.
+    Allowing it is the lesser evil: refusing removes the most interesting
+    thing the child can do here, and rounding the mass up to 3 suns invents
+    matter out of nothing.
+    """
+    body = world.bodies[index]
+    if body.kind == KIND_BLACK_HOLE:
+        return
+    body.kind = KIND_BLACK_HOLE
+    body.material = materials.SINGULARITY
+    body.rings = False
+    body.spin = DEFAULT_BLACK_HOLE_SPIN
+    body.disk = DEFAULT_BLACK_HOLE_DISK
+    # The trail was drawn in the old material's colour and at the old size.
+    body.trail.clear()
+    world.radius[index] = units.schwarzschild_radius(float(world.mass[index]))
+    world.contact_radius[index] = world.radius[index]
 
 
 def set_density(world, index, density):
@@ -98,6 +186,9 @@ def set_material(world, index, material):
 
 
 def cycle_material(world, index, step=1):
+    body = world.bodies[index]
+    if body.kind == KIND_BLACK_HOLE:
+        return          # a hole is not made of anything to cycle through
     keys = [m.key for m in materials.MATERIALS]
-    current = keys.index(world.bodies[index].material.key)
+    current = keys.index(body.material.key)
     set_material(world, index, materials.MATERIALS[(current + step) % len(keys)])
