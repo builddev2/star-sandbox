@@ -370,3 +370,115 @@ def test_a_black_hole_stays_a_black_hole_after_eating(world_with_sun):
     w.contact_radius[:w.n] = 1e-4
     collisions.CollisionResolver(1).resolve(w, Integrator(w.capacity), w.pos.copy())
     assert w.bodies[0].kind == KIND_BLACK_HOLE
+
+
+# --- tides ---------------------------------------------------------------------
+
+def _hole_and_victim(hole_mass, distance, victim_kind=None):
+    import numpy as np
+    from src import edits, materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    w.add("Hole", materials.get("hydrogen"), hole_mass, units.SUN_RADIUS,
+          np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    edits.collapse(w, 0)
+    kwargs = {"kind": victim_kind} if victim_kind else {}
+    w.add("Victim", materials.get("rock"), units.EARTH_MASS, units.EARTH_RADIUS,
+          np.array([distance, 0.0]), np.zeros(2), **kwargs)
+    w.contact_radius[:w.n] = w.radius[:w.n]
+    return w
+
+
+def test_a_black_hole_shreds_a_planet_that_comes_close():
+    """Earth's tidal radius from a 10 solar mass hole is 0.00636 AU, some
+    32,000 horizon radii out -- a big, slow, visible event."""
+    from src import collisions, destruction
+    w = _hole_and_victim(10.0, distance=0.003)
+    count, event = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
+    assert count == 1
+    assert event.outcome == "tidal"
+    assert w.n > 2                          # replaced by a spray of debris
+
+
+def test_a_planet_safely_outside_the_tidal_radius_survives():
+    from src import collisions, destruction
+    w = _hole_and_victim(10.0, distance=0.5)
+    count, _ = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
+    assert count == 0
+    assert w.n == 2
+
+
+def test_a_black_hole_boils_nothing():
+    """Hawking radiation from a stellar hole is 6 nanokelvin -- colder than
+    the microwave background.  Only the tide destroys anything."""
+    from src import collisions, destruction
+    w = _hole_and_victim(10.0, distance=0.5)
+    before = float(w.mass[1])
+    destruction.apply(w, collisions.CollisionResolver(1), 10.0)
+    assert float(w.mass[1]) == pytest.approx(before)
+
+
+def test_a_star_is_shredded_by_a_black_hole():
+    """A tidal disruption event -- the most spectacular thing a hole does."""
+    import numpy as np
+    from src import collisions, destruction, edits, materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    w.add("Hole", materials.get("hydrogen"), 50.0, units.SUN_RADIUS,
+          np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    edits.collapse(w, 0)
+    w.add("Star", materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+          np.array([0.005, 0.0]), np.zeros(2), kind=KIND_STAR)
+    w.contact_radius[:w.n] = w.radius[:w.n]
+    count, event = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
+    assert count == 1
+    assert event.outcome == "tidal"
+
+
+def test_a_star_is_not_shredded_by_another_star():
+    """Guarded: two ordinary stars would have to be almost touching, and
+    letting them shred each other would break every binary scenario."""
+    import numpy as np
+    from src import collisions, destruction, materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    for k in range(2):
+        w.add("S%d" % k, materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+              np.array([k * 0.01, 0.0]), np.zeros(2), kind=KIND_STAR)
+    w.contact_radius[:w.n] = w.radius[:w.n]
+    count, _ = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
+    assert count == 0
+
+
+def test_a_black_hole_is_never_a_victim():
+    """Nothing tears a horizon apart -- and the exclusion is in the victim
+    list, not merely in the arithmetic.
+
+    A hole's own surface gravity is the largest possible, so the tide on one
+    never approaches its strength at any separation (1.7e-15 here).  A purely
+    dynamical assertion would therefore pass even with the exclusion deleted,
+    which is why this checks the list itself.
+    """
+    import numpy as np
+    from src import collisions, destruction, edits, materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    w.add("Big", materials.get("hydrogen"), 100.0, units.SUN_RADIUS,
+          np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    w.add("Hole", materials.get("hydrogen"), 3.0, units.SUN_RADIUS,
+          np.array([0.02, 0.0]), np.zeros(2), kind=KIND_STAR)
+    edits.collapse(w, 1)
+    w.contact_radius[:w.n] = w.radius[:w.n]
+
+    victims, stars, attractors = destruction._bodies_and_attractors(w)
+    assert 1 not in victims, "a black hole must never be a victim"
+    assert 1 in attractors, "but it must still raise tides"
+    assert 1 not in stars, "and it radiates nothing"
+
+    count, _ = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
+    assert count == 0
+    assert w.n == 2

@@ -1,8 +1,10 @@
-"""Destruction that needs no contact: a star's tide, and its light.
+"""Destruction that needs no contact: a tide, and a star's light.
 
-A body can be torn apart or boiled away by a star it never touches. Both
-checks run over stars only, so the cost is O(n * n_stars) -- negligible next
-to the O(n^2) force kernel.
+A body can be torn apart by a tide -- raised by a star or a black hole -- or
+boiled away by a star's light, without ever touching what does it. The tidal
+check runs over every attractor; the thermal check runs over stars only,
+since a black hole radiates nothing. Both are O(n * n_attractors) --
+negligible next to the O(n^2) force kernel.
 
 Tidal disruption is instantaneous and, like ``CollisionResolver.resolve()``,
 handles only the single worst violation per call: indices shift when a body
@@ -19,7 +21,7 @@ import math
 import numpy as np
 
 from . import units
-from .body import KIND_STAR
+from .body import KIND_BLACK_HOLE, KIND_STAR
 from .collisions import ImpactEvent
 
 #: Below this mass, an ablating body is "gone" rather than a vanishingly
@@ -65,11 +67,26 @@ def equilibrium_temperature(world, i, k):
     return t_star * math.sqrt(r_star / (2.0 * d))
 
 
-def _bodies_and_stars(world):
+def _bodies_and_attractors(world):
+    """(victims, stars, attractors) for this world.
+
+    **Attractors** raise tides: stars and black holes both. **Stars** alone
+    radiate -- a stellar-mass hole's Hawking temperature is 6 nanokelvin,
+    colder than the microwave background, so it boils nothing.
+
+    A black hole is never a victim: nothing tears a horizon apart. A star may
+    be a victim, but only of a hole -- a tidal disruption event is the most
+    spectacular thing in this simulation, while two ordinary stars would have
+    to be nearly touching, and letting them shred each other would wreck every
+    binary arrangement.
+    """
     n = world.n
-    stars = [k for k in range(n) if world.bodies[k].kind == KIND_STAR]
-    bodies = [i for i in range(n) if world.bodies[i].kind != KIND_STAR]
-    return bodies, stars
+    kinds = [world.bodies[k].kind for k in range(n)]
+    stars = [k for k in range(n) if kinds[k] == KIND_STAR]
+    attractors = [k for k in range(n)
+                  if kinds[k] in (KIND_STAR, KIND_BLACK_HOLE)]
+    victims = [i for i in range(n) if kinds[i] != KIND_BLACK_HOLE]
+    return victims, stars, attractors
 
 
 def _event(world, i, outcome):
@@ -90,18 +107,24 @@ def _event(world, i, outcome):
 
 
 def apply(world, resolver, dt):
-    """Tidal disruption and thermal ablation near a star.
+    """Tidal disruption and thermal ablation near a star or a black hole.
 
     Returns ``(count, event)`` -- the number of bodies destroyed (0 or 1)
     this call, and an :class:`ImpactEvent` describing it, or ``None``.
     """
-    bodies, stars = _bodies_and_stars(world)
-    if not bodies or not stars:
+    victims, stars, attractors = _bodies_and_attractors(world)
+    if not victims or not attractors:
         return 0, None
 
     worst_ratio, worst_i, worst_k = 0.0, None, None
-    for i in bodies:
-        for k in stars:
+    for i in victims:
+        star_victim = world.bodies[i].kind == KIND_STAR
+        for k in attractors:
+            if k == i:
+                continue
+            # Only a black hole may shred a star.
+            if star_victim and world.bodies[k].kind != KIND_BLACK_HOLE:
+                continue
             ratio = tidal_stress_ratio(world, i, k)
             if ratio > worst_ratio:
                 worst_ratio, worst_i, worst_k = ratio, i, k
@@ -111,7 +134,9 @@ def apply(world, resolver, dt):
         return 1, event
 
     vaporised = None
-    for i in bodies:
+    for i in victims:
+        if world.bodies[i].kind == KIND_STAR:
+            continue                    # a star does not boil in its own light
         hottest = max((equilibrium_temperature(world, i, k) for k in stars),
                      default=0.0)
         vapour = world.bodies[i].material.vapour_temperature_k
