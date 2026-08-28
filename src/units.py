@@ -181,8 +181,7 @@ MAX_SPIN = 0.998
 TOV_LIMIT_MASS = 3.0
 
 #: Past this mass a star does not exist; the core collapses directly to a black
-#: hole with no supernova at all (above the pair-instability window).  It is
-#: also ``edits.MAX_MASS``, so the mass scrub tops out exactly where nature does.
+#: hole with no supernova at all (above the pair-instability window).
 COLLAPSE_MASS_THRESHOLD = 150.0
 
 #: The dark disc a black hole casts is not the horizon -- light bending magnifies
@@ -218,6 +217,19 @@ def photon_sphere_radius(mass):
     return PHOTON_SPHERE_FACTOR * schwarzschild_radius(mass)
 
 
+def _kerr_isco_gm_c2(spin):
+    """Prograde Kerr ISCO radius in units of GM/c^2 (Bardeen, Press &
+    Teukolsky 1972).  Shared by isco_radius and accretion_efficiency so the
+    orbit one reports and the binding energy the other computes can never
+    drift apart.
+    """
+    a = min(abs(float(spin)), MAX_SPIN)
+    z1 = 1.0 + (1.0 - a * a) ** (1.0 / 3.0) * (
+        (1.0 + a) ** (1.0 / 3.0) + (1.0 - a) ** (1.0 / 3.0))
+    z2 = math.sqrt(3.0 * a * a + z1 * z1)
+    return 3.0 + z2 - math.sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2))
+
+
 def isco_radius(mass, spin=0.0):
     """Innermost stable circular orbit (prograde), in AU.
 
@@ -226,11 +238,7 @@ def isco_radius(mass, spin=0.0):
     from 3 horizon radii down to 0.62, which is why a fast-spinning hole
     converts 32% of what it eats into light against a still one's 5.7%.
     """
-    a = min(abs(float(spin)), MAX_SPIN)
-    z1 = 1.0 + (1.0 - a * a) ** (1.0 / 3.0) * (
-        (1.0 + a) ** (1.0 / 3.0) + (1.0 - a) ** (1.0 / 3.0))
-    z2 = math.sqrt(3.0 * a * a + z1 * z1)
-    r_gm = 3.0 + z2 - math.sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2))
+    r_gm = _kerr_isco_gm_c2(spin)
     # r_gm is in units of GM/c^2, which is half a Schwarzschild radius.
     return 0.5 * r_gm * schwarzschild_radius(mass)
 
@@ -242,11 +250,7 @@ def accretion_efficiency(spin=0.0):
     32% at the Thorne limit -- against 0.7% for hydrogen fusion, which is why
     accreting black holes outshine the galaxies they sit in.
     """
-    a = min(abs(float(spin)), MAX_SPIN)
-    z1 = 1.0 + (1.0 - a * a) ** (1.0 / 3.0) * (
-        (1.0 + a) ** (1.0 / 3.0) + (1.0 - a) ** (1.0 / 3.0))
-    z2 = math.sqrt(3.0 * a * a + z1 * z1)
-    r_gm = 3.0 + z2 - math.sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2))
+    r_gm = _kerr_isco_gm_c2(spin)
     return 1.0 - math.sqrt(1.0 - 2.0 / (3.0 * r_gm))
 
 
