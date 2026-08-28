@@ -89,3 +89,49 @@ def test_apparent_radius_is_big_enough_to_draw():
     """
     assert units.apparent_radius(10.0) > units.SUN_RADIUS
     assert units.apparent_radius(3.0) > units.SUN_RADIUS
+
+
+# --- the kind and the material -------------------------------------------------
+
+def test_black_hole_kind_exists_and_bodies_report_it():
+    from src.body import KIND_BLACK_HOLE, Body
+    from src import materials
+    b = Body(1, "Hole", materials.SINGULARITY, kind=KIND_BLACK_HOLE)
+    assert b.is_black_hole
+    assert not b.is_star
+
+
+def test_ordinary_bodies_are_not_black_holes():
+    from src.body import Body
+    from src import materials
+    assert not Body(1, "Earth", materials.get("rock")).is_black_hole
+
+
+def test_new_bodies_start_with_no_spin_and_no_disk():
+    from src.body import Body
+    from src import materials
+    b = Body(1, "Earth", materials.get("rock"))
+    assert b.spin == 0.0
+    assert b.disk == 0.0
+
+
+def test_singularity_is_reachable_by_key_but_not_cycleable():
+    """It must not appear in MATERIALS, or the Edit tool's material cycle and
+    nearest_by_density could both land on it."""
+    from src import materials
+    assert materials.get("singularity") is materials.SINGULARITY
+    assert materials.SINGULARITY not in materials.MATERIALS
+    assert all(m.key != "singularity" for m in materials.MATERIALS)
+
+
+def test_nearest_by_density_can_never_return_the_singularity():
+    from src import materials
+    for density_gcm3 in (0.01, 1.0, 25.0, 1e12):
+        chosen = materials.nearest_by_density(units.from_gcm3(density_gcm3))
+        assert chosen.key != "singularity"
+
+
+def test_singularity_never_boils_and_never_shatters():
+    from src import materials
+    assert materials.SINGULARITY.vapour_temperature_k == math.inf
+    assert materials.SINGULARITY.toughness > 1e6

@@ -90,7 +90,27 @@ MATERIALS = (
     ),
 )
 
+#: A black hole is not made of anything, but every code path that draws, labels
+#: or trails a body wants a Material.  This one exists to satisfy them, and its
+#: tones are the accretion disk's colours so that trails and labels read hot.
+#:
+#: Deliberately **not** in MATERIALS: the Edit tool cycles that tuple and
+#: nearest_by_density searches it, and neither may ever land here.  A black
+#: hole's radius comes from its Schwarzschild radius, so density_gcm3 is never
+#: read -- it is present only because the dataclass requires it.
+SINGULARITY = Material(
+    "singularity", "Singularity", 1.0,
+    ((0x40, 0x08, 0x04), (0xE0, 0x70, 0x18), (0xFF, 0xF0, 0xD0)),
+    "disk",
+    "Not made of anything. Just gravity, wound too tight to let go.",
+    toughness=1e9, vapour_temperature_k=float("inf"),
+)
+
 BY_KEY = {m.key: m for m in MATERIALS}
+
+# Reachable by key -- the Throw preset and collapse both ask for it by name --
+# without being reachable by cycling or by density search.
+BY_KEY[SINGULARITY.key] = SINGULARITY
 
 #: Density is clamped to this range when the child drags the slider.  The floor is about
 #: as puffy as a real planet gets; the ceiling is approaching degenerate matter.

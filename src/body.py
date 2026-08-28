@@ -10,6 +10,7 @@ import numpy as np
 KIND_PLANET = "planet"
 KIND_STAR = "star"
 KIND_DEBRIS = "debris"
+KIND_BLACK_HOLE = "black hole"
 
 #: How many past positions a trail remembers.  Sampling is by angle swept (see Trail),
 #: so this is about 1.7 orbits' worth for any body at any scale.
@@ -19,6 +20,12 @@ TRAIL_CAPACITY = 512
 #: Constant angle rather than constant time or distance is what makes Mercury's trail
 #: and Neptune's equally smooth.
 TRAIL_ANGLE_STEP = 0.021          # ~1.2 degrees -> ~300 points per orbit
+
+#: What a freshly made black hole looks like.  A hole with no spin and no disk
+#: is a black disc and nothing else -- correct for a starved one, but a poor
+#: first impression, so anything the child creates arrives already feeding.
+DEFAULT_BLACK_HOLE_SPIN = 0.7
+DEFAULT_BLACK_HOLE_DISK = 0.6
 
 
 class Trail:
@@ -63,7 +70,7 @@ class Body:
     """Identity and appearance of one simulated object."""
 
     __slots__ = ("id", "name", "kind", "material", "trail", "born_day",
-                 "event_id", "no_collide_until", "seed", "rings")
+                 "event_id", "no_collide_until", "seed", "rings", "spin", "disk")
 
     def __init__(self, body_id, name, material, kind=KIND_PLANET, born_day=0.0, seed=0):
         self.id = body_id
@@ -80,10 +87,20 @@ class Body:
         self.seed = seed
         #: Drawn with a ring system.  Set by scenarios for Saturn.
         self.rings = False
+        #: Dimensionless spin, 0 .. units.MAX_SPIN.  Black holes only; it moves
+        #: the accretion disk's inner edge and turns the jets on.
+        self.spin = 0.0
+        #: Feeding rate, 0 .. 1, driving how bright and how wide the accretion
+        #: disk is drawn.  0 is a starved hole: shadow and photon ring only.
+        self.disk = 0.0
 
     @property
     def is_star(self):
         return self.kind == KIND_STAR
+
+    @property
+    def is_black_hole(self):
+        return self.kind == KIND_BLACK_HOLE
 
     def __repr__(self):
         return "<Body %d %r %s>" % (self.id, self.name, self.kind)
