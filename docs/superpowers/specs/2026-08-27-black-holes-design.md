@@ -29,10 +29,16 @@ not three:
 | Spin | `a*` | 0 .. 0.998 | +/- 0.02 (linear) | Dimensionless. 0.998 is the Thorne limit: radiation from the disk torques a hole back down before it can reach 1 |
 | Disk | — | 0 .. 1 | +/- 0.05 (linear) | Feeding rate, driving disk brightness and extent. 0 is a starved hole: shadow and photon ring only |
 
-The **lower** mass bound is as real as the upper one. `MIN_BLACK_HOLE_MASS = 3.0` is the
+The **lower** bound of that range is `units.TOV_LIMIT_MASS = 3.0`, the
 Tolman-Oppenheimer-Volkoff limit — the heaviest a neutron star can be before it collapses
-— and there is an observed gap below it where nature makes no black holes at all.
-Scrubbing a hole's mass down stops there rather than at the global `edits.MIN_MASS`.
+— below which there is an observed gap where nature makes no black holes at all.
+
+It is deliberately **not** enforced as a clamp. Collapse conserves mass exactly, so
+collapsing the Sun produces a 1 M_sun hole that nature could not make. The alternatives
+are worse: refusing the collapse removes the single most valuable thing this feature
+offers, and silently tripling the Sun's mass to permit it invents matter. The limit is
+reported in the inspector instead, where it teaches something rather than blocking
+something.
 
 **Accretion is not bound by `MAX_MASS`.** The 150 M_sun ceiling is a limit on what the
 child can *dial*; `collisions.merge` writes `world.mass[i]` directly and so a hole that
@@ -142,6 +148,13 @@ stays stars-only. Hawking radiation from a stellar-mass hole is 6 nanokelvin —
 than the cosmic microwave background, which means such a hole absorbs more than it emits
 and grows rather than evaporating.
 
+**A star may be shredded by a black hole, but not by another star.** `_bodies_and_stars`
+currently excludes stars from being victims at all, which is right for a pair of stars —
+they would have to be almost touching — but wrong for a black hole, where a tidal
+disruption event is the single most spectacular thing that happens. Stars join the victim
+list, guarded so that only a black hole can raise a disruptive tide on one. Without this
+the black-hole scenario below cannot do the one thing it exists to show.
+
 *Deliberate omission:* a real accretion disk reaches millions of kelvin and would boil a
 comet long before the tide reached it. Here the disk is a drawn object, not a simulated
 one, so it heats nothing. Modelling disk luminosity would mean giving the render layer's
@@ -245,14 +258,23 @@ back to front:
 |---|---|---|
 | Jets | to `4 px x spin` | Two tapering vertical beams, pale blue-white. Only when `spin > 0` and `disk > 0`, and only above ~6 px |
 | Lensed far side | `~1.6 px` | An arc above and below the shadow — the back half of the disk bent into view. The signature shape |
-| Accretion disk | `isco/shadow x px` .. `2.6 px` | Concentric near-edge-on ellipses, vertical squash ~0.22, heat-ramped white -> blue -> orange -> deep red outward |
+| Accretion disk | `2.0 px` .. `1.05 px` inner (by spin), out to `2.6 px` | Concentric near-edge-on ellipses, vertical squash ~0.22, heat-ramped white -> blue -> orange -> deep red outward |
 | Doppler beaming | — | Each ellipse drawn twice under a clip rect, ~2.5x brighter on the approaching side. Which side approaches is fixed per body by the low bit of `body.seed`, so a given hole always spins the same way |
 | Shadow | `px` | Opaque black fill, over the disk |
 | Photon ring | `px` | A 1 px near-white circle at the shadow's edge |
 
-The inner disk edge is driven by `isco_radius(mass, spin) / shadow_radius(mass)`, so
-raising spin visibly pulls the disk inward and tightens it. That is the single clearest
-way to show what spin means without a word of explanation.
+**The inner edge moves with spin, exaggerated the way drawn radii already are.** The true
+`isco_radius / shadow_radius` ratio runs from 1.155 at `a* = 0` down to 0.238 at 0.998 —
+but a black hole draws at 6 px, so that entire range spans less than one pixel, and above
+`a* = 0.87` the disk's inner edge passes *inside* the shadow and is occluded entirely.
+The drawn inner edge is therefore mapped linearly onto `2.00 px .. 1.05 px`, preserving
+the ordering and the direction: more spin, tighter disk. This is the same trade
+`scale._floor` already makes, and the true ratios belong in the constant's comment.
+
+The gap it opens between the photon ring and the disk's inner edge is real — at low spin
+there is a visible dark band, and at high spin the disk closes right up against the ring.
+Pairing that with the innermost ring brightening (efficiency runs 5.7 % to 32 % over the
+same range) gives two honest cues for what spin means, without a word of explanation.
 
 **Blitted normally, not additively.** Stars use `BLEND_ADD`, which cannot draw black — it
 only ever lightens. A black hole's defining feature is an opaque hole in the sky, so its
