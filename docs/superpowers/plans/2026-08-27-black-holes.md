@@ -1213,7 +1213,14 @@ def test_a_star_is_not_shredded_by_another_star():
 
 
 def test_a_black_hole_is_never_a_victim():
-    """Nothing tears a horizon apart, however close it gets to anything."""
+    """Nothing tears a horizon apart -- and the exclusion is in the victim
+    list, not merely in the arithmetic.
+
+    A hole's own surface gravity is the largest possible, so the tide on one
+    never approaches its strength at any separation (1.7e-15 here).  A purely
+    dynamical assertion would therefore pass even with the exclusion deleted,
+    which is why this checks the list itself.
+    """
     import numpy as np
     from src import collisions, destruction, edits, materials
     from src.body import KIND_STAR
@@ -1222,13 +1229,25 @@ def test_a_black_hole_is_never_a_victim():
     w.add("Big", materials.get("hydrogen"), 100.0, units.SUN_RADIUS,
           np.zeros(2), np.zeros(2), kind=KIND_STAR)
     w.add("Hole", materials.get("hydrogen"), 3.0, units.SUN_RADIUS,
-          np.array([1e-4, 0.0]), np.zeros(2), kind=KIND_STAR)
+          np.array([0.02, 0.0]), np.zeros(2), kind=KIND_STAR)
     edits.collapse(w, 1)
     w.contact_radius[:w.n] = w.radius[:w.n]
+
+    victims, stars, attractors = destruction._bodies_and_attractors(w)
+    assert 1 not in victims, "a black hole must never be a victim"
+    assert 1 in attractors, "but it must still raise tides"
+    assert 1 not in stars, "and it radiates nothing"
+
     count, _ = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
     assert count == 0
     assert w.n == 2
 ```
+
+**The separation matters, and the earlier draft of this plan got it wrong.**
+`units.SUN_RADIUS` is 0.00465 AU, so the 1e-4 AU this test originally used put
+the hole *inside* the star, where it shreds it at a tidal ratio of 6034 --
+triggering this task's own star-as-victim rule and failing on `count == 0`.
+0.02 AU puts the ratio on the star at 7.5e-4, comfortably clear.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
