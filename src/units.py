@@ -59,6 +59,12 @@ AUD_TO_KMS = AU_KM / SEC_PER_DAY             # 1731.46
 #: 1 AU/day^2 expressed in m/s^2.
 AUD2_TO_MS2 = AU_M / SEC_PER_DAY ** 2        # 20.04
 
+#: The speed of light.  Every other module asks for it here; the whole point
+#: of this file is that a constant is written down once.
+C_KMS = 299792.458
+#: ... and in simulation units, AU per day: 173.1446 AU/day.
+C = C_KMS * SEC_PER_DAY / AU_KM
+
 STANDARD_GRAVITY = 9.80665                   # m/s^2
 
 FOUR_THIRDS_PI = 4.0 / 3.0 * math.pi
@@ -156,6 +162,115 @@ def star_temperature(mass):
     whether a comet boils.
     """
     return SUN_TEMPERATURE_K * math.sqrt(max(mass, 0.0))
+
+
+# --- Black holes --------------------------------------------------------------------
+#
+# A black hole is completely described by mass, angular momentum and charge (the
+# "no-hair" theorem).  Astrophysical holes carry no net charge -- the surrounding
+# plasma neutralises any imbalance almost at once -- so there are two real
+# parameters here, and everything below is derived from them.
+
+#: Dimensionless spin ceiling.  Not 1: radiation from the accretion disk torques
+#: a hole back down before it can reach the extremal limit (Thorne 1974).
+MAX_SPIN = 0.998
+
+#: Tolman-Oppenheimer-Volkoff limit: the heaviest a neutron star can be before it
+#: collapses.  Below this nature makes neutron stars, not black holes.  Reported
+#: in the inspector, deliberately not enforced -- see the design doc.
+TOV_LIMIT_MASS = 3.0
+
+#: Past this mass a star does not exist; the core collapses directly to a black
+#: hole with no supernova at all (above the pair-instability window).  It is
+#: also ``edits.MAX_MASS``, so the mass scrub tops out exactly where nature does.
+COLLAPSE_MASS_THRESHOLD = 150.0
+
+#: The dark disc a black hole casts is not the horizon -- light bending magnifies
+#: it to sqrt(27)/2 horizon radii, about 2.6x.
+SHADOW_FACTOR = math.sqrt(27.0) / 2.0
+#: Where photons orbit in circles, at 1.5 horizon radii.
+PHOTON_SPHERE_FACTOR = 1.5
+
+#: Hawking temperature of a one-solar-mass hole, kelvin.  Sixty nanokelvin --
+#: far below the 2.7 K microwave background, which is why a stellar-mass hole
+#: absorbs more than it radiates and grows instead of evaporating.
+HAWKING_T_SUN_K = 6.169e-8
+#: Evaporation time of a one-solar-mass hole, years.  Scales as M^3.
+EVAPORATION_SUN_YEARS = 2.1e67
+
+#: Main-sequence mass-radius exponent, used only to give a black hole a drawable
+#: apparent size: the disk is roughly as big as the star that made it.
+APPARENT_RADIUS_EXP = 0.8
+
+
+def schwarzschild_radius(mass):
+    """Event horizon radius 2GM/c^2, in AU.  2.953 km per solar mass."""
+    return 2.0 * G * max(float(mass), 0.0) / (C * C)
+
+
+def shadow_radius(mass):
+    """Radius of the dark disc an observer actually sees, in AU."""
+    return SHADOW_FACTOR * schwarzschild_radius(mass)
+
+
+def photon_sphere_radius(mass):
+    """Radius at which light orbits in a circle, in AU."""
+    return PHOTON_SPHERE_FACTOR * schwarzschild_radius(mass)
+
+
+def isco_radius(mass, spin=0.0):
+    """Innermost stable circular orbit (prograde), in AU.
+
+    Bardeen, Press & Teukolsky (1972).  This is the inner edge of an accretion
+    disk: inside it there is no stable orbit and matter plunges.  Spin drags it
+    from 3 horizon radii down to 0.62, which is why a fast-spinning hole
+    converts 32% of what it eats into light against a still one's 5.7%.
+    """
+    a = min(abs(float(spin)), MAX_SPIN)
+    z1 = 1.0 + (1.0 - a * a) ** (1.0 / 3.0) * (
+        (1.0 + a) ** (1.0 / 3.0) + (1.0 - a) ** (1.0 / 3.0))
+    z2 = math.sqrt(3.0 * a * a + z1 * z1)
+    r_gm = 3.0 + z2 - math.sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2))
+    # r_gm is in units of GM/c^2, which is half a Schwarzschild radius.
+    return 0.5 * r_gm * schwarzschild_radius(mass)
+
+
+def accretion_efficiency(spin=0.0):
+    """Fraction of infalling rest mass radiated away, 0..1.
+
+    One minus the specific binding energy at the ISCO.  5.7% for a still hole,
+    32% at the Thorne limit -- against 0.7% for hydrogen fusion, which is why
+    accreting black holes outshine the galaxies they sit in.
+    """
+    a = min(abs(float(spin)), MAX_SPIN)
+    z1 = 1.0 + (1.0 - a * a) ** (1.0 / 3.0) * (
+        (1.0 + a) ** (1.0 / 3.0) + (1.0 - a) ** (1.0 / 3.0))
+    z2 = math.sqrt(3.0 * a * a + z1 * z1)
+    r_gm = 3.0 + z2 - math.sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2))
+    return 1.0 - math.sqrt(1.0 - 2.0 / (3.0 * r_gm))
+
+
+def hawking_temperature_k(mass):
+    """Temperature of the hole's own radiation, kelvin.  Scales as 1/M."""
+    mass = float(mass)
+    return HAWKING_T_SUN_K / mass if mass > 0.0 else math.inf
+
+
+def evaporation_years(mass):
+    """How long the hole takes to evaporate, years.  Scales as M^3."""
+    return EVAPORATION_SUN_YEARS * max(float(mass), 0.0) ** 3
+
+
+def apparent_radius(mass):
+    """The size a black hole is *drawn* from, in AU -- not a physical radius.
+
+    The horizon is seven orders of magnitude below anything else in the sim, so
+    a hole would draw as a single pixel and, worse, be impossible to aim at
+    (see render/scale.py).  This stands in for the accretion disk, using the
+    main-sequence mass-radius relation on the grounds that the disk is about as
+    big as the star that made the hole.  **Physics must never read this.**
+    """
+    return SUN_RADIUS * max(float(mass), 0.0) ** APPARENT_RADIUS_EXP
 
 
 def circular_speed(mu, radius):
