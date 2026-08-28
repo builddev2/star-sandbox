@@ -260,3 +260,113 @@ def test_cycle_material_refuses_to_touch_a_black_hole(world_with_sun):
     edits.collapse(world_with_sun, 0)
     edits.cycle_material(world_with_sun, 0, 1)
     assert world_with_sun.bodies[0].material.key == "singularity"
+
+
+# --- collisions ----------------------------------------------------------------
+
+def _pair(hole_mass, other_mass, other_radius, separation, speed):
+    """A black hole and one other body, closing head-on."""
+    import numpy as np
+    from src import edits, materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    w.add("Hole", materials.get("hydrogen"), hole_mass, units.SUN_RADIUS,
+          np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    edits.collapse(w, 0)
+    w.add("Other", materials.get("rock"), other_mass, other_radius,
+          np.array([separation, 0.0]), np.array([-speed, 0.0]))
+    w.contact_radius[:w.n] = w.radius[:w.n]
+    return w
+
+
+def test_a_light_black_hole_takes_the_target_slot_against_a_heavy_star():
+    """Without this a 3 solar mass hole is absorbed *by* a 10 solar mass star,
+    because find_collisions sorts the pair by mass."""
+    import numpy as np
+    from src import collisions, edits, materials
+    from src.body import KIND_BLACK_HOLE, KIND_STAR
+    from src.world import World
+    w = World()
+    w.add("Hole", materials.get("hydrogen"), 3.0, units.SUN_RADIUS,
+          np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    edits.collapse(w, 0)
+    w.add("Star", materials.get("hydrogen"), 10.0, units.SUN_RADIUS,
+          np.array([1e-3, 0.0]), np.zeros(2), kind=KIND_STAR)
+    w.contact_radius[:w.n] = np.array([1e-2, 1e-2])
+    prev = w.pos.copy()
+    hits = collisions.find_collisions(w, prev)
+    assert hits, "the pair must be detected as touching"
+    assert w.bodies[hits[0].i].kind == KIND_BLACK_HOLE
+
+
+def test_two_black_holes_are_still_ordered_by_mass():
+    import numpy as np
+    from src import collisions, edits, materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    for k, mass in enumerate((3.0, 12.0)):
+        w.add("Hole%d" % k, materials.get("hydrogen"), mass, units.SUN_RADIUS,
+              np.array([k * 1e-3, 0.0]), np.zeros(2), kind=KIND_STAR)
+        edits.collapse(w, k)
+    w.contact_radius[:w.n] = np.array([1e-2, 1e-2])
+    hits = collisions.find_collisions(w, w.pos.copy())
+    assert hits
+    assert float(w.mass[hits[0].i]) == pytest.approx(12.0)
+
+
+def test_impact_speed_never_exceeds_the_speed_of_light():
+    """A hole's radius is near zero, so the mutual escape velocity in
+    find_collisions runs away and ImpactEvent.energy with it."""
+    from src import collisions
+    w = _pair(hole_mass=100.0, other_mass=1e-9, other_radius=1e-9,
+              separation=1e-6, speed=0.0)
+    w.contact_radius[:w.n] = 1e-5
+    hits = collisions.find_collisions(w, w.pos.copy())
+    assert hits
+    assert hits[0].v_impact <= units.C
+
+
+def test_a_black_hole_always_accretes_never_grazes_or_shatters():
+    from src import collisions
+    from src.units import EARTH_RADIUS
+    # A fast, glancing hit that would be a graze against any ordinary target.
+    w = _pair(hole_mass=10.0, other_mass=1e-4, other_radius=EARTH_RADIUS,
+              separation=1e-4, speed=5.0)
+    w.contact_radius[:w.n] = 1e-3
+    hits = collisions.find_collisions(w, w.pos.copy())
+    assert hits
+    assert collisions.classify(w, hits[0]) == collisions.ACCRETE
+
+
+def test_swallowing_grows_the_horizon(world_with_sun):
+    from src import collisions, edits
+    from src.integrator import Integrator
+    import numpy as np
+    w = world_with_sun
+    edits.collapse(w, 0)
+    w.add("Rock", __import__("src.materials", fromlist=["x"]).get("rock"),
+          1.0, units.EARTH_RADIUS, np.array([1e-6, 0.0]), np.zeros(2))
+    w.contact_radius[:w.n] = 1e-4
+    resolver = collisions.CollisionResolver(seed=1)
+    count, event = resolver.resolve(w, Integrator(w.capacity), w.pos.copy())
+    assert count == 1
+    assert w.n == 1                                   # nothing came back out
+    assert float(w.radius[0]) == pytest.approx(units.schwarzschild_radius(2.0))
+    assert float(w.contact_radius[0]) == pytest.approx(float(w.radius[0]))
+    assert event.outcome == collisions.SWALLOW
+
+
+def test_a_black_hole_stays_a_black_hole_after_eating(world_with_sun):
+    from src import collisions, edits, materials
+    from src.body import KIND_BLACK_HOLE
+    from src.integrator import Integrator
+    import numpy as np
+    w = world_with_sun
+    edits.collapse(w, 0)
+    w.add("Rock", materials.get("rock"), 1e-6, units.EARTH_RADIUS,
+          np.array([1e-6, 0.0]), np.zeros(2))
+    w.contact_radius[:w.n] = 1e-4
+    collisions.CollisionResolver(1).resolve(w, Integrator(w.capacity), w.pos.copy())
+    assert w.bodies[0].kind == KIND_BLACK_HOLE

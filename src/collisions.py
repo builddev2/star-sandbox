@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import units
-from .body import KIND_DEBRIS, KIND_PLANET, KIND_STAR
+from .body import KIND_BLACK_HOLE, KIND_DEBRIS, KIND_PLANET, KIND_STAR
 
 
 @dataclass
@@ -116,13 +116,22 @@ def find_collisions(world, prev_pos):
         if (ba.event_id and ba.event_id == bb.event_id
                 and now < ba.no_collide_until):
             continue
-        big, small = (a, b) if mass[a] >= mass[b] else (b, a)
+        # A black hole is always the target, whatever the masses say: a light
+        # hole striking a heavy star would otherwise be absorbed *by the star*.
+        a_hole = ba.kind == KIND_BLACK_HOLE
+        b_hole = bb.kind == KIND_BLACK_HOLE
+        if a_hole != b_hole:
+            big, small = (a, b) if a_hole else (b, a)
+        else:
+            big, small = (a, b) if mass[a] >= mass[b] else (b, a)
         dv = vel[small] - vel[big]
         v_rel = float(np.hypot(dv[0], dv[1]))
         sep = float(radii[big] + radii[small])
         v_esc = math.sqrt(2.0 * units.G * float(mass[big] + mass[small]) / sep) \
             if sep > 0.0 else 0.0
-        v_impact = math.hypot(v_rel, v_esc)
+        # A horizon is essentially a point, so sep collapses and the mutual
+        # escape velocity runs away -- and impact_energy with it, squared.
+        v_impact = min(math.hypot(v_rel, v_esc), units.C)
         miss = math.sqrt(max(float(dist2[a, b]), 0.0))
         impact_b = min(miss / sep, 1.0) if sep > 0.0 else 0.0
         out.append(Collision(big, small, float(s[a, b]), v_rel, v_impact, impact_b))
@@ -157,6 +166,10 @@ def specific_impact_energy(world, c):
 ACCRETE = "accrete"
 GRAZE = "graze"
 DISRUPT = "disrupt"
+#: Not a fourth outcome -- the physics of a swallow *is* accretion.  This is
+#: the label ImpactEvent carries so the effects layer can draw a collapse
+#: inward rather than an explosion outward.
+SWALLOW = "swallow"
 
 #: Below this mass ratio the smaller body cannot survive a graze -- it is a
 #: bullet, not a second planet, and simply buries itself regardless of angle.
@@ -189,6 +202,10 @@ def classify(world, c):
     accretion or disruption, decided by the specific impact energy against
     the target's own disruption threshold.
     """
+    # Nothing comes back out of a horizon: no graze, no fragments, no ejecta.
+    if (world.bodies[c.i].kind == KIND_BLACK_HOLE
+            or world.bodies[c.j].kind == KIND_BLACK_HOLE):
+        return ACCRETE
     r_i, r_j = float(world.radius[c.i]), float(world.radius[c.j])
     b_crit = r_i / (r_i + r_j) if (r_i + r_j) > 0.0 else 0.0
     ratio = float(world.mass[c.j] / world.mass[c.i]) if world.mass[c.i] > 0.0 else 0.0
@@ -221,16 +238,23 @@ def merge(world, c):
     world.pos[i] = centre
     world.vel[i] = momentum / total
     world.mass[i] = total
-    world.radius[i] = units.radius_from_mass_density(total, density)
+
+    if survivor.kind == KIND_BLACK_HOLE:
+        # Radius follows the horizon, not a mass-weighted density.  The mass
+        # ceiling does not apply here: eating is how every hole above the
+        # stellar range was actually made.
+        world.radius[i] = units.schwarzschild_radius(total)
+    else:
+        world.radius[i] = units.radius_from_mass_density(total, density)
+        if total >= units.STAR_MASS_THRESHOLD:
+            survivor.kind = KIND_STAR
+        elif survivor.kind == KIND_DEBRIS and total >= units.EARTH_MASS * 0.01:
+            survivor.kind = KIND_PLANET
+
     # Reset rather than leave stale: contact_radius must never sit below the
     # true radius it is stretched from, and the render layer only refreshes
     # it once a frame.
     world.contact_radius[i] = world.radius[i]
-
-    if total >= units.STAR_MASS_THRESHOLD:
-        survivor.kind = KIND_STAR
-    elif survivor.kind == KIND_DEBRIS and total >= units.EARTH_MASS * 0.01:
-        survivor.kind = KIND_PLANET
 
     world.remove(j)
     # remove() swap-removes, so i may no longer be the survivor's row.
@@ -385,6 +409,8 @@ class CollisionResolver:
         direction = approach / dist if dist > 0.0 else np.array([1.0, 0.0])
 
         idx = merge(world, c)
+        if world.bodies[idx].kind == KIND_BLACK_HOLE:
+            return idx          # a horizon excavates no crater
         room = world.capacity - world.n
         if q_ratio < EJECTA_MIN_RATIO or room < MIN_FRAGMENTS:
             return idx
@@ -623,6 +649,8 @@ class CollisionResolver:
         pos = world.pos[c.j]
         vel = world.vel[c.j] - world.vel[c.i]
         target = world.bodies[c.i]
+        if target.kind == KIND_BLACK_HOLE:
+            outcome = SWALLOW
         return ImpactEvent(
             pos=(float(pos[0]), float(pos[1])),
             vel=(float(vel[0]), float(vel[1])),
