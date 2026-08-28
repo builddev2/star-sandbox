@@ -23,9 +23,12 @@ from .body import KIND_BLACK_HOLE, KIND_DEBRIS, KIND_PLANET, KIND_STAR
 
 @dataclass
 class Collision:
-    #: Index of the more massive body.  Resolution always treats this as the target.
+    #: Index of the target body: the more massive of the pair, unless the other
+    #: is a black hole, which always takes this slot whatever the masses say --
+    #: otherwise a light hole striking a heavy star would be absorbed by the star.
+    #: Resolution always treats this as the target.
     i: int
-    #: Index of the less massive body.
+    #: Index of the other body -- the lighter one, or whatever a black hole hit.
     j: int
     #: Fraction of the step at closest approach, 0..1.  Used only for ordering.
     s: float
