@@ -23,6 +23,7 @@ collapses to dots at once, which is the lesson, and it costs one branch.
 import numpy as np
 
 from .. import units
+from ..body import KIND_BLACK_HOLE
 
 #: The resolution the constants below were tuned at.  Everything scales from it.
 REF_HEIGHT = 360.0
@@ -41,6 +42,39 @@ def _floor(r_true, unit):
     return np.clip(raw, FLOOR_MIN * unit, FLOOR_MAX * unit)
 
 
+def visual_radii(world):
+    """Per-body radius the *eye* should be served by, in AU.
+
+    Equal to the true radius for everything except a black hole, whose horizon
+    is seven orders of magnitude smaller than anything else in the simulation.
+    Two things break because of that, and both are fixed here:
+
+    **It would draw as one pixel.** A 10 solar mass hole's horizon is 0.0046
+    Earth radii, which puts ``_floor`` at 0.31 px and so clamps up to
+    FLOOR_MIN. The Sun draws at 6. The most dangerous object in the sandbox
+    would be the least visible thing on screen.
+
+    **It would be impossible to hit.** ``contact_radii_au`` caps the aim radius
+    at MAX_AIM_FACTOR times the true radius -- 1.6e-6 AU for the same hole,
+    about 0.0001 pixels across at system zoom.
+
+    ``units.apparent_radius`` stands in: the main-sequence mass-radius
+    relation, on the grounds that the accretion disk is roughly as big as the
+    star that made the hole. **Physics never reads this.** Impact energy, tidal
+    stress, disruption thresholds and merged radii all use the true horizon;
+    only drawing, picking and the yes/no contact test see this array, which is
+    exactly the split ``radius`` and ``contact_radius`` already make.
+
+    Recomputed per frame from at most 200 bodies -- nothing may cache a size
+    across frames, and this is negligible beside the O(n^2) force kernel.
+    """
+    out = np.array(world.radii, dtype=np.float64)
+    for i in range(world.n):
+        if world.bodies[i].kind == KIND_BLACK_HOLE:
+            out[i] = units.apparent_radius(float(world.mass[i]))
+    return out
+
+
 def display_radius_px(r_true, zoom, internal_height, real_size=False):
     """Radius to draw, in internal-buffer pixels."""
     true_px = zoom * r_true
@@ -49,13 +83,23 @@ def display_radius_px(r_true, zoom, internal_height, real_size=False):
     return float(max(true_px, _floor(r_true, internal_height / REF_HEIGHT)))
 
 
-def display_radii_px(radii, zoom, internal_height, real_size=False):
-    """Vectorised form for drawing every body in one pass."""
+def display_radii_px(radii, zoom, internal_height, real_size=False,
+                     floor_radii=None):
+    """Vectorised form for drawing every body in one pass.
+
+    ``floor_radii`` is what the *floor* is computed from, defaulting to the
+    true radii. Only a black hole passes anything different -- see
+    :func:`visual_radii`. The honest ``zoom * radius`` term always uses the
+    true radii, so zooming far enough in still shows the real horizon, and
+    real-size mode drops the floor entirely.
+    """
     radii = np.asarray(radii, dtype=np.float64)
     true_px = zoom * radii
     if real_size:
         return np.maximum(true_px, 1.0)
-    return np.maximum(true_px, _floor(radii, internal_height / REF_HEIGHT))
+    basis = radii if floor_radii is None else np.asarray(floor_radii,
+                                                         dtype=np.float64)
+    return np.maximum(true_px, _floor(basis, internal_height / REF_HEIGHT))
 
 
 #: How far past its true radius a body's contact radius may be stretched so
@@ -68,7 +112,8 @@ def display_radii_px(radii, zoom, internal_height, real_size=False):
 MAX_AIM_FACTOR = 8.0
 
 
-def contact_radii_au(radii, zoom, internal_height, real_size=False):
+def contact_radii_au(radii, zoom, internal_height, real_size=False,
+                     aim_radii=None):
     """Radii to collide against, in AU: what is drawn, capped so nothing
     stretches far enough to eat a neighbour's orbit.
 
@@ -78,8 +123,16 @@ def contact_radii_au(radii, zoom, internal_height, real_size=False):
     render-layer computation handed to the physics as a plain array: the
     physics never learns what a camera is, and the render layer never learns
     what a collision is.
+
+    ``aim_radii`` replaces the true radius **in the upper clip only**, so a
+    black hole can be aimed at where its disc appears rather than at a target
+    a ten-thousandth of a pixel wide. The lower bound stays the true radius:
+    a contact radius may never fall below the real one.
     """
     radii = np.asarray(radii, dtype=np.float64)
-    drawn_px = display_radii_px(radii, zoom, internal_height, real_size)
+    basis = radii if aim_radii is None else np.asarray(aim_radii,
+                                                       dtype=np.float64)
+    drawn_px = display_radii_px(radii, zoom, internal_height, real_size,
+                                floor_radii=basis)
     drawn_au = drawn_px / max(zoom, 1e-30)
-    return np.clip(drawn_au, radii, radii * MAX_AIM_FACTOR)
+    return np.clip(drawn_au, radii, basis * MAX_AIM_FACTOR)
