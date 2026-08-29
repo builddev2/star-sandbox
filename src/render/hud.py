@@ -80,14 +80,32 @@ def format_length(length):
 
 
 def format_speed(speed):
-    return "%.4g km/s" % units.to_kms(speed)
+    """Speed in km/s, and never in exponent notation -- see format_length.
+
+    Only a horizon reaches the grouped-digit branch: Earth orbits at 29.8 km/s,
+    Mercury at 47.9, and escaping the Sun's surface takes 617.
+    """
+    kms = units.to_kms(speed)
+    if kms >= 1.0e4:
+        return "{:,.0f} km/s".format(kms)
+    return "%.4g km/s" % kms
 
 
 def format_temperature(kelvin):
-    """Kelvin, without exponent notation for the ordinary range."""
+    """Kelvin, without exponent notation anywhere a black hole can reach.
+
+    A hole's own heat runs from 0.4 billionths of a kelvin for the heaviest
+    down to hundreds of millions for one scrubbed absurdly small, so no single
+    unit reads well across the whole span.
+    """
     if kelvin >= 1.0:
-        return "%.4g K" % kelvin
-    return "%.3g billionths of a K" % (kelvin * 1e9)
+        return "{:,.0f} K".format(kelvin)
+    if kelvin >= 0.001:
+        return "%.4f K" % kelvin
+    nano = kelvin * 1.0e9
+    if nano >= 100.0:
+        return "{:,.0f} billionths of a K".format(nano)
+    return "%.3g billionths of a K" % nano
 
 
 def orbit_facts(world, index):
@@ -216,9 +234,8 @@ class Hud:
                 ("Escape     %s"
                  % format_speed(units.escape_velocity(mass, radius)),
                  palette.WARN),
-                ("Its own    %s" % format_temperature(
+                ("Own heat   %s" % format_temperature(
                     units.hawking_temperature_k(mass)), palette.TEXT_DIM),
-                ("heat", palette.TEXT_DIM),
             ]
             if mass < units.TOV_LIMIT_MASS:
                 rows.append(("Too light to be real -- under %g Suns"

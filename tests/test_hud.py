@@ -260,3 +260,36 @@ def test_the_farthest_row_fits_the_inspector_panel(state):
             continue
         row = _labelled(hud._rows(state, state.selected_index), "Farthest")
         assert len(row) <= PANEL_WIDTH_CHARS, row
+
+
+def test_escape_velocity_uses_grouped_digits_for_the_speed_of_light():
+    """format_speed must never use exponent notation, per the file's principle.
+
+    The speed of light (299,792 km/s) is a black hole's escape velocity and
+    must render with grouped digits, not as 2.998e+05.
+    """
+    from src import units
+    from src.render.hud import format_speed
+    c_au_day = units.C  # speed of light in AU/day
+    text = format_speed(c_au_day)
+    assert "299,792" in text or "299793" in text, \
+        f"Speed of light should be grouped: {text}"
+    assert "e+" not in text and "e-" not in text, \
+        f"Speed of light must not use exponent notation: {text}"
+
+
+def test_hawking_temperature_of_a_ten_solar_mass_hole_is_unchanged():
+    """Fixing format_temperature must not change output for the ordinary range.
+
+    A 10-solar-mass hole (common test fixture) has T = 6.169e-9 K, which
+    should still render as 6.17 billionths of a K after the fix.
+    """
+    from src.render.hud import format_temperature
+    temp_10_sun = 6.169e-9
+    text = format_temperature(temp_10_sun)
+    assert "billionths" in text, f"Should show billionths for 6.169e-9 K: {text}"
+    assert "e+" not in text and "e-" not in text, \
+        f"No exponent notation allowed: {text}"
+    # The number should be around 6.17 billionths
+    assert "6.17" in text or "6.2" in text, \
+        f"Should show approximately 6.17 billionths: {text}"
