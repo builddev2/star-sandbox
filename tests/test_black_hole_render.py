@@ -576,3 +576,54 @@ def test_the_c_key_is_documented():
     button; this asserts the other direction."""
     from src.render.hud import KEY_HELP
     assert any(keys == "C" for keys, _ in KEY_HELP)
+
+
+# --- the inspector ---------------------------------------------------------------
+
+def _inspector_text(world, index):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.sim import Simulation
+    state = AppState(Simulation(world=world), Camera(320, 200), ViewSettings())
+    state.selected_id = world.bodies[index].id
+    return "\n".join(text for text, _ in Hud(PixelFont(18))._rows(state, index))
+
+
+def test_the_inspector_names_a_black_hole(hole_world):
+    assert "black hole" in _inspector_text(hole_world, 0)
+
+
+def test_the_inspector_reports_escape_velocity_as_the_speed_of_light(hole_world):
+    """Falls out of escape_velocity(M, r_s) with no special case."""
+    text = _inspector_text(hole_world, 0)
+    assert "299792" in text.replace(",", "") or "2.998e+05" in text
+
+
+def test_the_inspector_shows_the_horizon_shadow_and_isco(hole_world):
+    text = _inspector_text(hole_world, 0)
+    for label in ("Horizon", "Shadow", "Orbit edge"):
+        assert label in text
+
+
+def test_the_inspector_shows_spin_and_efficiency(hole_world):
+    text = _inspector_text(hole_world, 0)
+    assert "Spin" in text
+    assert "%" in text
+
+
+def test_the_inspector_never_offers_to_ignite_a_black_hole(hole_world):
+    """"0x heavier to ignite" would be nonsense."""
+    assert "ignite" not in _inspector_text(hole_world, 0)
+
+
+def test_an_ordinary_planet_still_offers_to_ignite(hole_world):
+    assert "ignite" in _inspector_text(hole_world, 1)
+
+
+def test_the_inspector_still_describes_an_ordinary_planet(hole_world):
+    text = _inspector_text(hole_world, 1)
+    assert "Density" in text
+    assert "Gravity" in text

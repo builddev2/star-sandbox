@@ -10,7 +10,7 @@ import numpy as np
 import pygame
 
 from .. import orbits, units
-from ..body import KIND_STAR
+from ..body import KIND_BLACK_HOLE, KIND_STAR
 from . import palette
 from .widgets import Metrics
 
@@ -81,6 +81,13 @@ def format_length(length):
 
 def format_speed(speed):
     return "%.4g km/s" % units.to_kms(speed)
+
+
+def format_temperature(kelvin):
+    """Kelvin, without exponent notation for the ordinary range."""
+    if kelvin >= 1.0:
+        return "%.4g K" % kelvin
+    return "%.3g billionths of a K" % (kelvin * 1e9)
 
 
 def orbit_facts(world, index):
@@ -187,18 +194,52 @@ class Hud:
         radius = float(world.radius[index])
         density = units.density_from_mass_radius(mass, radius)
 
-        rows = [
-            (body.name, palette.SELECT),
-            ("%s  -  %s" % (body.kind, body.material.name), palette.TEXT_DIM),
-            ("", palette.TEXT),
-            ("Mass       %s" % format_mass(mass), palette.TEXT),
-            ("Radius     %s" % format_length(radius), palette.TEXT),
-            ("           %.3g Earths" % units.to_earth_radii(radius), palette.TEXT_DIM),
-            ("Density    %.3g g/cm3" % units.to_gcm3(density), palette.TEXT),
-            ("Gravity    %.3g g" % units.surface_gravity_g(mass, radius), palette.TEXT),
-            ("Escape     %s" % format_speed(units.escape_velocity(mass, radius)),
-             palette.TEXT),
-        ]
+        if body.kind == KIND_BLACK_HOLE:
+            spin = body.spin
+            rows = [
+                (body.name, palette.SELECT),
+                ("black hole", palette.TEXT_DIM),
+                ("", palette.TEXT),
+                ("Mass       %s" % format_mass(mass), palette.TEXT),
+                ("Horizon    %s" % format_length(radius), palette.TEXT),
+                ("Shadow     %s" % format_length(units.shadow_radius(mass)),
+                 palette.TEXT),
+                ("Orbit edge %s" % format_length(units.isco_radius(mass, spin)),
+                 palette.TEXT_DIM),
+                ("Spin       %.3f" % spin, palette.TEXT),
+                ("Feeding    %s" % ("nothing" if body.disk <= 0.0
+                                    else "%.0f%%" % (body.disk * 100.0)),
+                 palette.TEXT),
+                ("Converts   %.1f%% to light"
+                 % (units.accretion_efficiency(spin) * 100.0), palette.ACCENT),
+                ("Density    %.3g g/cm3" % units.to_gcm3(density), palette.TEXT),
+                ("Escape     %s"
+                 % format_speed(units.escape_velocity(mass, radius)),
+                 palette.WARN),
+                ("Its own    %s" % format_temperature(
+                    units.hawking_temperature_k(mass)), palette.TEXT_DIM),
+                ("heat", palette.TEXT_DIM),
+            ]
+            if mass < units.TOV_LIMIT_MASS:
+                rows.append(("Too light to be real -- under %g Suns"
+                             % units.TOV_LIMIT_MASS, palette.WARN))
+                rows.append(("nature makes a neutron star.", palette.WARN))
+        else:
+            rows = [
+                (body.name, palette.SELECT),
+                ("%s  -  %s" % (body.kind, body.material.name), palette.TEXT_DIM),
+                ("", palette.TEXT),
+                ("Mass       %s" % format_mass(mass), palette.TEXT),
+                ("Radius     %s" % format_length(radius), palette.TEXT),
+                ("           %.3g Earths" % units.to_earth_radii(radius),
+                 palette.TEXT_DIM),
+                ("Density    %.3g g/cm3" % units.to_gcm3(density), palette.TEXT),
+                ("Gravity    %.3g g" % units.surface_gravity_g(mass, radius),
+                 palette.TEXT),
+                ("Escape     %s"
+                 % format_speed(units.escape_velocity(mass, radius)),
+                 palette.TEXT),
+            ]
 
         facts = orbit_facts(world, index)
         if facts is not None:
@@ -216,7 +257,7 @@ class Hud:
                 ("Speed      %s" % format_speed(facts["speed"]), palette.TEXT),
             ]
 
-        if body.kind != KIND_STAR and mass > 0.0:
+        if body.kind not in (KIND_STAR, KIND_BLACK_HOLE) and mass > 0.0:
             rows += [
                 ("", palette.TEXT),
                 ("%.0fx heavier to ignite" % (units.STAR_MASS_THRESHOLD / mass),
