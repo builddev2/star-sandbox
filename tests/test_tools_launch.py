@@ -122,17 +122,22 @@ def test_conic_of_a_body_at_rest_does_not_crash():
 def test_presets_cover_the_promised_range():
     from src.app.tools import PRESETS
     labels = [p.label for p in PRESETS]
-    assert len(PRESETS) == 5
+    assert len(PRESETS) == 6
     assert any("Asteroid" in x for x in labels)
     assert any("Star" in x for x in labels)
+    assert any("Black hole" in x for x in labels)
 
 
 def test_preset_bodies_have_sane_densities():
-    from src import units
     from src.app.tools import PRESETS, preset_body
+    from src.body import KIND_BLACK_HOLE
+    from src import units
     for preset in PRESETS:
         mass, radius = preset_body(preset)
         assert mass > 0 and radius > 0
+        # Black holes have extreme densities incomparable to ordinary matter.
+        if preset.kind == KIND_BLACK_HOLE:
+            continue
         density = units.to_gcm3(units.density_from_mass_radius(mass, radius))
         assert 0.05 < density < 25.0, "%s: %.3g g/cm3" % (preset.label, density)
 

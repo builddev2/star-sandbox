@@ -397,3 +397,66 @@ def test_an_ordinary_impact_still_explodes_outward():
     rings = [p for p in field.particles if p.kind == "ring"]
     assert rings
     assert all(p.r1 > p.r0 for p in rings)
+
+
+# --- throwing -------------------------------------------------------------------
+
+def test_there_is_a_black_hole_preset_on_key_six():
+    from src.app.tools import PRESETS
+    hole = [p for p in PRESETS if p.label == "Black hole"]
+    assert len(hole) == 1
+    assert hole[0].key == 6
+
+
+def test_the_preset_derives_its_radius_from_the_horizon():
+    from src import units
+    from src.app.tools import PRESETS, preset_body
+    hole = next(p for p in PRESETS if p.label == "Black hole")
+    mass, radius = preset_body(hole)
+    assert radius == pytest.approx(units.schwarzschild_radius(mass))
+
+
+def test_existing_presets_are_unaffected():
+    from src.app.tools import PRESETS, preset_body
+    rocky = next(p for p in PRESETS if p.label == "Rocky planet")
+    mass, radius = preset_body(rocky)
+    assert radius == pytest.approx(6371.0 / 1.495978707e8)
+    assert mass > 0.0
+
+
+def test_launching_the_preset_creates_a_feeding_black_hole():
+    import numpy as np
+    from src.body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
+                          KIND_BLACK_HOLE)
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.app.tools import PRESETS, LaunchTool
+    from src.sim import Simulation
+    from src import scenarios
+
+    sim = Simulation(world=scenarios.two_body())
+    state = AppState(sim, Camera(320, 200), ViewSettings())
+    tool = LaunchTool()
+    tool.preset_index = next(k for k, p in enumerate(PRESETS)
+                             if p.label == "Black hole")
+    tool._origin = np.array([3.0, 0.0])
+    tool._cursor = (170, 100)
+    before = sim.world.n
+    tool._launch(state)
+
+    assert sim.world.n == before + 1
+    body = sim.world.bodies[-1]
+    assert body.kind == KIND_BLACK_HOLE
+    assert body.spin == pytest.approx(DEFAULT_BLACK_HOLE_SPIN)
+    assert body.disk == pytest.approx(DEFAULT_BLACK_HOLE_DISK)
+    assert float(sim.world.radius[-1]) == pytest.approx(
+        __import__("src.units", fromlist=["x"]).schwarzschild_radius(
+            float(sim.world.mass[-1])))
+
+
+def test_the_blackhole_icon_draws_something():
+    from src.render.widgets import draw_icon
+    surface = pygame.Surface((16, 16), pygame.SRCALPHA)
+    draw_icon(surface, "blackhole", pygame.Rect(0, 0, 16, 16), (255, 255, 255))
+    assert any(surface.get_at((x, y))[3] for x in range(16) for y in range(16))

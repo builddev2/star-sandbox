@@ -447,6 +447,10 @@ def draw_icon(surface, name, rect, colour):
         pygame.draw.line(surface, colour, (cx, cy - r), (cx, cy + r), 1)
         pygame.draw.line(surface, colour, (cx - r + 1, cy - r + 1), (cx + r - 1, cy + r - 1), 1)
         pygame.draw.line(surface, colour, (cx - r + 1, cy + r - 1), (cx + r - 1, cy - r + 1), 1)
+    elif name == "blackhole":
+        radius = max(2, min(rect.width, rect.height) // 2 - 1)
+        pygame.draw.circle(surface, colour, rect.center, radius, 1)
+        pygame.draw.circle(surface, colour, rect.center, max(1, radius - 2))
     elif name == "target":
         pygame.draw.circle(surface, colour, (cx, cy), r, 1)
         pygame.draw.circle(surface, colour, (cx, cy), max(1, r - 2), 1)

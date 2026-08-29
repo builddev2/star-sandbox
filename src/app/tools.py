@@ -18,7 +18,8 @@ import numpy as np
 import pygame
 
 from .. import edits, materials, orbits, units
-from ..body import KIND_PLANET, KIND_STAR
+from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
+                    KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR)
 from ..render import palette
 from ..render.widgets import Control
 
@@ -109,12 +110,15 @@ class SelectTool(Tool):
 
 @dataclass(frozen=True)
 class LaunchPreset:
-    key: int                 # 1..5, the number key that selects it
+    key: int                 # 1..6, the number key that selects it
     label: str
     material_key: str
     radius_km: float
     #: Solar masses, or None to derive from the material's real density.
     mass: float = None
+    #: Overrides the mass-derived kind.  A black hole is not a heavy star, and
+    #: no threshold can tell them apart.
+    kind: str = KIND_PLANET
 
 
 PRESETS = (
@@ -123,6 +127,8 @@ PRESETS = (
     LaunchPreset(3, "Ice planet", "ice", 2500.0),
     LaunchPreset(4, "Gas giant", "gas", 69911.0),
     LaunchPreset(5, "Star", "hydrogen", 0.3 * 695700.0, mass=0.3),
+    LaunchPreset(6, "Black hole", "singularity", 0.0, mass=10.0,
+                 kind=KIND_BLACK_HOLE),
 )
 
 #: A drag this fraction of the window height throws at exactly the speed of a
@@ -138,6 +144,9 @@ LONE_DRAG_SPEED = 0.02
 
 def preset_body(preset):
     """(mass, radius) in simulation units for a launch preset."""
+    if preset.kind == KIND_BLACK_HOLE:
+        # radius_km means nothing here: a horizon is 2GM/c^2 and nothing else.
+        return preset.mass, units.schwarzschild_radius(preset.mass)
     radius = preset.radius_km / units.AU_KM
     if preset.mass is not None:
         return preset.mass, radius
@@ -180,12 +189,18 @@ class LaunchTool(Tool):
     # --- buttons ----------------------------------------------------------------
 
     def controls(self, state, metrics):
-        rows = [[Control("throw.preset", label=preset.label, payload=k,
-                         icon="star" if preset.mass is not None else "circle",
-                         hotkey=str(preset.key),
-                         tooltip="Throw %s" % preset.label.lower(),
-                         active=k == self.preset_index)]
-                for k, preset in enumerate(PRESETS)]
+        rows = []
+        for k, preset in enumerate(PRESETS):
+            if preset.kind == KIND_BLACK_HOLE:
+                icon = "blackhole"
+            elif preset.mass is not None:
+                icon = "star"
+            else:
+                icon = "circle"
+            rows.append([Control("throw.preset", label=preset.label, payload=k,
+                                 icon=icon, hotkey=str(preset.key),
+                                 tooltip="Throw %s" % preset.label.lower(),
+                                 active=k == self.preset_index)])
         rows.append([Control("throw.circular", label="Circular orbit", icon="circle",
                              hotkey="Shift", active=self.lock_circular,
                              tooltip="Drop it straight into a perfect round orbit")])
@@ -220,7 +235,7 @@ class LaunchTool(Tool):
     def on_event(self, event, state):
         if event.type == pygame.KEYDOWN:
             # K_1 is left alone so that pressing 1 returns to the Look tool.
-            if pygame.K_2 <= event.key <= pygame.K_5:
+            if pygame.K_2 <= event.key <= pygame.K_6:
                 self.preset_index = event.key - pygame.K_1
                 return True
             if event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
@@ -378,13 +393,18 @@ class LaunchTool(Tool):
         mass, radius = preset_body(preset)
         pos, vel = self._tentative(state)
 
-        kind = KIND_STAR if mass >= units.STAR_MASS_THRESHOLD else KIND_PLANET
+        kind = preset.kind
+        if kind == KIND_PLANET and mass >= units.STAR_MASS_THRESHOLD:
+            kind = KIND_STAR
         body = world.add(preset.label, materials.get(preset.material_key),
                          mass, radius, np.array(pos, dtype=float), vel,
                          kind=kind,
                          seed=(int(world.time * 1000) + world.n * 7919) % (1 << 30))
         if body is None:
             return
+        if kind == KIND_BLACK_HOLE:
+            body.spin = DEFAULT_BLACK_HOLE_SPIN
+            body.disk = DEFAULT_BLACK_HOLE_DISK
         state.selected_id = body.id
         state.sim.refresh()
 
