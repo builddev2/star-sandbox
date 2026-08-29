@@ -128,11 +128,14 @@ or fast time scales.
   being deflected (`GRAZE_MIN_MASS_RATIO`). Fragment speeds and the largest-remnant mass
   (Leinhardt & Stewart) are bounded by the energy the impact actually delivered above the
   threshold, not handed out at a flat multiple of escape velocity.
-- **Destruction does not require contact** (`destruction.py`). A body can be torn apart by a
-  star's tide (`tidal_stress_ratio`, gravity-only tidal stress is a pure density ratio,
-  independent of the body's own size — the classic Roche result) or boiled away by its heat
-  (`equilibrium_temperature` against `Material.vapour_temperature_k`), run once a substep
-  over stars only. Like `CollisionResolver.resolve()`, only the single worst violation is
+- **Destruction does not require contact** (`destruction.py`). A body can be torn apart by
+  a tide — raised by a star or a black hole — or boiled away by a star's heat
+  (`equilibrium_temperature` against `Material.vapour_temperature_k`), without ever
+  touching what does it. `_bodies_and_attractors` splits the two roles: **attractors**
+  (stars and black holes) raise tides (`tidal_stress_ratio`, gravity-only tidal stress is
+  a pure density ratio, independent of the body's own size — the classic Roche result);
+  **stars** alone radiate. A black hole is never a victim, and a star may be a victim only
+  of a black hole. Like `CollisionResolver.resolve()`, only the single worst violation is
   handled per call, since removing a body shifts every index after it.
 - **Tidal fragments need immunity from immediate re-shredding** (`destruction.py`).
   `tidal_disrupt` places debris about 1.15 body-radii from where the parent died, which
