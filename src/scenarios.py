@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from . import materials, orbits, units
+from . import edits, materials, orbits, units
 from .body import KIND_STAR
 from .world import World
 
@@ -111,7 +111,41 @@ def two_body(separation=1.0, primary_mass=1.0, secondary_mass=units.EARTH_MASS,
     return world
 
 
+def black_hole(world=None, hole_mass=10.0):
+    """A stellar-mass black hole with three bodies around it, one doomed.
+
+    The doomed one starts on a steeply eccentric orbit whose periapsis falls
+    well inside its tidal radius, so the disruption happens within the first
+    minute rather than needing the child to arrange it.  Earth's tidal radius
+    from a ten-solar-mass hole is 0.00636 AU -- some 32,000 horizon radii out
+    -- so the shredding is large, slow and nowhere near the dot at the centre,
+    which is exactly what makes it readable.
+    """
+    world = world or World()
+    world.clear()
+
+    world.add("Black hole", materials.get("hydrogen"), hole_mass,
+              units.SUN_RADIUS, np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    edits.collapse(world, 0)
+    mu = units.G * hole_mass
+
+    # name, a (AU), e, phase (deg), mass, radius (km), material
+    entries = (
+        ("Doomed", 0.30, 0.985, 175.0, units.EARTH_MASS, 6371.0, "rock"),
+        ("Wanderer", 0.60, 0.35, 40.0, units.EARTH_MASS * 0.6, 4800.0, "rock_ice"),
+        ("Far one", 1.40, 0.10, 250.0, units.EARTH_MASS * 2.0, 9000.0, "ice"),
+    )
+    for name, a, e, phase, mass, radius_km, mat in entries:
+        nu = orbits.true_anomaly_from_mean(math.radians(phase), e)
+        pos, vel = orbits.state_from_elements(mu, a, e, 0.0, nu)
+        world.add(name, materials.get(mat), mass, _km(radius_km), pos, vel)
+
+    world.zero_net_momentum()
+    return world
+
+
 REGISTRY = {
     "solar_system": solar_system,
     "two_body": two_body,
+    "black_hole": black_hole,
 }

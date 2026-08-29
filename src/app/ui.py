@@ -296,6 +296,8 @@ class UiLayer:
                       for label in state.time_labels) + 4 * m.pad
 
         row = [
+            Control("scenario.cycle", label=state.scenario_label, icon="list",
+                    tooltip="Pick what Restart loads"),
             Control("sim.reset", label="Restart", icon="reset", hotkey="F5",
                     tooltip="Put the solar system back how it started"),
             Control("time.slower", icon="slower", hotkey="[", compact=True,
@@ -578,6 +580,9 @@ class UiLayer:
             return True
         if cid == "time.faster":
             state.nudge_time(1)
+            return True
+        if cid == "scenario.cycle":
+            state.cycle_scenario()
             return True
         if cid == "sim.reset":
             state.reset()

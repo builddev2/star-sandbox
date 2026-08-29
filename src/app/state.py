@@ -23,6 +23,12 @@ TIME_LABELS = (
 
 DEFAULT_TIME_INDEX = 5          # 1 month per second: fast enough to see motion
 
+#: Starting arrangements the Restart button can load, and what to call them.
+#: Short labels: the transport row is already tight at the minimum window
+#: size, and "Solar system" / "Black hole" pushed it off screen.
+SCENARIOS = ("solar_system", "black_hole")
+SCENARIO_LABELS = {"solar_system": "Solar", "black_hole": "Hole"}
+
 #: Click tolerance in pixels, so a 3px Mercury is still catchable.
 PICK_MARGIN = 8
 
@@ -47,6 +53,9 @@ class AppState:
         self.body_list_offset = 0
         #: The quit button has been pressed once and is waiting to be confirmed.
         self.quit_armed = False
+        #: Which arrangement Restart loads.  sim.reset() used to hard-code the
+        #: solar system, so there was no way to reach any other.
+        self.scenario = SCENARIOS[0]
 
     # --- time -------------------------------------------------------------------
 
@@ -224,8 +233,18 @@ class AppState:
     def cancel_quit(self):
         self.quit_armed = False
 
+    @property
+    def scenario_label(self):
+        return SCENARIO_LABELS[self.scenario]
+
+    def cycle_scenario(self):
+        """Step to the next arrangement.  Does not restart on its own -- the
+        child picks, then presses Restart, so a stray click costs nothing."""
+        here = SCENARIOS.index(self.scenario)
+        self.scenario = SCENARIOS[(here + 1) % len(SCENARIOS)]
+
     def reset(self):
-        self.sim.reset()
+        self.sim.reset(self.scenario)
         self.selected_id = None
         self.camera.follow_id = None
         self.body_list_offset = 0

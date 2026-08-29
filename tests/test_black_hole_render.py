@@ -627,3 +627,68 @@ def test_the_inspector_still_describes_an_ordinary_planet(hole_world):
     text = _inspector_text(hole_world, 1)
     assert "Density" in text
     assert "Gravity" in text
+
+
+# --- the scenario ----------------------------------------------------------------
+
+def test_the_black_hole_scenario_is_registered():
+    from src import scenarios
+    assert "black_hole" in scenarios.REGISTRY
+
+
+def test_the_scenario_contains_exactly_one_black_hole():
+    from src import scenarios
+    from src.body import KIND_BLACK_HOLE
+    world = scenarios.black_hole()
+    holes = [b for b in world.bodies if b.kind == KIND_BLACK_HOLE]
+    assert len(holes) == 1
+    assert holes[0].disk > 0.0
+
+
+def test_the_scenario_shreds_something_almost_immediately():
+    """It exists to show a tidal disruption; requiring the child to arrange
+    one would defeat the point."""
+    from src import scenarios
+    from src.sim import Simulation
+    sim = Simulation(world=scenarios.black_hole())
+    before = sim.world.n
+    for _ in range(400):
+        sim.advance(0.5, budget_s=1.0)
+        if sim.world.n != before:
+            break
+    assert sim.world.n != before, "nothing was disrupted in 200 days"
+
+
+def test_the_scenario_is_stable_enough_to_run():
+    """No NaNs, nothing flung to infinity."""
+    import numpy as np
+    from src import scenarios
+    from src.sim import Simulation
+    sim = Simulation(world=scenarios.black_hole())
+    for _ in range(200):
+        sim.advance(1.0, budget_s=1.0)
+    assert np.all(np.isfinite(sim.world.positions))
+
+
+def test_cycling_the_scenario_changes_what_restart_loads():
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.body import KIND_BLACK_HOLE
+    from src.sim import Simulation
+    state = AppState(Simulation(), Camera(320, 200), ViewSettings())
+    assert state.scenario == "solar_system"
+    while state.scenario != "black_hole":
+        state.cycle_scenario()
+    state.reset()
+    assert any(b.kind == KIND_BLACK_HOLE for b in state.sim.world.bodies)
+
+
+def test_restart_reloads_the_current_scenario():
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.sim import Simulation
+    state = AppState(Simulation(), Camera(320, 200), ViewSettings())
+    state.reset()
+    assert any(b.name == "Sun" for b in state.sim.world.bodies)
