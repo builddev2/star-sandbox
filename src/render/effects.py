@@ -74,6 +74,11 @@ SPARK_LIFE_S = 1.1
 PLUME_LIFE_S = 1.8
 FLARE_LIFE_S = 1.3
 
+#: A swallow is slower than an explosion: matter spirals in, it does not
+#: scatter.
+SWALLOW_LIFE_S = 1.4
+SWALLOW_RINGS = 3
+
 #: Below this many "target radii" of peak size, an impact does not get a
 #: plume -- it is not big enough for slow, dim debris to read as anything but
 #: noise next to the flash and sparks.
@@ -137,6 +142,10 @@ class EffectField:
         # orientation.
         no_drift = np.zeros(2)
 
+        if event.outcome == "swallow":
+            self._spawn_swallow(pos, tones, scale_r, magnitude)
+            return
+
         self._add(_Particle("flash", pos, no_drift, FLASH_LIFE_S,
                             scale_r * 0.3, flash_peak, (255, 255, 255), tones[2]))
         self._add(_Particle("ring", pos, no_drift, RING_LIFE_S,
@@ -174,6 +183,35 @@ class EffectField:
             self._add(_Particle("flare", pos, no_drift, FLARE_LIFE_S,
                                 scale_r * 1.2, scale_r * 3.0,
                                 (255, 250, 220), palette.STAR_GLOW, seed=arc_angle))
+
+    def _spawn_swallow(self, pos, tones, scale_r, magnitude):
+        """Something crossed a horizon.
+
+        The reverse of every other effect in this file: rings collapse inward
+        instead of expanding, sparks fall toward the centre instead of away
+        from it, and there is no plume at all, because nothing comes back out.
+        """
+        no_drift = np.zeros(2)
+        peak = scale_r * (2.5 + 0.8 * magnitude)
+
+        for k in range(SWALLOW_RINGS):
+            delay = 1.0 + 0.35 * k
+            self._add(_Particle("ring", pos, no_drift, SWALLOW_LIFE_S * delay,
+                                peak * delay, scale_r * 0.05,
+                                tones[2], tones[0]))
+
+        n_sparks = int(np.clip(8 + 4.0 * magnitude, 8, 32))
+        angles = self.rng.uniform(0.0, 2.0 * math.pi, n_sparks)
+        starts = self.rng.uniform(1.2, 3.0, n_sparks)
+        for k in range(n_sparks):
+            direction = np.array([math.cos(angles[k]), math.sin(angles[k])])
+            travel = scale_r * starts[k]
+            start = np.asarray(pos, dtype=float) + direction * travel
+            # Inward, arriving at the centre exactly as the particle expires.
+            spark_vel = -direction * (travel / SWALLOW_LIFE_S)
+            self._add(_Particle("spark", start, spark_vel, SWALLOW_LIFE_S,
+                                scale_r * 0.10, scale_r * 0.02,
+                                (255, 250, 235), tones[1], seed=float(k)))
 
     def _add(self, particle):
         self.particles.append(particle)

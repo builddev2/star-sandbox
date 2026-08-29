@@ -334,3 +334,66 @@ def test_the_contact_refresh_makes_a_black_hole_hittable():
             "visual radius basis was not applied; contact radius is still tiny"
     finally:
         pygame.quit()
+
+
+# --- the swallow effect ---------------------------------------------------------
+
+def _swallow_event(energy=1e-6):
+    from src.collisions import SWALLOW, ImpactEvent
+    from src import units
+    return ImpactEvent(
+        pos=(0.0, 0.0), vel=(0.0, 0.0), energy=energy, outcome=SWALLOW,
+        target_radius=units.schwarzschild_radius(10.0),
+        projectile_radius=units.EARTH_RADIUS,
+        tones=((0x40, 0x08, 0x04), (0xE0, 0x70, 0x18), (0xFF, 0xF0, 0xD0)),
+        on_star=False,
+    )
+
+
+def test_a_swallow_spawns_particles():
+    from src.render.effects import EffectField
+    field = EffectField(seed=1)
+    field.spawn(_swallow_event())
+    assert field.count > 0
+
+
+def test_a_swallow_collapses_inward_rather_than_exploding_outward():
+    """Every other effect grows.  This one is the only one that shrinks."""
+    from src.render.effects import EffectField
+    field = EffectField(seed=1)
+    field.spawn(_swallow_event())
+    rings = [p for p in field.particles if p.kind == "ring"]
+    assert rings
+    assert all(p.r1 < p.r0 for p in rings)
+
+
+def test_a_swallow_throws_no_debris_outward():
+    """Nothing comes back out of a horizon."""
+    from src.render.effects import EffectField
+    field = EffectField(seed=1)
+    field.spawn(_swallow_event(energy=1.0))
+    assert not [p for p in field.particles if p.kind == "plume"]
+
+
+def test_swallow_sparks_travel_inward():
+    from src.render.effects import EffectField
+    import numpy as np
+    field = EffectField(seed=1)
+    field.spawn(_swallow_event())
+    sparks = [p for p in field.particles if p.kind == "spark"]
+    assert sparks
+    for p in sparks:
+        # Position is offset from the centre; velocity points back at it.
+        assert float(np.dot(p.pos, p.vel)) < 0.0
+
+
+def test_an_ordinary_impact_still_explodes_outward():
+    import dataclasses
+    from src.collisions import ACCRETE
+    from src.render.effects import EffectField
+    ordinary = dataclasses.replace(_swallow_event(), outcome=ACCRETE)
+    field = EffectField(seed=1)
+    field.spawn(ordinary)
+    rings = [p for p in field.particles if p.kind == "ring"]
+    assert rings
+    assert all(p.r1 > p.r0 for p in rings)
