@@ -464,7 +464,9 @@ class LaunchTool(Tool):
                   preset.label, palette.TEXT_DIM)
 
 
-EDIT_FIELDS = edits.EDIT_FIELDS
+#: Retained for callers that predate black holes and only ever meant the
+#: ordinary case.
+EDIT_FIELDS = edits.PLANET_EDIT_FIELDS
 
 #: Screen pixels of horizontal drag per scrub notch.
 DRAG_PIXELS_PER_NOTCH = 6.0
@@ -479,7 +481,8 @@ class EditTool(Tool):
     #: Notches one press of a stepper applies.  Mass moves three at a time
     #: because its scrub is a *ratio*: at 1.06 per notch a single one is
     #: invisible, and igniting Jupiter is eighty of them.
-    CLICK_NOTCHES = {"mass": 3, "density": 1, "material": 1}
+    CLICK_NOTCHES = {"mass": 3, "density": 1, "material": 1,
+                     "spin": 1, "disk": 1}
 
     def __init__(self):
         self.field_index = 0
@@ -487,8 +490,22 @@ class EditTool(Tool):
 
     # --- buttons ----------------------------------------------------------------
 
+    def _fields(self, world, index):
+        return edits.edit_fields(world.bodies[index])
+
     def field_values(self, world, index):
-        """The three editable numbers, formatted the way the panel shows them."""
+        """The editable values, formatted the way the panel shows them.
+
+        A black hole has no density to hold constant and nothing it is made
+        of, so it is offered its spin and how hard it is feeding instead.
+        """
+        body = world.bodies[index]
+        if body.kind == KIND_BLACK_HOLE:
+            return {
+                "mass": _mass_label(float(world.mass[index])),
+                "spin": "%.2f" % body.spin,
+                "disk": "off" if body.disk <= 0.0 else "%.0f%%" % (body.disk * 100),
+            }
         return {
             "mass": _mass_label(float(world.mass[index])),
             "density": "%.3g g/cm3" % units.to_gcm3(edits.body_density(world, index)),
@@ -496,7 +513,10 @@ class EditTool(Tool):
         }
 
     def status_label(self, world, index):
-        if world.bodies[index].kind == KIND_STAR:
+        body = world.bodies[index]
+        if body.kind == KIND_BLACK_HOLE:
+            return "nothing escapes"
+        if body.kind == KIND_STAR:
             return "burning"
         return "%.0fx heavier to ignite" % edits.ignition_ratio(world, index)
 
@@ -506,9 +526,12 @@ class EditTool(Tool):
             return [[Control("edit.none", label="Click a body first", readout=True)]]
 
         world = state.sim.world
+        body = world.bodies[index]
+        fields = self._fields(world, index)
+        self.field_index = min(self.field_index, len(fields) - 1)
         values = self.field_values(world, index)
         rows = []
-        for k, field in enumerate(EDIT_FIELDS):
+        for k, field in enumerate(fields):
             step = self.CLICK_NOTCHES[field]
             # Material is a list of substances, not a quantity, so it gets
             # arrows rather than a minus and a plus, and it does not repeat.
@@ -525,23 +548,42 @@ class EditTool(Tool):
                         compact=True, repeat=field != "material",
                         tooltip="More %s" % field),
             ])
+        if body.kind != KIND_BLACK_HOLE:
+            rows.append([Control(
+                "edit.collapse", label="Collapse", icon="blackhole", hotkey="C",
+                enabled=body.kind == KIND_STAR,
+                tooltip="Crush this star into a black hole -- there is no way back")])
         rows.append([Control("edit.status", label=self.status_label(world, index),
                              readout=True)])
         return rows
 
     def perform(self, control, state):
         if control.id == "edit.field":
-            self.field_index = EDIT_FIELDS.index(control.payload)
+            fields = self._fields(state.sim.world, state.selected_index)
+            self.field_index = fields.index(control.payload)
             return True
         if control.id == "edit.step":
             field, notches = control.payload
-            self.field_index = EDIT_FIELDS.index(field)
+            fields = self._fields(state.sim.world, state.selected_index)
+            self.field_index = fields.index(field)
             self._scrub(state, notches)
             return True
+        if control.id == "edit.collapse":
+            return self._collapse(state)
         return False
+
+    def _collapse(self, state):
+        index = state.selected_index
+        if index is None:
+            return False
+        edits.collapse(state.sim.world, index)
+        state.sim.refresh()
+        return True
 
     def on_event(self, event, state):
         if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_c:
+                return self._collapse(state)
             if event.key == pygame.K_DOWN:
                 self.field_index = min(len(EDIT_FIELDS) - 1, self.field_index + 1)
                 return True
@@ -581,7 +623,9 @@ class EditTool(Tool):
         if index is None:
             return
         world = state.sim.world
-        field = EDIT_FIELDS[self.field_index]
+        fields = self._fields(world, index)
+        field = fields[min(self.field_index, len(fields) - 1)]
+        body = world.bodies[index]
 
         if field == "mass":
             edits.set_mass(world, index,
@@ -591,6 +635,10 @@ class EditTool(Tool):
             edits.set_density(
                 world, index,
                 units.from_gcm3(edits.scrub_density_gcm3(current, notches)))
+        elif field == "spin":
+            edits.set_spin(world, index, edits.scrub_spin(body.spin, notches))
+        elif field == "disk":
+            edits.set_disk(world, index, edits.scrub_disk(body.disk, notches))
         else:
             edits.cycle_material(world, index, 1 if notches > 0 else -1)
 

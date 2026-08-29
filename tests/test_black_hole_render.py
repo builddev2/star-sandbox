@@ -453,3 +453,106 @@ def test_launching_the_preset_creates_a_feeding_black_hole():
     assert float(sim.world.radius[-1]) == pytest.approx(
         __import__("src.units", fromlist=["x"]).schwarzschild_radius(
             float(sim.world.mass[-1])))
+
+
+# --- editing --------------------------------------------------------------------
+
+def _edit_state(world, select=0):
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.app.tools import EditTool
+    from src.sim import Simulation
+    sim = Simulation(world=world)
+    state = AppState(sim, Camera(320, 200), ViewSettings())
+    state.set_tool(EditTool)
+    state.selected_id = world.bodies[select].id
+    return state
+
+
+def _ids(rows):
+    return [c.id for row in rows for c in row]
+
+
+def _labels(rows):
+    return [c.label for row in rows for c in row]
+
+
+def test_a_star_is_offered_a_collapse_button(hole_world):
+    from src.render.widgets import Metrics
+    from src.render.pixelfont import PixelFont
+    from src import edits, materials, units
+    from src.body import KIND_STAR
+    import numpy as np
+    hole_world.add("Sun", materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+                   np.array([5.0, 0.0]), np.zeros(2), kind=KIND_STAR)
+    state = _edit_state(hole_world, select=2)
+    rows = state.tool.controls(state, Metrics(PixelFont(18), 320, 200))
+    assert "edit.collapse" in _ids(rows)
+
+
+def test_a_planet_is_not_offered_a_collapse_button(hole_world):
+    from src.render.widgets import Metrics
+    from src.render.pixelfont import PixelFont
+    state = _edit_state(hole_world, select=1)      # Earth
+    rows = state.tool.controls(state, Metrics(PixelFont(18), 320, 200))
+    collapse = [c for row in rows for c in row if c.id == "edit.collapse"]
+    assert not collapse or not collapse[0].enabled
+
+
+def test_a_black_hole_is_offered_spin_and_disk_not_density(hole_world):
+    from src.render.widgets import Metrics
+    from src.render.pixelfont import PixelFont
+    state = _edit_state(hole_world, select=0)
+    rows = state.tool.controls(state, Metrics(PixelFont(18), 320, 200))
+    labels = " ".join(_labels(rows))
+    assert "Spin" in labels
+    assert "Disk" in labels
+    assert "Density" not in labels
+    assert "Material" not in labels
+
+
+def test_the_collapse_button_collapses_the_selected_star(hole_world):
+    from src.render.widgets import Control
+    from src import materials, units
+    from src.body import KIND_BLACK_HOLE, KIND_STAR
+    import numpy as np
+    hole_world.add("Sun", materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+                   np.array([5.0, 0.0]), np.zeros(2), kind=KIND_STAR)
+    state = _edit_state(hole_world, select=2)
+    assert state.tool.perform(Control("edit.collapse"), state)
+    assert hole_world.bodies[2].kind == KIND_BLACK_HOLE
+
+
+def test_scrubbing_spin_changes_it(hole_world):
+    from src import edits
+    state = _edit_state(hole_world, select=0)
+    state.tool.field_index = edits.BLACK_HOLE_EDIT_FIELDS.index("spin")
+    before = hole_world.bodies[0].spin
+    state.tool._scrub(state, +3)
+    assert hole_world.bodies[0].spin > before
+
+
+def test_scrubbing_disk_changes_it(hole_world):
+    from src import edits
+    state = _edit_state(hole_world, select=0)
+    state.tool.field_index = edits.BLACK_HOLE_EDIT_FIELDS.index("disk")
+    before = hole_world.bodies[0].disk
+    state.tool._scrub(state, -3)
+    assert hole_world.bodies[0].disk < before
+
+
+def test_scrubbing_mass_still_works_on_a_black_hole(hole_world):
+    from src import edits, units
+    state = _edit_state(hole_world, select=0)
+    state.tool.field_index = edits.BLACK_HOLE_EDIT_FIELDS.index("mass")
+    state.tool._scrub(state, +5)
+    assert float(hole_world.radius[0]) == pytest.approx(
+        units.schwarzschild_radius(float(hole_world.mass[0])))
+
+
+def test_the_c_key_is_documented():
+    """tests/test_ui.py reads KEY_HELP and fails if a documented key has no
+    button; this asserts the other direction."""
+    from src.render.hud import KEY_HELP
+    assert any(keys == "C" for keys, _ in KEY_HELP)
