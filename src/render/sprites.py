@@ -20,6 +20,8 @@ from collections import OrderedDict
 import numpy as np
 import pygame
 
+from .. import units
+
 #: Lighting directions the cache distinguishes.
 LIT_BUCKETS = 16
 
@@ -36,6 +38,168 @@ GLOW_SCALE = 2.2
 #: Peak brightness of the halo just outside the disc, as a fraction of the
 #: star's own colour.  Additive, so this is how much it lifts the background.
 GLOW_STRENGTH = 0.55
+
+# --- black holes --------------------------------------------------------------
+#
+# Everything below is a multiple of the drawn *shadow* radius -- the dark disc
+# an observer actually sees, which light bending magnifies to sqrt(27)/2 horizon
+# radii.  The horizon itself is never drawn: it is 2.6x smaller and, at any zoom
+# a child uses, well under a pixel.
+
+#: How far the accretion disk reaches, in shadow radii.
+BH_DISK_OUTER = 2.6
+#: Vertical squash of the disk: near-edge-on, which is the view that makes a
+#: black hole legible instead of a plain ring.
+BH_DISK_SQUASH = 0.22
+#: The disk's far side, lensed up over the top of the shadow and down under it.
+#: Much rounder than the disk itself, which is what lifts it clear.
+BH_LENS_ARC = 1.6
+BH_LENS_SQUASH = 0.62
+#: Jet length at full spin, in shadow radii.
+BH_JET_LENGTH = 4.0
+#: Brightness ratio between the approaching and receding halves of the disk --
+#: relativistic beaming.  About right for gas orbiting at a few tenths of c.
+BH_DOPPLER = 2.5
+#: Concentric ellipses the disk is built from.
+BH_DISK_RINGS = 7
+#: Below this many pixels there is no room for a disk; draw shadow and rim only.
+BH_DETAIL_PX = 5
+
+#: Where the disk's inner edge is drawn, in shadow radii, at zero spin and at
+#: the Thorne limit.
+#:
+#: The true ISCO/shadow ratio runs 1.155 down to 0.238 over that range -- but a
+#: black hole draws at 6 px, so the whole span is under one pixel, and past
+#: a* = 0.87 the true inner edge passes *inside* the shadow and is occluded
+#: outright.  Widened to a legible range, exactly the trade ``scale._floor``
+#: already makes for radii: the ordering and the direction stay honest, and the
+#: dark band between the photon ring and the disk really does close as spin
+#: rises.
+BH_INNER_MAX = 2.00
+BH_INNER_MIN = 1.05
+
+#: Disk colours, inner to outer: white, blue-white, orange, deep red.
+_DISK_RAMP = (
+    (0xFF, 0xFF, 0xF4),
+    (0xCF, 0xE4, 0xFF),
+    (0xFF, 0xD2, 0x8A),
+    (0xE8, 0x82, 0x28),
+    (0x9A, 0x30, 0x10),
+)
+#: The photon ring: the sharpest edge in the picture.
+_PHOTON_RING = (255, 250, 235)
+#: Jets are synchrotron light -- blue-white, and dimmer than the disk.
+_JET_COLOUR = (170, 205, 255)
+
+
+def _inner_disk_px(px, spin):
+    """Drawn inner edge of the accretion disk, in pixels.  See BH_INNER_MAX."""
+    t = min(abs(float(spin)), units.MAX_SPIN) / units.MAX_SPIN
+    return px * (BH_INNER_MAX + (BH_INNER_MIN - BH_INNER_MAX) * t)
+
+
+def _ramp_colour(t):
+    """A point along the disk's inner-to-outer colour ramp."""
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    span = len(_DISK_RAMP) - 1
+    k = min(int(t * span), span - 1)
+    local = t * span - k
+    a, b = _DISK_RAMP[k], _DISK_RAMP[k + 1]
+    return tuple(int(a[i] + (b[i] - a[i]) * local) for i in range(3))
+
+
+def _draw_ellipse_ring(surface, colour, alpha, centre, rx, ry, width):
+    """One concentric ellipse of the disk, centred on ``centre``."""
+    rx, ry = max(1, int(rx)), max(1, int(ry))
+    rect = pygame.Rect(centre[0] - rx, centre[1] - ry, rx * 2, ry * 2)
+    pygame.draw.ellipse(surface, tuple(colour) + (alpha,), rect,
+                        max(1, int(width)))
+
+
+def _make_black_hole(px, spin, disk, seed):
+    """A black hole, painted back to front.
+
+    Blitted **normally, never with BLEND_ADD**.  A star's sprite is additive
+    because a star only ever lightens what is behind it; a black hole's whole
+    point is an opaque hole in the sky, and BLEND_ADD cannot draw black.  The
+    outer falloff is therefore carried in alpha rather than baked into colour,
+    which is the opposite of the arrangement the star path warns against.
+    """
+    px = max(1, int(px))
+    spin = min(max(float(spin), 0.0), units.MAX_SPIN)
+    disk = min(max(float(disk), 0.0), 1.0)
+
+    detailed = px >= BH_DETAIL_PX
+    outer = int(px * BH_DISK_OUTER) + 2
+    jet = int(px * BH_JET_LENGTH * spin) if (detailed and disk > 0.0) else 0
+    half = max(outer, jet)
+    size = half * 2 + 1
+    centre = (half, half)
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+
+    if detailed and disk > 0.0:
+        # 1. Jets, first, so everything else covers their roots.
+        if jet > 0:
+            width = max(1, int(px * 0.28))
+            alpha = int(150 * disk)
+            for sign in (-1, 1):
+                tip = centre[1] + sign * jet
+                pygame.draw.polygon(
+                    surface, _JET_COLOUR + (alpha,),
+                    [(centre[0] - width, centre[1]),
+                     (centre[0] + width, centre[1]),
+                     (centre[0] + max(1, width // 3), tip),
+                     (centre[0] - max(1, width // 3), tip)])
+
+        inner = _inner_disk_px(px, spin)
+        reach = px * BH_DISK_OUTER * (0.6 + 0.4 * disk)
+        approaching_left = bool(int(seed) & 1)
+
+        # 2. The far side of the disk, bent up over the shadow and down under
+        #    it.  Rounder than the disk, which is what lifts it clear.
+        arc_rx = px * BH_LENS_ARC
+        _draw_ellipse_ring(surface, _ramp_colour(0.35), int(190 * disk),
+                           centre, arc_rx, arc_rx * BH_LENS_SQUASH,
+                           max(1, px // 5))
+
+        # 3. The disk itself, inner to outer, with 4. Doppler beaming applied
+        #    by redrawing the approaching half brighter.
+        for k in range(BH_DISK_RINGS):
+            frac = k / max(1, BH_DISK_RINGS - 1)
+            rx = inner + (reach - inner) * frac
+            if rx <= 0:
+                continue
+            ry = rx * BH_DISK_SQUASH
+            base = _ramp_colour(frac)
+            # A fast-spinning hole radiates 32% of what it eats against a
+            # still one's 5.7%, so the inner rings brighten with spin too.
+            gain = 1.0 + 0.6 * (spin / units.MAX_SPIN) * (1.0 - frac)
+            alpha = int(min(255, 230 * disk * (1.0 - 0.45 * frac)))
+            dim = tuple(min(255, int(c * gain / BH_DOPPLER)) for c in base)
+            bright = tuple(min(255, int(c * gain)) for c in base)
+            width = max(1, int(px * 0.22))
+
+            _draw_ellipse_ring(surface, dim, alpha, centre, rx, ry, width)
+            clip = pygame.Rect(0 if approaching_left else centre[0], 0,
+                               centre[0] + 1, size)
+            previous = surface.get_clip()
+            surface.set_clip(clip)
+            _draw_ellipse_ring(surface, bright, alpha, centre, rx, ry, width)
+            surface.set_clip(previous)
+
+    # 5. The shadow, opaque, over everything drawn so far -- which is what
+    #    makes the disk's far side emerge from behind it.
+    pygame.draw.circle(surface, (0, 0, 0, 255), centre, px)
+
+    # 6. The photon ring, right at the shadow's edge.
+    pygame.draw.circle(surface, _PHOTON_RING + (255,), centre, px,
+                       1 if detailed else 0)
+    if not detailed:
+        # Too small for a one-pixel outline to survive; draw the rim as a
+        # filled disc and punch the shadow back out of it.
+        pygame.draw.circle(surface, _PHOTON_RING + (255,), centre, px + 1)
+        pygame.draw.circle(surface, (0, 0, 0, 255), centre, px)
+    return surface
 
 
 def _shade(tone, factor):
@@ -182,6 +346,30 @@ class SpriteCache:
             return hit
         angle = bucket * 2 * math.pi / LIT_BUCKETS
         surface = _make_body(material, seed, px, angle, is_star)
+        self._entries[key] = surface
+        if len(self._entries) > self.limit:
+            self._entries.popitem(last=False)
+        return surface
+
+    def get_black_hole(self, seed, px, spin, disk):
+        """A black hole sprite, cached like any other.
+
+        Spin and disk are bucketed for the same reason ``get`` buckets the
+        lighting angle: a continuous value would miss the cache on every frame
+        the child holds a stepper down, and regenerating the sprite every frame
+        is exactly what the cache exists to avoid.
+        """
+        px = max(1, int(px))
+        spin_bucket = int(round(min(abs(float(spin)), units.MAX_SPIN)
+                                / units.MAX_SPIN * 8))
+        disk_bucket = int(round(min(max(float(disk), 0.0), 1.0) * 8))
+        key = ("bh", int(seed) & 1, px, spin_bucket, disk_bucket)
+        hit = self._entries.get(key)
+        if hit is not None:
+            self._entries.move_to_end(key)
+            return hit
+        surface = _make_black_hole(px, spin_bucket / 8.0 * units.MAX_SPIN,
+                                   disk_bucket / 8.0, seed)
         self._entries[key] = surface
         if len(self._entries) > self.limit:
             self._entries.popitem(last=False)
