@@ -647,16 +647,41 @@ def test_the_scenario_contains_exactly_one_black_hole():
 
 def test_the_scenario_shreds_something_almost_immediately():
     """It exists to show a tidal disruption; requiring the child to arrange
-    one would defeat the point."""
+    one would defeat the point.  Bounded to about 30 days -- three times the
+    brief's own ~10-day estimate for the plunge -- so a regression that made
+    the plunge implausibly slow, while still nominally shredding something
+    eventually, could not hide behind a loose bound."""
     from src import scenarios
     from src.sim import Simulation
     sim = Simulation(world=scenarios.black_hole())
     before = sim.world.n
-    for _ in range(400):
+    for _ in range(60):
         sim.advance(0.5, budget_s=1.0)
         if sim.world.n != before:
             break
-    assert sim.world.n != before, "nothing was disrupted in 200 days"
+    assert sim.world.n != before, "nothing was disrupted in 30 days"
+
+
+def test_the_scenario_does_not_cascade_the_world_to_capacity():
+    """Pins that the disruption itself stays a large, slow, visible event,
+    not a chain reaction that fills the world on the very next substep --
+    it does NOT claim the world never fills. Fragments are born a
+    body-radius from where their parent died, deep inside the tidal radius
+    that killed it, and a surviving fragment can still return on a later
+    orbit and be shredded again: that longer-timescale refilling is real
+    physics (a scale-invariant tidal ratio plus a periapsis that has not
+    moved), not a bug this test is meant to catch."""
+    from src import scenarios
+    from src.sim import Simulation
+    sim = Simulation(world=scenarios.black_hole())
+    before = sim.world.n
+    for _ in range(60):
+        sim.advance(0.5, budget_s=1.0)
+        if sim.world.n != before:
+            break
+    assert sim.world.n != before, "nothing was disrupted in 30 days"
+    assert sim.world.n < 40, \
+        f"cascaded to {sim.world.n} bodies -- near the 200-body cap, not a modest event"
 
 
 def test_the_scenario_is_stable_enough_to_run():
@@ -682,6 +707,25 @@ def test_cycling_the_scenario_changes_what_restart_loads():
         state.cycle_scenario()
     state.reset()
     assert any(b.kind == KIND_BLACK_HOLE for b in state.sim.world.bodies)
+
+
+def test_cycling_the_scenario_does_not_restart():
+    """Cycling only changes what Restart will load next time it is pressed --
+    it must not touch the running simulation.  A stray click on the cycle
+    button must cost nothing."""
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.sim import Simulation
+    state = AppState(Simulation(), Camera(320, 200), ViewSettings())
+    state.reset()
+    state.sim.advance(5.0, budget_s=1.0)
+    time_before = state.sim.world.time
+    n_before = state.sim.world.n
+    for _ in range(5):
+        state.cycle_scenario()
+    assert state.sim.world.time == time_before
+    assert state.sim.world.n == n_before
 
 
 def test_restart_reloads_the_current_scenario():

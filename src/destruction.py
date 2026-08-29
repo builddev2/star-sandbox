@@ -118,6 +118,13 @@ def apply(world, resolver, dt):
 
     worst_ratio, worst_i, worst_k = 0.0, None, None
     for i in victims:
+        # Fragments are born a body-radius from where their parent died, which
+        # is deep inside the tidal radius that killed it -- without this they
+        # are re-shredded on the very next substep and the world fills with
+        # debris. The immunity tidal_disrupt already grants them is exactly
+        # long enough to carry them clear.
+        if world.time < world.bodies[i].no_collide_until:
+            continue
         star_victim = world.bodies[i].kind == KIND_STAR
         for k in attractors:
             if k == i:
