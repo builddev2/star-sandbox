@@ -165,6 +165,12 @@ def test_number_keys_choose_a_preset(state):
     assert state.tool.preset_index == 3
 
 
+def test_key_six_chooses_the_black_hole_preset(state):
+    state.tool.on_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_6, mod=0),
+                        state)
+    assert state.tool.preset_index == 5
+
+
 def test_key_one_is_left_for_the_look_tool(state):
     """Pressing 1 while throwing must go back to Look, not pick preset 1."""
     before = state.tool.preset_index
