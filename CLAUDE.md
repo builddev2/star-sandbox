@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (553 tests, ~50s)
+python selftest.py                      # whole suite (668 tests, ~3:40)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -26,7 +26,7 @@ Three layers, enforced by `tests/test_layering.py`:
 
 | | |
 |---|---|
-| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star), both emitting the plain-data `ImpactEvent`. |
+| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`. |
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
 
@@ -66,6 +66,21 @@ or fast time scales.
   aimed at what is on screen misses whatever the drawn-radius floor inflated. A mutation of
   `radius` (merge, graze, accretion, ablation) must reset `contact_radius` to match, so it is
   never left below true size in the substeps before the next frame's refresh.
+- **A black hole's radius is its Schwarzschild radius**, `2GM/c^2`, not a density
+  derivation — `units.schwarzschild_radius`. Collapse is one-way: `edits._refresh_kind`
+  returns early for a black hole, so a hole that loses mass is a smaller hole, never a
+  star again. Kind still follows mass for everything else, and `units.COLLAPSE_MASS_THRESHOLD`
+  (150 solar masses) is both the top of the mass scrub and where nature stops making stars.
+- **A black hole is drawn and aimed at through `render/scale.visual_radii`, never
+  through its true radius.** The horizon is seven orders of magnitude below anything
+  else in the simulation: a 10-solar-mass hole floors at one pixel against the Sun's
+  six, and `contact_radii_au` would cap its aim radius at a target 0.0001 pixels
+  across. Drawing, picking and the contact refresh all read the one helper so they
+  cannot disagree. **Physics never reads it** — every energy, tide, threshold and
+  merged radius still uses the true horizon.
+- **A black hole always takes the `i` slot in `find_collisions`**, whatever the masses
+  say, or a light hole striking a heavy star is absorbed by the star. It always
+  accretes: no graze, no fragments, no ejecta.
 - **Collision and disruption thresholds are `units.disruption_threshold`, never gravitational
   binding energy alone.** Binding energy alone puts the shatter point at roughly escape
   velocity, which is far too easy to reach; the real threshold has a material-strength branch
@@ -73,7 +88,11 @@ or fast time scales.
 - **Every action has a button, and every button carries its hotkey.** A control never
   reimplements a key: it names an action that is the same `AppState` or tool method the
   key already called. `tests/test_ui.py` reads the shortcut list out of `hud.KEY_HELP` and
-  fails if any documented key has no button.
+  fails if any documented key has no button. **A hotkey does not inherit a control's
+  `enabled` gate.** Keyboard events bypass `UiLayer.perform`'s `clickable` check that
+  enforces `enabled=False`, so a key path must duplicate any precondition the control
+  carries (e.g., checking `body.kind == KIND_STAR` inside `EditTool.on_event` for Collapse
+  `C`) — otherwise a greyed-out button's hotkey still works.
 - **Events go interface → tool → global keys** (`src/app/input.py`). The throw tool reads
   any press as an aim, so tool-first ordering would fire a comet through the Delete button.
 - `World.MAX_BODIES` is 200 and must not be raised; the O(n²) force kernel is budgeted for it.
@@ -115,6 +134,15 @@ or fast time scales.
   (`equilibrium_temperature` against `Material.vapour_temperature_k`), run once a substep
   over stars only. Like `CollisionResolver.resolve()`, only the single worst violation is
   handled per call, since removing a body shifts every index after it.
+- **Tidal fragments need immunity from immediate re-shredding** (`destruction.py`).
+  `tidal_disrupt` places debris about 1.15 body-radii from where the parent died, which
+  is deep inside the tidal radius that killed it. The destruction loop skips a body
+  while `world.time < body.no_collide_until`; the immunity `tidal_disrupt` already
+  grants is about six times longer than the transit through the tidal zone, so fragments
+  clear it before being re-checked. (Debris inherits an orbit whose periapsis is still
+  inside the tidal radius, so it returns and is shredded again on later passages — the
+  world does still fill over several orbits. That is real physics, not a bug, and
+  terminating it would need a dust floor in `tidal_disrupt` that nobody has specified.)
 - **Impact effects advance on wall-clock time, never simulated time** (`render/effects.py`).
   A physics quantity (`ImpactEvent.vel`, AU/day) must never be used as a particle's
   real-second world velocity — that was a real bug: a flash inheriting it directly shot off
@@ -131,6 +159,18 @@ or fast time scales.
   a test checks it against 4000 integration steps to 0.02 AU.
 - **Trails sample by angle swept about the dominant attractor**, not by time or distance,
   so Mercury's and Neptune's are equally smooth (`body.py`).
+- **A black hole's sprite is blitted normally, never with `BLEND_ADD`**
+  (`render/sprites.py`). A star is additive because it only ever lightens what is
+  behind it; `BLEND_ADD` cannot draw black, and an opaque hole in the sky is the whole
+  point. The falloff is carried in alpha instead — the opposite of the arrangement the
+  star path's comment warns against.
+- **The accretion disk's inner edge is exaggerated, like drawn radii are.** The true
+  ISCO/shadow ratio runs 1.155 to 0.238 across the spin range, which is under one pixel
+  at the 6 px a hole draws at, and past `a* = 0.87` the true edge is occluded by the
+  shadow entirely. It is mapped onto 2.00..1.05 shadow radii, preserving ordering and
+  direction — the same trade `scale._floor` already makes.
+- **Spin and disk live on `Body`, not in World's arrays**, because the O(n^2) force
+  kernel never reads them — the same reason `rings` and `seed` live there.
 - **`DEFAULT_S = 1`** (`app/config.py`). SDL reports logical points, never device pixels,
   so one internal pixel per point renders as an exact 2×2 block on Retina. The display is
   opened twice — a fullscreen window is shorter than the desktop by the menu-bar strip,
