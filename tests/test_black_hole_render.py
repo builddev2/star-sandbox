@@ -218,6 +218,14 @@ def test_a_spinning_feeding_hole_grows_jets(cache):
     still = cache.get_black_hole(seed=1, px=px, spin=0.0, disk=1.0)
     assert spun.get_height() > still.get_height()
 
+    # The canvas grows from the jet-length arithmetic alone, so height proves
+    # nothing about whether a jet was painted.  Sample the axis itself: the
+    # root is hidden inside the shadow, and the beam emerges past the ring.
+    cx, cy = _centre(spun)
+    assert spun.get_at((cx, cy - px + 2))[:3] == (0, 0, 0)
+    lit = [spun.get_at((cx, cy - d))[3] for d in range(px + 1, px + 12)]
+    assert max(lit) > 0, "spin and disk are on, but no jet pixel was drawn"
+
 
 def test_a_tiny_hole_is_still_a_dark_dot_with_a_rim(cache):
     """At system zoom a hole draws at 6px; below that it must not vanish."""
