@@ -119,7 +119,8 @@ class AppState:
             return None
         height = internal_height or self.camera.height
         radii = scale.display_radii_px(world.radii, self.camera.zoom, height,
-                                       real_size=self.view.real_size)
+                                       real_size=self.view.real_size,
+                                       floor_radii=scale.visual_radii(world))
         screen = self.camera.world_to_screen_array(world.positions)
         best = None
         best_score = float("inf")

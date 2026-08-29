@@ -97,7 +97,8 @@ class App:
         world = state.sim.world
         drawn = scale.contact_radii_au(world.radii, state.camera.zoom,
                                        state.camera.height,
-                                       real_size=state.view.real_size)
+                                       real_size=state.view.real_size,
+                                       aim_radii=scale.visual_radii(world))
         world.contact_radius[:world.n] = world.clamp_contact_radii(drawn)
 
         frame_dt = self.clock.tick(60) / 1000.0

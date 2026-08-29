@@ -242,3 +242,95 @@ def test_the_cache_distinguishes_spin_and_disk(cache):
     assert a is not b
     assert a is not c
     assert cache.get_black_hole(seed=1, px=10, spin=0.0, disk=1.0) is a
+
+
+# --- wiring ---------------------------------------------------------------------
+
+def _draw(world, zoom=64.0, size=(320, 200)):
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings, WorldRenderer
+    from src.render.pixelfont import PixelFont
+    from src.render.sprites import SpriteCache
+    from src.sim import Simulation
+
+    surface = pygame.Surface(size)
+    surface.fill((40, 0, 60))          # not black: the shadow must be drawn,
+                                       # not merely left as background
+    au_across = size[0] / zoom
+    camera = Camera(size[0], size[1], au_across=au_across)
+    sim = Simulation(world=world)
+    renderer = WorldRenderer(SpriteCache(limit=64), PixelFont(14))
+    renderer.draw(surface, sim, camera, ViewSettings(show_trails=False,
+                                                     show_labels=False))
+    return surface, camera
+
+
+def test_a_black_hole_is_drawn_as_a_dark_disc_not_a_bright_one(hole_world):
+    """The star path blits additively; a hole must not, or it draws white."""
+    hole_world.pos[0] = (0.0, 0.0)
+    surface, camera = _draw(hole_world)
+    x, y = camera.world_to_screen(hole_world.pos[0])
+    assert surface.get_at((int(x), int(y)))[:3] == (0, 0, 0)
+
+
+def test_a_black_hole_is_drawn_large_enough_to_see(hole_world):
+    """The opaque black shadow is six pixels across, not one."""
+    hole_world.pos[0] = (0.0, 0.0)
+    surface, camera = _draw(hole_world)
+    x, y = camera.world_to_screen(hole_world.pos[0])
+    # Count the run of opaque black pixels (0,0,0) through the centre.
+    # Without the fix the hole draws at px<2.0 as a single body.material.tones[2]
+    # pixel (hot white for the singularity material), not black.
+    # The disk halo is a separate effect; measure only the shadow.
+    black_run = [dx for dx in range(-12, 13)
+                 if surface.get_at((int(x) + dx, int(y)))[:3] == (0, 0, 0)]
+    assert black_run, "the opaque black shadow was not drawn"
+    assert max(abs(dx) for dx in black_run) >= 2
+
+
+def test_clicking_where_a_black_hole_appears_selects_it(hole_world):
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.app.state import AppState
+    from src.sim import Simulation
+    hole_world.pos[0] = (0.0, 0.0)
+    camera = Camera(1280, 720, au_across=20.0)  # zoom = 1280 / 20.0 = 64.0
+    state = AppState(Simulation(world=hole_world), camera, ViewSettings())
+    x, y = camera.world_to_screen(hole_world.pos[0])
+    # Fifteen pixels off centre: inside the drawn disc with the fix (~12px
+    # radius + 8px margin), outside the unfixed one (~2px + 8px).
+    # This discriminates whether the visual radius is being used.
+    assert state.pick_body_at(int(x) + 15, int(y)) == 0
+
+
+def test_the_contact_refresh_makes_a_black_hole_hittable():
+    """App.step_once() refreshes contact_radius with visual_radii as aim_radii.
+
+    This tests the actual line in main.py:98-101 that wires aim_radii into the
+    frame loop. Without this line, the contact radius stays at the true (useless)
+    value and the black hole cannot be hit by a thrown projectile.
+    """
+    import os
+    from src.app.main import App
+
+    app = App(fullscreen=False)
+    try:
+        world = app.state.sim.world
+        # Collapse the first body (Earth in the default scenario).
+        from src import edits
+        edits.collapse(world, 0)
+        initial_contact = float(world.contact_radius[0])
+
+        # One frame of the app.
+        app.step_once()
+
+        # The contact refresh in step_once should have inflated contact_radius
+        # to match the visual radius so a projectile can hit it.
+        new_contact = float(world.contact_radius[0])
+        true_radius = float(world.radius[0])
+        assert new_contact > initial_contact, \
+            "contact refresh did not enlarge the contact radius"
+        assert new_contact > true_radius * 1000.0, \
+            "visual radius basis was not applied; contact radius is still tiny"
+    finally:
+        pygame.quit()

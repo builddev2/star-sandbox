@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import pygame
 
-from ..body import KIND_STAR
+from ..body import KIND_BLACK_HOLE, KIND_STAR
 from . import palette, scale
 from .sprites import ring_surface
 
@@ -80,7 +80,8 @@ class WorldRenderer:
             self._draw_trails(surface, world, camera, width, height)
 
         radii = scale.display_radii_px(world.radii, camera.zoom, height,
-                                       real_size=view.real_size)
+                                       real_size=view.real_size,
+                                       floor_radii=scale.visual_radii(world))
         screen = camera.world_to_screen_array(world.positions)
 
         # Biggest first, so that when labels collide the more important body is
@@ -98,16 +99,26 @@ class WorldRenderer:
                 continue
             body = world.bodies[i]
             is_star = body.kind == KIND_STAR
+            is_hole = body.kind == KIND_BLACK_HOLE
 
             if px < 2.0:
                 if 0 <= int(x) < width and 0 <= int(y) < height:
                     surface.set_at((int(x), int(y)), body.material.tones[2])
             elif px > MAX_SPRITE_HEIGHTS * height:
                 # Bigger than the screen: no sprite could add detail, and
-                # allocating one this large would fail outright.
-                pygame.draw.circle(surface, body.material.tones[1],
+                # allocating one this large would fail outright.  A hole this
+                # close fills the view with its own shadow, which is correct.
+                pygame.draw.circle(surface,
+                                   (0, 0, 0) if is_hole
+                                   else body.material.tones[1],
                                    (int(x), int(y)),
                                    int(min(px, MAX_DRAW_PX)))
+            elif is_hole:
+                # Never BLEND_ADD: additive blending cannot draw black, and
+                # the shadow is the whole point.
+                sprite = self.cache.get_black_hole(body.seed, int(px),
+                                                   body.spin, body.disk)
+                surface.blit(sprite, sprite.get_rect(center=(int(x), int(y))))
             else:
                 if body.rings and px >= 4:
                     rings = ring_surface(int(px), body.material.tones)
