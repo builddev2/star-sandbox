@@ -573,8 +573,17 @@ class EditTool(Tool):
         return False
 
     def _collapse(self, state):
+        """Crush the selected star into a black hole.
+
+        Guarded on kind rather than left to ``edits.collapse``: the button is
+        drawn disabled for anything that is not a star, and the hotkey must
+        enforce the same rule -- keyboard events never pass through
+        ``UiLayer.perform``, so the control's ``enabled`` flag cannot gate them.
+        """
         index = state.selected_index
         if index is None:
+            return False
+        if state.sim.world.bodies[index].kind != KIND_STAR:
             return False
         edits.collapse(state.sim.world, index)
         state.sim.refresh()

@@ -524,6 +524,26 @@ def test_the_collapse_button_collapses_the_selected_star(hole_world):
     assert hole_world.bodies[2].kind == KIND_BLACK_HOLE
 
 
+def test_the_c_key_collapses_a_selected_star(hole_world):
+    from src import materials, units
+    from src.body import KIND_BLACK_HOLE, KIND_STAR
+    import numpy as np
+    hole_world.add("Sun", materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+                   np.array([5.0, 0.0]), np.zeros(2), kind=KIND_STAR)
+    state = _edit_state(hole_world, select=2)
+    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c, mod=0)
+    assert state.tool.on_event(event, state)
+    assert hole_world.bodies[2].kind == KIND_BLACK_HOLE
+
+
+def test_the_c_key_does_not_collapse_a_planet(hole_world):
+    from src.body import KIND_PLANET
+    state = _edit_state(hole_world, select=1)      # Earth
+    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c, mod=0)
+    state.tool.on_event(event, state)
+    assert hole_world.bodies[1].kind == KIND_PLANET
+
+
 def test_scrubbing_spin_changes_it(hole_world):
     from src import edits
     state = _edit_state(hole_world, select=0)
