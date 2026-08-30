@@ -474,10 +474,15 @@ def test_a_black_hole_is_never_a_victim():
     edits.collapse(w, 1)
     w.contact_radius[:w.n] = w.radius[:w.n]
 
-    victims, stars, attractors = destruction._bodies_and_attractors(w)
+    victims, attractors = destruction._bodies_and_attractors(w)
     assert 1 not in victims, "a black hole must never be a victim"
     assert 1 in attractors, "but it must still raise tides"
-    assert 1 not in stars, "and it radiates nothing"
+
+    # Radiating nothing is thermal.py's business now, not destruction.py's: a
+    # hole is pinned to its Hawking temperature, which for three solar masses
+    # is twenty billionths of a kelvin -- colder than the background it sits in.
+    from src import thermal
+    assert thermal.pinned_temperature(w, 1) < units.CMB_TEMPERATURE_K
 
     count, _ = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
     assert count == 0

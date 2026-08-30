@@ -162,3 +162,60 @@ def test_impact_events_hold_only_plain_data():
         assert isinstance(event.projectile_radius, float)
         assert isinstance(event.tones, tuple)
         assert isinstance(event.on_star, bool)
+
+
+# --- temperature ------------------------------------------------------------------
+
+def test_a_new_simulation_opens_in_thermal_balance():
+    """Not at absolute zero.  A scenario that had to warm up over its first
+    simulated months would be showing a transient nobody asked for."""
+    from src import thermal
+    sim = Simulation()
+    world = sim.world
+    earth = next(b for b in world.bodies if b.name == "Earth")
+    i = world.index_of(earth.id)
+    assert float(world.temperature[i]) == pytest.approx(
+        thermal.equilibrium_temperature(world, i), rel=1e-6)
+    assert float(world.temperature[i]) > units.CMB_TEMPERATURE_K
+
+
+def test_advancing_the_simulation_relaxes_a_body_that_was_heated():
+    sim = Simulation()
+    world = sim.world
+    earth = next(b for b in world.bodies if b.name == "Earth")
+    i = world.index_of(earth.id)
+    settled = float(world.temperature[i])
+    world.temperature[i] = 2000.0
+    sim.advance(40.0, budget_s=5.0)
+    i = world.index_of(earth.id)
+    cooled = float(world.temperature[i])
+    assert cooled < 2000.0
+    assert cooled > settled - 30.0
+
+
+def test_a_paused_simulation_does_not_change_any_temperature():
+    sim = Simulation()
+    sim.paused = True
+    before = sim.world.temperature[:sim.world.n].copy()
+    sim.advance(10.0)
+    assert np.allclose(sim.world.temperature[:sim.world.n], before)
+
+
+def test_reset_settles_the_new_world():
+    """Every body at its equilibrium -- except the ones whose own physics fixes
+    it.  The Sun's equilibrium *as a receiver* is 2.85 K, the temperature the
+    background alone would put it at; what it actually sits at is the 5772 K
+    fusion gives it.  Comparing a star against the receiver number is the
+    mistake this test exists to catch.
+    """
+    from src import thermal
+    sim = Simulation()
+    sim.world.temperature[:sim.world.n] = 1.0
+    sim.reset("solar_system")
+    world = sim.world
+    target = thermal.equilibrium_temperatures(world)
+    for i in range(world.n):
+        pinned = thermal.pinned_temperature(world, i)
+        expected = pinned if pinned is not None else float(target[i])
+        assert float(world.temperature[i]) == pytest.approx(expected, rel=1e-6), \
+            world.bodies[i].name
