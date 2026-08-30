@@ -482,7 +482,7 @@ class EditTool(Tool):
     #: because its scrub is a *ratio*: at 1.06 per notch a single one is
     #: invisible, and igniting Jupiter is eighty of them.
     CLICK_NOTCHES = {"mass": 3, "density": 1, "material": 1,
-                     "spin": 1, "disk": 1}
+                     "temp": 3, "spin": 1, "disk": 1}
 
     def __init__(self):
         self.field_index = 0
@@ -492,6 +492,20 @@ class EditTool(Tool):
 
     def _fields(self, world, index):
         return edits.edit_fields(world.bodies[index])
+
+    def _field_count(self, state):
+        """How many rows the *selected* body offers.
+
+        A hotkey never passes through ``UiLayer.perform``, so it cannot lean on
+        anything the panel knows -- it has to ask the same question the panel
+        asked.  Bounding Up/Down with the module-level ``EDIT_FIELDS`` instead
+        was harmless while every kind had three fields; a planet now has four
+        and a star three, and the two must not be confused.
+        """
+        index = state.selected_index
+        if index is None:
+            return 1
+        return len(self._fields(state.sim.world, index))
 
     def field_values(self, world, index):
         """The editable values, formatted the way the panel shows them.
@@ -509,6 +523,7 @@ class EditTool(Tool):
         return {
             "mass": _mass_label(float(world.mass[index])),
             "density": "%.3g g/cm3" % units.to_gcm3(edits.body_density(world, index)),
+            "temp": _temperature_label(float(world.temperature[index])),
             "material": world.bodies[index].material.name,
         }
 
@@ -594,7 +609,8 @@ class EditTool(Tool):
             if event.key == pygame.K_c:
                 return self._collapse(state)
             if event.key == pygame.K_DOWN:
-                self.field_index = min(len(EDIT_FIELDS) - 1, self.field_index + 1)
+                self.field_index = min(self._field_count(state) - 1,
+                                       self.field_index + 1)
                 return True
             if event.key == pygame.K_UP:
                 self.field_index = max(0, self.field_index - 1)
@@ -644,6 +660,10 @@ class EditTool(Tool):
             edits.set_density(
                 world, index,
                 units.from_gcm3(edits.scrub_density_gcm3(current, notches)))
+        elif field == "temp":
+            edits.set_temperature(
+                world, index,
+                edits.scrub_temperature(float(world.temperature[index]), notches))
         elif field == "spin":
             edits.set_spin(world, index, edits.scrub_spin(body.spin, notches))
         elif field == "disk":
@@ -656,6 +676,12 @@ class EditTool(Tool):
     # This tool draws no overlay: its panel carries every value it used to
     # print over the world, and the inspector already names the body.  Two
     # copies of the same number is one of them eventually being wrong.
+
+
+def _temperature_label(kelvin):
+    """Kelvin, grouped rather than in exponent notation -- "1e+04 K" is not a
+    number this audience reads."""
+    return "{:,.0f} K".format(kelvin)
 
 
 def _mass_label(mass):
