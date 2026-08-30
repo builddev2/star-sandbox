@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from src import materials, units
 from src.world import World
@@ -51,3 +52,44 @@ def test_solar_system_barycentre_is_at_rest():
     from src import scenarios
     world = scenarios.solar_system()
     assert np.allclose(world.total_momentum(), 0.0, atol=1e-18)
+
+
+def test_a_new_body_starts_at_the_microwave_background():
+    """Not zero.  Absolute zero is not a place anything in the universe is,
+    and a body created at 0 K would then spend its first frames warming up
+    from a temperature it was never at."""
+    from src import units
+    w = World(4)
+    b = w.add("Rock", materials.get("rock"), 1e-6, 1e-5,
+              np.array([1.0, 0.0]), np.zeros(2))
+    assert w.temperature[w.index_of(b.id)] == pytest.approx(units.CMB_TEMPERATURE_K)
+
+
+def test_a_body_can_be_created_at_a_chosen_temperature():
+    w = World(4)
+    b = w.add("Ember", materials.get("rock"), 1e-6, 1e-5,
+              np.array([1.0, 0.0]), np.zeros(2), temperature=1500.0)
+    assert w.temperature[w.index_of(b.id)] == pytest.approx(1500.0)
+
+
+def test_removal_carries_the_temperature_with_the_swapped_body():
+    """The swap-remove has to move temperature along with mass and radius, or
+    a body silently inherits the temperature of whichever row it landed in."""
+    w = World(4)
+    a = w.add("A", materials.get("rock"), 1e-6, 1e-5, np.array([1.0, 0.0]),
+              np.zeros(2), temperature=100.0)
+    b = w.add("B", materials.get("rock"), 1e-6, 1e-5, np.array([2.0, 0.0]),
+              np.zeros(2), temperature=200.0)
+    c = w.add("C", materials.get("rock"), 1e-6, 1e-5, np.array([3.0, 0.0]),
+              np.zeros(2), temperature=300.0)
+    w.remove(w.index_of(a.id))
+    assert w.temperature[w.index_of(b.id)] == pytest.approx(200.0)
+    assert w.temperature[w.index_of(c.id)] == pytest.approx(300.0)
+
+
+def test_the_temperatures_view_is_as_long_as_the_world():
+    w = World(8)
+    for k in range(3):
+        w.add("B%d" % k, materials.get("rock"), 1e-6, 1e-5,
+              np.array([float(k + 1), 0.0]), np.zeros(2))
+    assert w.temperatures.shape == (3,)
