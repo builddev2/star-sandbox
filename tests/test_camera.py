@@ -103,6 +103,40 @@ def test_framing_a_tiny_body_does_not_blow_past_the_zoom_limit():
     assert np.allclose(cam.centre, world.pos[world.index_of(moon.id)])
 
 
+def test_zoom_fraction_and_set_zoom_fraction_round_trip():
+    cam = Camera(800, 600)
+    cam.set_zoom_fraction(0.5)
+    assert cam.zoom_fraction == pytest.approx(0.5)
+    cam.set_zoom_fraction(0.0)
+    assert cam.zoom_fraction == pytest.approx(0.0, abs=1e-9)
+    cam.set_zoom_fraction(1.0)
+    assert cam.zoom_fraction == pytest.approx(1.0, abs=1e-9)
+
+
+def test_set_zoom_fraction_matches_the_same_bounds_zoom_by_respects():
+    from src.render.camera import MAX_ZOOM, MIN_ZOOM
+    cam = Camera(800, 600)
+    cam.set_zoom_fraction(0.0)
+    assert cam.zoom == pytest.approx(MIN_ZOOM, rel=1e-9)
+    cam.set_zoom_fraction(1.0)
+    assert cam.zoom == pytest.approx(MAX_ZOOM, rel=1e-9)
+
+
+def test_set_zoom_fraction_clamps_outside_input():
+    cam = Camera(800, 600)
+    cam.set_zoom_fraction(-5.0)
+    assert cam.zoom_fraction == pytest.approx(0.0, abs=1e-9)
+    cam.set_zoom_fraction(5.0)
+    assert cam.zoom_fraction == pytest.approx(1.0, abs=1e-9)
+
+
+def test_set_zoom_fraction_does_not_move_the_centre():
+    cam = Camera(800, 600)
+    cam.centre[:] = (3.0, -2.0)
+    cam.set_zoom_fraction(0.8)
+    assert np.allclose(cam.centre, (3.0, -2.0))
+
+
 def test_the_default_view_shows_the_planets_that_visibly_move():
     """Opening on a 70 AU view is mostly empty space with the inner planets an
     indistinct cluster; nothing appears to happen."""

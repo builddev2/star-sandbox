@@ -69,6 +69,11 @@ class Control:
     #: A readout is laid out and drawn like a button but is not clickable --
     #: the speed display sitting between the slower and faster buttons.
     readout: bool = False
+    #: A slider is a draggable track+thumb instead of a button: ``value`` (0..1)
+    #: is where the thumb sits, and dragging it re-fires ``id`` with the new
+    #: fraction as ``payload`` every motion event, not just on release.
+    slider: bool = False
+    value: float = 0.0
     rect: pygame.Rect = field(default=None)
 
     @property
@@ -180,6 +185,9 @@ def draw_button(surface, font, control, hovered=False, pressed=False):
 
 
 def _draw_button_content(surface, font, control, rect, hovered, pressed):
+    if control.slider:
+        draw_slider(surface, control, rect, pressed)
+        return
     if control.readout:
         draw_panel(surface, rect)
         x = rect.x + (rect.width - font.width(control.label)) // 2
@@ -265,6 +273,41 @@ def draw_hotkey(surface, font, key, rect, dim=True):
                      cap, 1)
     font.draw(surface, cap.x + gap, cap.y + 1, key,
               palette.DISABLED if dim else palette.TEXT_DIM)
+
+
+#: The thumb's travel is inset from the control's rect by half its own height,
+#: so it stays fully drawn at both ends instead of hanging off the edge.
+SLIDER_INSET = 4
+
+
+def slider_track(rect):
+    """The span a vertical slider's thumb centre travels, as ``(top, height)``.
+
+    Drawing and hit-testing both come through here.  A slider whose thumb is
+    painted somewhere other than where a click on it lands is exactly the
+    "drawn in one place, clickable in another" fault this module exists to
+    prevent -- and it shows up as the thumb jumping the moment you grab it.
+    """
+    height = max(1, rect.height - 2 * SLIDER_INSET)
+    return rect.y + (rect.height - height) // 2, height
+
+
+def draw_slider(surface, control, rect, pressed=False):
+    """A vertical track with a thumb at ``control.value`` -- 0 at the bottom, 1
+    at the top, matching a stack of buttons read top-to-bottom as fast-to-slow.
+    """
+    top, height = slider_track(rect)
+    track = pygame.Rect(0, 0, 2, height)
+    track.centerx = rect.centerx
+    track.y = top
+    pygame.draw.rect(surface, palette.BUTTON_EDGE, track)
+
+    frac = min(1.0, max(0.0, control.value))
+    thumb = pygame.Rect(0, 0, max(4, rect.width - 6), 5)
+    thumb.centerx = rect.centerx
+    thumb.centery = int(round(top + height - frac * height))
+    pygame.draw.rect(surface, palette.BUTTON_DOWN if pressed else palette.BUTTON_ACTIVE, thumb)
+    pygame.draw.rect(surface, palette.BUTTON_EDGE_ACTIVE, thumb, 1)
 
 
 # --- tooltips -------------------------------------------------------------------

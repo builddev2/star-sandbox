@@ -25,7 +25,8 @@ belongs to that panel until the button comes back up.
 import pygame
 
 from ..render import palette
-from ..render.widgets import Control, Metrics, draw_button, draw_panel, draw_tooltip
+from ..render.widgets import (Control, Metrics, draw_button, draw_panel,
+                              draw_tooltip, slider_track)
 from . import tools as tools_module
 from .config import WINDOW_FRACTIONS
 
@@ -40,6 +41,14 @@ MAX_REPEATS_PER_FRAME = 8
 
 #: Width of the body list, in characters.
 BODY_LIST_CHARS = 16
+
+#: Height of the zoom slider's track, in button-heights.  The whole log-space
+#: zoom range (14 decades) has to fit in it, so a short slider is unusable --
+#: every pixel dragged jumps the view by more than a button click would.  7 is
+#: as tall as it can go: at the smallest window, coarsest usable grid, that
+#: leaves 8px to spare against the panel's content band; any taller and the
+#: zoom cluster is pushed off the bottom of the window there.
+SLIDER_HEIGHT_NOTCHES = 7
 
 TOOL_BUTTONS = (
     ("tool.look", "Look", "look", "1", "Select and inspect bodies"),
@@ -63,6 +72,24 @@ VIEW_BUTTONS = (
 #: Controls that need a DisplayContext to do anything, and so are drawn
 #: disabled when there is not one (headless tests, and the smoke test).
 NEEDS_DISPLAY = ("view.grid", "view.window", "view.fullscreen")
+
+
+def _slider_fraction(control, pos):
+    """Where ``pos`` sits along a vertical slider's track, 0 at the bottom.
+
+    Through ``slider_track``, which is the same span ``draw_slider`` paints the
+    thumb on -- reading the raw rect here instead would put the thumb a few
+    pixels from where clicking it lands, so grabbing the thumb would jump the
+    value before the drag had even begun.
+    """
+    rect = control.rect
+    if rect is None or rect.height <= 0:
+        return control.value
+    top, height = slider_track(rect)
+    if height <= 0:
+        return control.value
+    frac = 1.0 - (pos[1] - top) / height
+    return min(1.0, max(0.0, frac))
 
 
 def layout_row(controls, x, y, metrics, width):
@@ -272,22 +299,31 @@ class UiLayer:
         Not everyone has a wheel.  Without these, a trackpad with no scroll
         gesture cannot zoom at all, which would make most of the sandbox
         unreachable by mouse -- the one thing this interface exists to prevent.
+
+        The slider sits between the two buttons, in the same order a map's own
+        zoom control uses: drag toward + to zoom in, toward - to zoom out.  It
+        is a second route to the same ``Camera``, not a third zoom range of its
+        own -- a fast, coarse jump the buttons then refine one notch at a time.
         """
-        buttons = [
-            Control("view.zoom", icon="plus", payload=1, hotkey="+", compact=True,
-                    repeat=True, tooltip="Zoom in"),
-            Control("view.zoom", icon="minus", payload=-1, hotkey="-", compact=True,
-                    repeat=True, tooltip="Zoom out"),
-            Control("view.home", icon="home", hotkey="H", compact=True,
-                    tooltip="Back to the whole solar system"),
+        frac = state.camera.zoom_fraction
+        items = [
+            (Control("view.zoom", icon="plus", payload=1, hotkey="+", compact=True,
+                     repeat=True, tooltip="Zoom in"), m.btn_h),
+            (Control("view.zoom_slider", slider=True, value=frac, payload=frac,
+                     tooltip="Drag to zoom"), SLIDER_HEIGHT_NOTCHES * m.btn_h),
+            (Control("view.zoom", icon="minus", payload=-1, hotkey="-", compact=True,
+                    repeat=True, tooltip="Zoom out"), m.btn_h),
+            (Control("view.home", icon="home", hotkey="H", compact=True,
+                    tooltip="Back to the whole solar system"), m.btn_h),
         ]
+        total = sum(h for _, h in items) + m.gap * (len(items) - 1)
         x = m.width - m.pad - m.icon_btn_w
-        y = m.content_bottom - len(buttons) * (m.btn_h + m.gap)
+        y = m.content_bottom - total
         self._panel(pygame.Rect(x - m.gap, y - m.gap, m.icon_btn_w + 2 * m.gap,
-                                len(buttons) * (m.btn_h + m.gap) + m.gap))
-        for control in buttons:
-            self._place([(control, pygame.Rect(x, y, m.icon_btn_w, m.btn_h))])
-            y += m.btn_h + m.gap
+                                total + m.gap))
+        for control, h in items:
+            self._place([(control, pygame.Rect(x, y, m.icon_btn_w, h))])
+            y += h + m.gap
 
     def _build_transport(self, state, m):
         """Play, speed and restart, centred along the bottom like any game."""
@@ -438,6 +474,13 @@ class UiLayer:
         """Handle one event.  Returns True when the world must not also see it."""
         if event.type == pygame.MOUSEMOTION:
             self.mouse = event.pos
+            if self._pressed is not None and self._pressed.slider:
+                # A slider tracks the cursor for as long as the button is down,
+                # on or off its own rect -- the same "drag stays live" rule a
+                # click-and-hold panel drag already gets below.
+                self._pressed.payload = _slider_fraction(self._pressed, event.pos)
+                self.perform(self._pressed, state, ctx)
+                return True
             control = self.control_at(event.pos)
             self.hover_id = control.id if control is not None else None
             return self._press_on_ui
@@ -454,7 +497,13 @@ class UiLayer:
             if control is not None:
                 self._pressed = control
                 self._press_on_ui = True
-                if control.repeat:
+                if control.slider:
+                    # Clicking anywhere on the track jumps the thumb there, the
+                    # way every slider does -- not just the notch a stepper
+                    # click would give.
+                    control.payload = _slider_fraction(control, event.pos)
+                    self.perform(control, state, ctx)
+                elif control.repeat:
                     # Steppers act on the way down and keep going while held.
                     # Waiting for the release would make them feel broken.
                     self.perform(control, state, ctx)
@@ -474,7 +523,10 @@ class UiLayer:
             if pressed is not None:
                 # Releasing away from the button cancels it, the way every other
                 # interface behaves: a mis-click can be dragged off and undone.
-                if not pressed.repeat and pressed.rect.collidepoint(event.pos):
+                # A slider already acted continuously through the drag, so its
+                # release needs no catch-up click of its own.
+                if not pressed.repeat and not pressed.slider \
+                        and pressed.rect.collidepoint(event.pos):
                     self.perform(pressed, state, ctx)
                 return True
             return on_ui
@@ -567,6 +619,9 @@ class UiLayer:
             return True
         if cid == "view.zoom":
             state.camera.zoom_by(payload)
+            return True
+        if cid == "view.zoom_slider":
+            state.camera.set_zoom_fraction(payload)
             return True
         if cid == "view.home":
             state.camera.reset_view()
