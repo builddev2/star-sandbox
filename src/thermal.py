@@ -107,3 +107,102 @@ def equilibrium_temperature(world, i):
     """Where body ``i`` is heading, kelvin.  The whole-world sum, indexed --
     never a second implementation that could drift from it."""
     return float(equilibrium_temperatures(world)[i])
+
+
+#: How many times ``settle`` sweeps the world.  One pass is exact for bodies
+#: warmed only by stars, since a star's temperature is pinned rather than
+#: solved for; the extra passes are what let planets warming *each other*
+#: converge.  Those terms are tiny, so this converges immediately -- the loop
+#: is here so the answer does not depend on the order bodies happen to sit in.
+SETTLE_PASSES = 4
+
+#: Largest exponent handed to exp().  Anything past this is zero to a double
+#: anyway; clamping keeps a tau of microseconds from underflowing noisily.
+_MAX_DECAY_EXPONENT = 700.0
+
+
+def relaxation_days(world, i, t_eq):
+    """The thermal time constant of body ``i``, in days.
+
+        tau = rho * h * c_p / (4 sigma T_ref^3)
+
+    ``rho`` is the body's *current* density, so squeezing a planet denser in
+    the Edit tool really does make it hold its heat longer, and ``h`` is
+    ``units.THERMAL_SKIN_DEPTH_M`` -- see that constant for why a skin rather
+    than the whole body.
+
+    ``T_ref`` is the *hotter* of the body and its target, not the body alone.
+    The exchange runs at the rate the hot end sets: linearising at the body's
+    own temperature would leave something dropped to 3 K beside the Sun frozen
+    for eighteen thousand years, which is an artefact of the linearisation and
+    not a fact about the world.
+    """
+    material = world.bodies[i].material
+    c_p = material.heat_capacity_j_kgk
+    mass = float(world.mass[i])
+    radius = float(world.radius[i])
+    if not math.isfinite(c_p) or c_p <= 0.0 or mass <= 0.0 or radius <= 0.0:
+        return math.inf
+
+    rho = units.to_kgm3(units.density_from_mass_radius(mass, radius))
+    t_ref = max(float(world.temperature[i]), float(t_eq), units.CMB_TEMPERATURE_K)
+    denominator = 4.0 * units.STEFAN_BOLTZMANN * t_ref ** 3
+    if denominator <= 0.0:
+        return math.inf
+    seconds = rho * units.THERMAL_SKIN_DEPTH_M * c_p / denominator
+    return seconds / units.SEC_PER_DAY
+
+
+def _clamp(kelvin):
+    return float(min(max(kelvin, units.MIN_TEMPERATURE_K), units.MAX_TEMPERATURE_K))
+
+
+def advance(world, days):
+    """Relax every body toward its equilibrium over ``days``.
+
+    Integrated **analytically**, never by an explicit step::
+
+        T <- T_eq + (T - T_eq) exp(-dt / tau)
+
+    which is unconditionally stable and collapses to ``T = T_eq`` when the step
+    dwarfs the time constant -- the physically right limit, and the reason the
+    sandbox can run at ten years per second without a temperature diverging.
+    An explicit step would need ``dt < tau``, and tau is under an hour for
+    anything glowing.
+
+    Stars and black holes are written back to their pinned values rather than
+    relaxed: neither warms in its own light.
+    """
+    n = world.n
+    if n == 0 or days <= 0.0:
+        return
+    target = equilibrium_temperatures(world)
+    for i in range(n):
+        pinned = pinned_temperature(world, i)
+        if pinned is not None:
+            world.temperature[i] = pinned
+            continue
+        t_eq = float(target[i])
+        tau = relaxation_days(world, i, t_eq)
+        if not math.isfinite(tau) or tau <= 0.0:
+            world.temperature[i] = _clamp(t_eq)
+            continue
+        decay = math.exp(-min(days / tau, _MAX_DECAY_EXPONENT))
+        current = float(world.temperature[i])
+        world.temperature[i] = _clamp(t_eq + (current - t_eq) * decay)
+
+
+def settle(world):
+    """Put every body *at* its equilibrium, with no transient.
+
+    Called when a world is built or reset, so a scenario opens in thermal
+    balance.  Without it every planet would start at the microwave background
+    and spend its first simulated months warming up to where it has in fact
+    been sitting for four billion years.
+    """
+    for _ in range(SETTLE_PASSES):
+        target = equilibrium_temperatures(world)
+        for i in range(world.n):
+            pinned = pinned_temperature(world, i)
+            world.temperature[i] = (pinned if pinned is not None
+                                    else _clamp(float(target[i])))
