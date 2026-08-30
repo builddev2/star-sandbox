@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import units
+from . import edits, units
 from .body import KIND_BLACK_HOLE, KIND_DEBRIS, KIND_PLANET, KIND_STAR
 
 
@@ -249,7 +249,13 @@ def merge(world, c):
         world.radius[i] = units.schwarzschild_radius(total)
     else:
         world.radius[i] = units.radius_from_mass_density(total, density)
-        if total >= units.STAR_MASS_THRESHOLD:
+        if total >= units.COLLAPSE_MASS_THRESHOLD:
+            # Past the pair-instability window a core collapses directly, with
+            # no supernova -- the same rule edits._refresh_kind applies to the
+            # mass scrub. Without it a merge is the one way to build a star
+            # heavier than nature allows.
+            edits.collapse(world, i)
+        elif total >= units.STAR_MASS_THRESHOLD:
             survivor.kind = KIND_STAR
         elif survivor.kind == KIND_DEBRIS and total >= units.EARTH_MASS * 0.01:
             survivor.kind = KIND_PLANET

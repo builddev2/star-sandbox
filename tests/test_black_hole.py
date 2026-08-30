@@ -482,3 +482,61 @@ def test_a_black_hole_is_never_a_victim():
     count, _ = destruction.apply(w, collisions.CollisionResolver(1), 0.01)
     assert count == 0
     assert w.n == 2
+
+
+# --- merge past the collapse threshold ------------------------------------------
+
+def _star_pair(m1, m2):
+    """Two ordinary stars, dense enough to merge without triggering a graze
+    or a shatter classification -- the test only cares what merge() does."""
+    import numpy as np
+    from src import materials
+    from src.body import KIND_STAR
+    from src.world import World
+    w = World()
+    r1 = units.SUN_RADIUS * (m1 / 1.0) ** (1.0 / 3.0)
+    r2 = units.SUN_RADIUS * (m2 / 1.0) ** (1.0 / 3.0)
+    w.add("A", materials.get("hydrogen"), m1, r1, np.zeros(2), np.zeros(2),
+          kind=KIND_STAR)
+    w.add("B", materials.get("hydrogen"), m2, r2, np.array([r1 + r2, 0.0]),
+          np.zeros(2), kind=KIND_STAR)
+    return w
+
+
+def test_merging_past_the_collapse_threshold_makes_a_black_hole_not_a_star():
+    """merge(100 + 80 Msun) must collapse, not ignite a 180 Msun star --
+    nature has no such thing, and edits._refresh_kind already enforces this
+    on the mass-scrub path.  Fails red against current collisions.py, which
+    only checks STAR_MASS_THRESHOLD and produces kind == KIND_STAR."""
+    from src import collisions
+    from src.body import KIND_BLACK_HOLE
+    world = _star_pair(100.0, 80.0)
+    total = world.mass[0] + world.mass[1]
+    idx = collisions.merge(world, collisions.Collision(0, 1, 0.5, 0.0))
+    assert world.bodies[idx].kind == KIND_BLACK_HOLE
+    assert float(world.radius[idx]) == pytest.approx(
+        units.schwarzschild_radius(float(total)))
+    assert float(world.contact_radius[idx]) == pytest.approx(float(world.radius[idx]))
+
+
+def test_merge_below_the_collapse_threshold_still_makes_a_star():
+    """A merge that crosses STAR_MASS_THRESHOLD but stays under
+    COLLAPSE_MASS_THRESHOLD must still ignite an ordinary star -- guards
+    against an over-broad fix that routes every merge through collapse."""
+    from src import collisions
+    from src.body import KIND_STAR
+    world = _star_pair(60.0, 60.0)
+    idx = collisions.merge(world, collisions.Collision(0, 1, 0.5, 0.0))
+    assert world.mass[idx] == pytest.approx(120.0)
+    assert world.mass[idx] < units.COLLAPSE_MASS_THRESHOLD
+    assert world.bodies[idx].kind == KIND_STAR
+
+
+def test_collapsing_merge_conserves_mass_exactly():
+    from src import collisions
+    world = _star_pair(100.0, 80.0)
+    m0 = world.masses.sum()
+    idx = collisions.merge(world, collisions.Collision(0, 1, 0.5, 0.0))
+    assert world.n == 1
+    assert world.mass[idx] == pytest.approx(180.0, rel=1e-15)
+    assert world.masses.sum() == pytest.approx(m0, rel=1e-15)
