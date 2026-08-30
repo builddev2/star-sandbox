@@ -282,6 +282,54 @@ def circular_speed(mu, radius):
     return math.sqrt(mu / radius)
 
 
+# --- Radiation and temperature ------------------------------------------------------
+#
+# Temperatures are in **kelvin**, not a sandbox-scaled unit.  Every source in the
+# literature is in kelvin, there is no natural AU/solar-mass/day temperature to
+# scale to, and the readout has to print a number a person recognises.  So this
+# is the one SI quantity that crosses into the physics layer, and the conversions
+# below are what keep it honest.
+
+#: Stefan-Boltzmann constant, W m^-2 K^-4.  Radiated power goes as T^4, which is
+#: why a glowing body cools in hours and a frozen one takes centuries.
+STEFAN_BOLTZMANN = 5.670374419e-8
+
+#: The cosmic microwave background, kelvin.  Nothing gets colder than this:
+#: however far a body runs from every star, it still sits in a 2.725 K bath and
+#: comes to equilibrium with it.  Sunlight does not drop this low until 10,400 AU.
+CMB_TEMPERATURE_K = 2.725
+
+#: How deep a layer takes part in a body's temperature changes, metres.
+#:
+#: Heating a *whole* planet gives Earth a thermal time constant near a hundred
+#: thousand years -- entirely real, and entirely invisible in a sandbox where a
+#: frame is a day.  The reason real surfaces equilibrate in days is that only a
+#: thin skin follows the changing sunlight beneath it.  This is that skin, and it
+#: is the one free parameter in the whole thermal model.
+THERMAL_SKIN_DEPTH_M = 1.0
+
+#: A body's temperature may not be scrubbed below the background it sits in, nor
+#: above this -- hotter than any star's surface, and well clear of anything the
+#: T^4 arithmetic could overflow on.
+MIN_TEMPERATURE_K = CMB_TEMPERATURE_K
+MAX_TEMPERATURE_K = 1.0e5
+
+#: The freezing point of water in kelvin -- the offset between the unit the
+#: physics is in and the unit the audience has.
+ZERO_CELSIUS_K = 273.15
+
+
+def to_celsius(kelvin):
+    """Kelvin to degrees Celsius."""
+    return kelvin - ZERO_CELSIUS_K
+
+
+def to_kgm3(density):
+    """Density in simulation units to kg/m^3, which is what the thermal
+    arithmetic wants: specific heats are quoted per kilogram."""
+    return density / KGM3_TO_SIM
+
+
 # --- Conversions to human-facing units ----------------------------------------------
 
 def to_earth_masses(mass):
