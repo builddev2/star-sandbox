@@ -522,10 +522,24 @@ def test_a_molten_planet_heats_its_moon_far_harder():
     assert thermal.equilibrium_temperature(world, 1) == pytest.approx(163.9, abs=3.0)
 
 
-def test_far_from_everything_a_body_sits_at_the_background_and_not_below():
-    world = _sun_and(ROCK, 50000.0)
+def test_a_rogue_body_between_the_stars_sits_at_the_microwave_background():
+    """Three light years out.
+
+    The approach to the floor is far slower than it looks: flux falls as 1/d^2
+    but temperature is its fourth root, so a body is still 0.9% above the
+    background at 50,000 AU -- five times past the distance where the Sun's
+    contribution and the CMB's are equal -- and only settles onto it out here.
+    """
+    world = _sun_and(ROCK, 200000.0)
     assert (thermal.equilibrium_temperature(world, 1)
             == pytest.approx(units.CMB_TEMPERATURE_K, rel=1e-3))
+
+
+def test_nothing_is_ever_colder_than_the_microwave_background():
+    """The floor is a floor at every distance, not only in the limit."""
+    for distance in (1.0, 100.0, 5000.0, 50000.0, 1.0e7):
+        world = _sun_and(ICE, distance)
+        assert thermal.equilibrium_temperature(world, 1) >= units.CMB_TEMPERATURE_K
 
 
 def test_a_star_is_pinned_to_the_temperature_its_mass_gives_it():
@@ -802,17 +816,42 @@ def test_settle_puts_everything_at_equilibrium_and_is_a_fixed_point():
     assert float(world.temperature[1]) == pytest.approx(settled, rel=1e-9)
 
 
-def test_settling_the_solar_system_gets_every_planet_about_right():
-    """The end-to-end check: real elements in, real temperatures out."""
+def test_settling_the_solar_system_reduces_to_the_textbook_law():
+    """The end-to-end check, and the one worth making: the whole-world O(n^2)
+    sum has to agree with `T = T_star sqrt(R_star / 2d) (1-A)^(1/4)` for every
+    planet at the distance it actually is.
+
+    Distances are the J2000 positions, not the semi-major axes: Mercury sits
+    near aphelion at 0.4665 AU and comes out at 385 K, where its *average*
+    distance would give 440 K.  Quoting a remembered textbook number here
+    rather than the body's real distance is how you get a test that is wrong
+    and confident about it.
+
+    rel=1e-4 rather than tighter because the expected value below leaves out
+    the microwave background, which is a few parts per million of Neptune's
+    temperature and less than that for everything closer in.
+    """
+    from src import scenarios
+    world = scenarios.solar_system(moons=False)
+    thermal.settle(world)
+    for i in range(1, world.n):
+        body = world.bodies[i]
+        d = float(np.hypot(*(world.pos[i] - world.pos[0])))
+        expected = (units.star_temperature(float(world.mass[0]))
+                    * math.sqrt(units.SUN_RADIUS / (2.0 * d))
+                    * (1.0 - body.material.albedo) ** 0.25)
+        assert float(world.temperature[i]) == pytest.approx(expected, rel=1e-4), body.name
+
+
+def test_the_inner_planets_come_out_hotter_than_the_outer_ones():
     from src import scenarios
     world = scenarios.solar_system(moons=False)
     thermal.settle(world)
     by_name = {b.name: float(world.temperature[world.index_of(b.id)])
                for b in world.bodies}
-    assert by_name["Mercury"] == pytest.approx(440.0, abs=25.0)
-    assert by_name["Earth"] == pytest.approx(267.0, abs=15.0)
-    assert by_name["Neptune"] == pytest.approx(41.0, abs=8.0)
-    assert by_name["Mercury"] > by_name["Earth"] > by_name["Neptune"]
+    assert by_name["Mercury"] > by_name["Earth"] > by_name["Jupiter"] > by_name["Neptune"]
+    assert 250.0 < by_name["Earth"] < 290.0
+    assert 30.0 < by_name["Neptune"] < 50.0
 
 
 def test_a_star_never_relaxes_however_long_it_runs():
