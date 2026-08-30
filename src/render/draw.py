@@ -124,7 +124,8 @@ class WorldRenderer:
                     rings = ring_surface(int(px), body.material.tones)
                     surface.blit(rings, rings.get_rect(center=(int(x), int(y))))
                 sprite = self.cache.get(body.material, body.seed, int(px),
-                                        nearest_star_angle(world, i), is_star)
+                                        nearest_star_angle(world, i), is_star,
+                                        float(world.temperature[i]))
                 rect = sprite.get_rect(center=(int(x), int(y)))
                 surface.blit(sprite, rect,
                              special_flags=pygame.BLEND_ADD if is_star else 0)
