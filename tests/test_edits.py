@@ -163,3 +163,67 @@ def test_a_much_heavier_jupiter_wrecks_the_solar_system(sim):
     after = orbits.elements_from_state(units.G, sim.world.pos[index],
                                        sim.world.vel[index])
     assert abs(after["e"] - before["e"]) > 0.01, "Earth's orbit barely noticed"
+
+
+# --- temperature ------------------------------------------------------------------
+
+def test_a_planet_can_be_given_a_temperature(sim):
+    i = _index(sim, "Earth")
+    edits.set_temperature(sim.world, i, 900.0)
+    assert float(sim.world.temperature[i]) == pytest.approx(900.0)
+
+
+def test_temperature_is_clamped_to_the_background_and_the_ceiling(sim):
+    i = _index(sim, "Earth")
+    edits.set_temperature(sim.world, i, -50.0)
+    assert float(sim.world.temperature[i]) == pytest.approx(units.MIN_TEMPERATURE_K)
+    edits.set_temperature(sim.world, i, 1.0e12)
+    assert float(sim.world.temperature[i]) == pytest.approx(units.MAX_TEMPERATURE_K)
+
+
+def test_temperature_scrubs_by_ratio_so_it_can_cross_five_orders_of_magnitude():
+    """Linear steps cannot serve both a 3 K comet and a 100,000 K ember; the
+    same argument that makes the mass scrub logarithmic."""
+    up = edits.scrub_temperature(100.0, 1)
+    assert up == pytest.approx(100.0 * edits.TEMPERATURE_NOTCH)
+    assert edits.scrub_temperature(up, -1) == pytest.approx(100.0)
+
+
+def test_temperature_scrub_clamps_at_both_ends():
+    assert edits.scrub_temperature(300.0, 10_000) == pytest.approx(
+        units.MAX_TEMPERATURE_K)
+    assert edits.scrub_temperature(300.0, -10_000) == pytest.approx(
+        units.MIN_TEMPERATURE_K)
+
+
+def test_a_star_refuses_to_have_its_temperature_set(sim):
+    """Its temperature is fusion's business and follows its mass.  The Edit
+    panel offers no Temp row for one, and the setter enforces the same rule so
+    no other caller can route around the missing button."""
+    i = _index(sim, "Sun")
+    before = float(sim.world.temperature[i])
+    edits.set_temperature(sim.world, i, 10.0)
+    assert float(sim.world.temperature[i]) == pytest.approx(before)
+
+
+def test_a_planet_that_ignites_takes_its_stars_temperature_at_once(sim):
+    i = _index(sim, "Earth")
+    edits.set_mass(sim.world, i, units.STAR_MASS_THRESHOLD * 1.1)
+    assert float(sim.world.temperature[i]) == pytest.approx(
+        units.star_temperature(float(sim.world.mass[i])), rel=1e-9)
+
+
+def test_a_collapsed_star_takes_its_hawking_temperature(sim):
+    i = _index(sim, "Earth")
+    edits.set_mass(sim.world, i, 10.0)
+    edits.collapse(sim.world, i)
+    assert float(sim.world.temperature[i]) == pytest.approx(
+        units.hawking_temperature_k(10.0), rel=1e-9)
+
+
+def test_a_planet_is_offered_four_fields_and_a_star_only_three(sim):
+    earth = sim.world.bodies[_index(sim, "Earth")]
+    sun = sim.world.bodies[_index(sim, "Sun")]
+    assert edits.edit_fields(earth) == ("mass", "density", "temp", "material")
+    assert edits.edit_fields(sun) == ("mass", "density", "material")
+    assert "temp" not in edits.edit_fields(sun)

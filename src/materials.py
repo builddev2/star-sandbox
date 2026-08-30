@@ -31,6 +31,14 @@ class Material:
     toughness: float = 1.0
     #: Temperature at which the surface boils away near a star, in kelvin.
     vapour_temperature_k: float = 2000.0
+    #: Fraction of incident light reflected rather than absorbed, 0..1.  Real
+    #: bolometric values: fresh ice throws most of the light back, open water
+    #: swallows nearly all of it, and that alone is tens of kelvin of difference
+    #: between two worlds at the same distance from the same star.
+    albedo: float = 0.15
+    #: Specific heat capacity, J/kg/K -- what one kelvin costs.  Together with
+    #: density it sets how long a body takes to warm up or cool down.
+    heat_capacity_j_kgk: float = 800.0
 
     @property
     def density(self):
@@ -45,6 +53,7 @@ MATERIALS = (
         "cratered",
         "Iron worlds are tiny for how heavy they are.",
         toughness=3.0, vapour_temperature_k=3130.0,
+        albedo=0.20, heat_capacity_j_kgk=450.0,
     ),
     Material(
         "rock", "Rock", 3.30,
@@ -52,6 +61,7 @@ MATERIALS = (
         "cratered",
         "Rocky worlds are the kind you could stand on.",
         toughness=1.0, vapour_temperature_k=2700.0,
+        albedo=0.15, heat_capacity_j_kgk=800.0,
     ),
     Material(
         "rock_ice", "Rock & Ice", 2.00,
@@ -59,6 +69,7 @@ MATERIALS = (
         "cracked",
         "Half rock, half frozen water.",
         toughness=0.6, vapour_temperature_k=1200.0,
+        albedo=0.35, heat_capacity_j_kgk=1400.0,
     ),
     Material(
         "water", "Ocean", 1.00,
@@ -66,6 +77,7 @@ MATERIALS = (
         "banded",
         "A world covered in deep water.",
         toughness=0.1, vapour_temperature_k=373.0,
+        albedo=0.06, heat_capacity_j_kgk=4180.0,
     ),
     Material(
         "ice", "Ice", 0.93,
@@ -73,6 +85,7 @@ MATERIALS = (
         "cracked",
         "Frozen solid, and light for its size.",
         toughness=0.4, vapour_temperature_k=180.0,
+        albedo=0.60, heat_capacity_j_kgk=2000.0,
     ),
     Material(
         "gas", "Gas Giant", 1.33,
@@ -80,6 +93,7 @@ MATERIALS = (
         "banded",
         "A huge ball of gas with no surface to land on.",
         toughness=0.05, vapour_temperature_k=150.0,
+        albedo=0.50, heat_capacity_j_kgk=10000.0,
     ),
     Material(
         "hydrogen", "Hydrogen & Helium", 0.70,
@@ -87,6 +101,7 @@ MATERIALS = (
         "turbulent",
         "The same stuff stars are made of.",
         toughness=0.05, vapour_temperature_k=100.0,
+        albedo=0.40, heat_capacity_j_kgk=14300.0,
     ),
 )
 
@@ -104,6 +119,7 @@ SINGULARITY = Material(
     "disk",
     "Not made of anything. Just gravity, wound too tight to let go.",
     toughness=1e9, vapour_temperature_k=float("inf"),
+    albedo=0.0, heat_capacity_j_kgk=float("inf"),
 )
 
 BY_KEY = {m.key: m for m in MATERIALS}

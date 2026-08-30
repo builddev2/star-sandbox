@@ -33,16 +33,46 @@ def _key(key):
 
 
 def test_up_and_down_move_between_fields(state):
-    from src.app.tools import EDIT_FIELDS
+    from src import edits
+    fields = edits.edit_fields(state.sim.world.bodies[state.selected_index])
     assert state.tool.field_index == 0
     state.tool.on_event(_key(pygame.K_DOWN), state)
     assert state.tool.field_index == 1
     for _ in range(10):
         state.tool.on_event(_key(pygame.K_DOWN), state)
-    assert state.tool.field_index == len(EDIT_FIELDS) - 1
+    assert state.tool.field_index == len(fields) - 1
     for _ in range(10):
         state.tool.on_event(_key(pygame.K_UP), state)
     assert state.tool.field_index == 0
+
+
+def test_down_stops_at_the_last_field_of_the_selected_body(state):
+    """Not at the last field of some other kind of body.  A star has three
+    fields and a planet four, so a count taken from a module-level tuple walks
+    off the end of one of them -- and a hotkey never passes through
+    UiLayer.perform, so nothing else would catch it."""
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    expected = len(edits.edit_fields(body)) - 1
+    for _ in range(10):
+        state.tool.on_event(_key(pygame.K_DOWN), state)
+    assert state.tool.field_index == expected
+
+
+def test_the_edit_panel_offers_a_temp_row_for_a_planet(state):
+    values = state.tool.field_values(state.sim.world, state.selected_index)
+    assert "temp" in values
+    assert values["temp"].endswith("K")
+
+
+def test_the_temp_row_scrubs_the_selected_bodys_temperature(state):
+    from src import edits
+    fields = edits.edit_fields(state.sim.world.bodies[state.selected_index])
+    index = state.selected_index
+    before = float(state.sim.world.temperature[index])
+    state.tool.field_index = fields.index("temp")
+    state.tool.on_event(_key(pygame.K_RIGHT), state)
+    assert float(state.sim.world.temperature[state.selected_index]) > before
 
 
 def test_right_arrow_increases_the_selected_field(state):
@@ -75,8 +105,10 @@ def test_editing_density_changes_the_radius(state):
 
 
 def test_editing_material_changes_it(state):
+    from src import edits
+    fields = edits.edit_fields(state.sim.world.bodies[state.selected_index])
     before = state.sim.world.bodies[state.selected_index].material.key
-    for _ in range(2):
+    for _ in range(fields.index("material")):
         state.tool.on_event(_key(pygame.K_DOWN), state)  # to material
     state.tool.on_event(_key(pygame.K_RIGHT), state)
     assert state.sim.world.bodies[state.selected_index].material.key != before
@@ -135,11 +167,14 @@ def _metrics():
 
 
 def test_the_panel_shows_a_row_for_every_field(state):
+    from src import edits
+    fields = edits.edit_fields(state.sim.world.bodies[state.selected_index])
     rows = state.tool.controls(state, _metrics())
     labels = [c.label for row in rows for c in row if c.id == "edit.field"]
-    assert len(labels) == 3
+    assert len(labels) == len(fields)
     assert any(label.startswith("Mass") for label in labels)
     assert any(label.startswith("Density") for label in labels)
+    assert any(label.startswith("Temp") for label in labels)
     assert any(label.startswith("Material") for label in labels)
 
 

@@ -29,8 +29,16 @@ DENSITY_NOTCH = 0.15
 #: under 1.0 and disk's is exactly 1.0, so neither wants a ratio scrub.
 SPIN_NOTCH = 0.02
 DISK_NOTCH = 0.05
+#: Ratio per notch for temperature.  The range runs from the microwave
+#: background to 100,000 K -- four and a half orders of magnitude, which is the
+#: same argument that makes the mass scrub logarithmic.
+TEMPERATURE_NOTCH = 1.06
 
-PLANET_EDIT_FIELDS = ("mass", "density", "material")
+PLANET_EDIT_FIELDS = ("mass", "density", "temp", "material")
+#: A star is offered no temperature: its surface temperature is set by fusion
+#: and follows its mass, so a scrub that appeared to change it would be a lie
+#: the very next frame, when thermal.advance pins it straight back.
+STAR_EDIT_FIELDS = ("mass", "density", "material")
 BLACK_HOLE_EDIT_FIELDS = ("mass", "spin", "disk")
 #: Retained for callers that predate black holes and only ever meant the
 #: ordinary case.
@@ -39,9 +47,13 @@ EDIT_FIELDS = PLANET_EDIT_FIELDS
 
 def edit_fields(body):
     """The editable fields for this body -- a black hole has no density or
-    composition to speak of, so it is offered spin and accretion instead."""
-    return BLACK_HOLE_EDIT_FIELDS if body.kind == KIND_BLACK_HOLE \
-        else PLANET_EDIT_FIELDS
+    composition to speak of, so it is offered spin and accretion instead, and
+    a star has no temperature of its own to set."""
+    if body.kind == KIND_BLACK_HOLE:
+        return BLACK_HOLE_EDIT_FIELDS
+    if body.kind == KIND_STAR:
+        return STAR_EDIT_FIELDS
+    return PLANET_EDIT_FIELDS
 
 
 # --- scrubbing --------------------------------------------------------------------
@@ -73,6 +85,14 @@ def scrub_disk(disk, notches):
     """Linear scrub over the whole feeding range, 0 (starved) to 1."""
     value = float(disk) + notches * DISK_NOTCH
     return float(min(max(value, 0.0), 1.0))
+
+
+def scrub_temperature(kelvin, notches):
+    """Logarithmic scrub, clamped to the range a body may occupy."""
+    scaled = max(float(kelvin), units.MIN_TEMPERATURE_K) \
+        * (TEMPERATURE_NOTCH ** notches)
+    return float(min(max(scaled, units.MIN_TEMPERATURE_K),
+                     units.MAX_TEMPERATURE_K))
 
 
 # --- reading ----------------------------------------------------------------------
@@ -109,6 +129,9 @@ def _refresh_kind(world, index):
         collapse(world, index)
     elif mass >= units.STAR_MASS_THRESHOLD:
         body.kind = KIND_STAR
+        # Pinned immediately, not on the next thermal step, so the readout can
+        # never show a star at a planet's temperature.
+        world.temperature[index] = units.star_temperature(mass)
     elif body.kind == KIND_STAR:
         body.kind = KIND_PLANET
 
@@ -128,12 +151,31 @@ def set_mass(world, index, mass):
         world.mass[index] = mass
         world.radius[index] = units.schwarzschild_radius(mass)
         world.contact_radius[index] = world.radius[index]
+        world.temperature[index] = units.hawking_temperature_k(mass)
         return
 
     density = body_density(world, index)
     world.mass[index] = mass
     world.radius[index] = units.radius_from_mass_density(mass, density)
     _refresh_kind(world, index)
+
+
+def set_temperature(world, index, kelvin):
+    """Set a body's temperature.  It is not pinned there.
+
+    Heat a world to 3000 K and it glows, boils away whatever is above its
+    vaporisation point, and cools back to where the sunlight on it puts it.
+    That relaxation is the whole lesson -- pinning an edited temperature would
+    turn a physical quantity back into a dial.
+
+    Refuses on a star or a black hole, whose temperatures their own physics
+    fixes.  Guarded here as well as by the missing button, since the panel is
+    not the only caller.
+    """
+    if world.bodies[index].kind in (KIND_STAR, KIND_BLACK_HOLE):
+        return
+    world.temperature[index] = float(
+        min(max(float(kelvin), units.MIN_TEMPERATURE_K), units.MAX_TEMPERATURE_K))
 
 
 def set_spin(world, index, spin):
@@ -165,6 +207,7 @@ def collapse(world, index):
     body.trail.clear()
     world.radius[index] = units.schwarzschild_radius(float(world.mass[index]))
     world.contact_radius[index] = world.radius[index]
+    world.temperature[index] = units.hawking_temperature_k(float(world.mass[index]))
 
 
 def set_density(world, index, density):

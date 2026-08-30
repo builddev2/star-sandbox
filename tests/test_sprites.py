@@ -125,3 +125,64 @@ def test_ring_surface_is_wider_than_the_planet():
     from src.render.sprites import ring_surface
     rings = ring_surface(10, materials.get("gas").tones)
     assert rings.get_width() > 21
+
+
+# --- thermal glow -------------------------------------------------------------
+
+def test_blackbody_colour_runs_red_through_white_up_the_planck_locus():
+    from src.render import palette
+    ember = palette.blackbody_rgb(1000.0)
+    sunlike = palette.blackbody_rgb(5772.0)
+    assert ember[0] > ember[1] > ember[2]          # red, almost no blue
+    assert min(sunlike) > 200                       # warm white
+    assert palette.blackbody_rgb(1500.0)[2] < palette.blackbody_rgb(3500.0)[2]
+
+
+def test_the_sun_comes_out_warm_white_not_yellow():
+    """5772 K on the Planck locus is (255, 242, 230) -- the actual colour of
+    sunlight above the atmosphere."""
+    from src.render import palette
+    assert palette.blackbody_rgb(5772.0) == pytest.approx((255, 242, 230), abs=6)
+
+
+def test_a_cold_body_has_no_glow_at_all():
+    from src.render import sprites
+    assert sprites.glow_fraction(300.0) == 0.0
+    assert sprites.glow_key(300.0) == 0
+
+
+def test_glow_climbs_from_dull_red_to_fully_blackbody():
+    from src.render import sprites
+    assert sprites.glow_fraction(sprites.GLOW_MIN_K) == 0.0
+    assert 0.0 < sprites.glow_fraction(1800.0) < 1.0
+    assert sprites.glow_fraction(sprites.GLOW_FULL_K) == pytest.approx(1.0)
+    assert sprites.glow_fraction(20000.0) == pytest.approx(1.0)
+
+
+def test_a_glowing_body_looks_different_from_a_cold_one(cache):
+    from src import materials
+    rock = materials.get("rock")
+    cold = cache.get(rock, seed=1, px=14, lit_angle=0.0, is_star=False)
+    hot = cache.get(rock, seed=1, px=14, lit_angle=0.0, is_star=False,
+                    temperature=2500.0)
+    assert pygame.image.tostring(cold, "RGBA") != pygame.image.tostring(hot, "RGBA")
+
+
+def test_temperature_is_bucketed_so_a_cooling_body_does_not_rerender_every_frame(cache):
+    """A body cooling by a fraction of a kelvin a frame would miss the cache on
+    every one of them -- exactly what the cache exists to prevent."""
+    from src import materials
+    rock = materials.get("rock")
+    a = cache.get(rock, seed=1, px=9, lit_angle=0.0, is_star=False, temperature=2000.0)
+    b = cache.get(rock, seed=1, px=9, lit_angle=0.0, is_star=False, temperature=2003.0)
+    assert a is b
+
+
+def test_a_cold_body_renders_exactly_as_it_did_before_temperature_existed(cache):
+    """The default has to be a no-op, or every ordinary world changes colour."""
+    from src import materials, units
+    rock = materials.get("rock")
+    a = cache.get(rock, seed=4, px=12, lit_angle=0.0, is_star=False)
+    b = cache.get(rock, seed=4, px=12, lit_angle=0.0, is_star=False,
+                  temperature=units.CMB_TEMPERATURE_K)
+    assert a is b

@@ -36,6 +36,10 @@ class World:
         #: *outcome* (energy, fragment count, ...) always uses the true
         #: ``radius``; only "did these two touch" uses this one.
         self.contact_radius = np.zeros(capacity, dtype=np.float64)
+        #: Surface temperature in kelvin.  Physical state like mass and radius,
+        #: not appearance like ``Body.spin`` -- it changes every step, so it
+        #: belongs in the arrays where a vectorised pass can reach it.
+        self.temperature = np.zeros(capacity, dtype=np.float64)
         self.n = 0
 
         self.bodies = []
@@ -46,8 +50,14 @@ class World:
     # --- membership ------------------------------------------------------------------
 
     def add(self, name, material, mass, radius, pos, vel,
-            kind=KIND_PLANET, seed=0):
-        """Append a body.  Returns the Body, or None if the world is full."""
+            kind=KIND_PLANET, seed=0, temperature=None):
+        """Append a body.  Returns the Body, or None if the world is full.
+
+        ``temperature`` defaults to the microwave background, which is where a
+        body with nothing shining on it actually sits.  Callers that know
+        better -- fragments inheriting their parent's heat, a scenario built in
+        thermal balance -- pass it.
+        """
         if self.n >= self.capacity:
             return None
         i = self.n
@@ -57,6 +67,8 @@ class World:
         self.mass[i] = mass
         self.radius[i] = radius
         self.contact_radius[i] = radius
+        self.temperature[i] = (units.CMB_TEMPERATURE_K if temperature is None
+                               else float(temperature))
         self.n += 1
 
         body = Body(self._next_id, name, material, kind, born_day=self.time, seed=seed)
@@ -75,6 +87,7 @@ class World:
             self.mass[index] = self.mass[last]
             self.radius[index] = self.radius[last]
             self.contact_radius[index] = self.contact_radius[last]
+            self.temperature[index] = self.temperature[last]
             moved = self.bodies[last]
             self.bodies[index] = moved
             self._by_id[moved.id] = index
@@ -122,6 +135,10 @@ class World:
     @property
     def contact_radii(self):
         return self.contact_radius[:self.n]
+
+    @property
+    def temperatures(self):
+        return self.temperature[:self.n]
 
     # --- diagnostics -----------------------------------------------------------------
 

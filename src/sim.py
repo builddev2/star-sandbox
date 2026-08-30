@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from . import destruction, orbits, scenarios
+from . import destruction, orbits, scenarios, thermal
 from .collisions import CollisionResolver
 from .integrator import Integrator
 
@@ -27,6 +27,7 @@ class Simulation:
         self.world = world if world is not None else scenarios.solar_system()
         self.integrator = Integrator(self.world.capacity)
         self.integrator.refresh(self.world)
+        thermal.settle(self.world)
         self.resolver = CollisionResolver(seed)
         self._prev = np.zeros_like(self.world.pos)
         self.paused = False
@@ -43,6 +44,7 @@ class Simulation:
         scenarios.REGISTRY[scenario](world=self.world, **kwargs)
         self.integrator = Integrator(self.world.capacity)
         self.integrator.refresh(self.world)
+        thermal.settle(self.world)
         self.resolver = CollisionResolver(self._seed)
         self.last_ratio = 1.0
         self.events = 0
@@ -87,6 +89,14 @@ class Simulation:
             done += dt
             if time.perf_counter() - started >= budget_s:
                 break
+
+        # Once a frame, over what was actually simulated -- never per substep.
+        # The same call update_trails makes, and for the same reason: at ten
+        # years a second the integrator takes thousands of substeps per frame,
+        # and an O(n^2) thermal pass at 200 bodies would eat the wall-clock
+        # budget many times over.  Temperature is slow-varying and feeds back
+        # into nothing the integrator reads, so a frame is the right grain.
+        thermal.advance(world, done)
 
         self.last_ratio = done / days
         return done

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src import collisions, destruction, materials, units
+from src import collisions, destruction, materials, thermal, units
 from src.body import KIND_STAR
 from src.world import World
 
@@ -15,6 +15,11 @@ def _sun_and(material, mass, radius, distance, vel=(0.0, 0.0)):
               np.zeros(2), np.zeros(2), kind=KIND_STAR)
     world.add("Body", material, mass, radius, np.array([distance, 0.0]),
               np.array(vel, float))
+    # These tests drive destruction.apply directly rather than through
+    # Simulation.advance, so nothing else would ever set a temperature for the
+    # ablation check to read.  Settling reproduces exactly what the old
+    # instantaneous equilibrium gave.
+    thermal.settle(world)
     return world
 
 

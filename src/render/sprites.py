@@ -21,6 +21,7 @@ import numpy as np
 import pygame
 
 from .. import units
+from . import palette
 
 #: Lighting directions the cache distinguishes.
 LIT_BUCKETS = 16
@@ -38,6 +39,16 @@ GLOW_SCALE = 2.2
 #: Peak brightness of the halo just outside the disc, as a fraction of the
 #: star's own colour.  Additive, so this is how much it lifts the background.
 GLOW_STRENGTH = 0.55
+
+#: Below this a body's own thermal emission is far too faint to see against the
+#: light it reflects; by GLOW_FULL_K there is nothing else left to see.  Real
+#: numbers: iron starts to visibly glow around 800 K and is white by 3000 K.
+GLOW_MIN_K = 800.0
+GLOW_FULL_K = 3000.0
+#: Temperature is quantised to this many kelvin before it reaches the cache
+#: key.  A body cooling continuously would otherwise miss the cache on every
+#: frame, which is precisely what the cache exists to prevent.
+GLOW_TEMP_STEP = 100.0
 
 # --- black holes --------------------------------------------------------------
 #
@@ -259,9 +270,39 @@ def _mask_to_circle(surface, px, centre):
     surface.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
 
 
-def _make_body(material, seed, px, lit_angle, is_star):
+def glow_fraction(kelvin):
+    """How far a body has gone from its own colours to its blackbody glow, 0..1."""
+    if kelvin <= GLOW_MIN_K:
+        return 0.0
+    return min(1.0, (kelvin - GLOW_MIN_K) / (GLOW_FULL_K - GLOW_MIN_K))
+
+
+def glow_key(kelvin):
+    """The quantised temperature the cache is keyed on.  Zero means no glow, so
+    every ordinary body shares one key however its temperature drifts."""
+    if glow_fraction(kelvin) <= 0.0:
+        return 0
+    return int(round(float(kelvin) / GLOW_TEMP_STEP))
+
+
+def _blend_toward(tone, target, weight):
+    return tuple(int(round(tone[k] + (target[k] - tone[k]) * weight))
+                 for k in range(3))
+
+
+def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0):
     px = max(1, int(px))
     dark, mid, light = material.tones
+
+    if glow_k > 0.0:
+        # Its own light, mixed into the light it reflects.  Applied before the
+        # star branch as well as after it, so a red dwarf really is red and a
+        # blue giant really is blue -- the same Planck locus, the same helper.
+        target = palette.blackbody_rgb(glow_k)
+        weight = glow_fraction(glow_k)
+        dark = _blend_toward(dark, target, weight)
+        mid = _blend_toward(mid, target, weight)
+        light = _blend_toward(light, target, weight)
 
     if is_star:
         size = int(px * GLOW_SCALE) * 2 + 1
@@ -336,16 +377,19 @@ class SpriteCache:
     def clear(self):
         self._entries.clear()
 
-    def get(self, material, seed, px, lit_angle, is_star):
+    def get(self, material, seed, px, lit_angle, is_star,
+            temperature=units.CMB_TEMPERATURE_K):
         px = max(1, int(px))
         bucket = int(round(lit_angle / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
-        key = (material.key, seed, px, bucket, bool(is_star))
+        heat = glow_key(temperature)
+        key = (material.key, seed, px, bucket, bool(is_star), heat)
         hit = self._entries.get(key)
         if hit is not None:
             self._entries.move_to_end(key)
             return hit
         angle = bucket * 2 * math.pi / LIT_BUCKETS
-        surface = _make_body(material, seed, px, angle, is_star)
+        surface = _make_body(material, seed, px, angle, is_star,
+                             heat * GLOW_TEMP_STEP)
         self._entries[key] = surface
         if len(self._entries) > self.limit:
             self._entries.popitem(last=False)
