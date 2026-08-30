@@ -773,16 +773,40 @@ def test_a_denser_body_holds_its_heat_longer():
             > thermal.relaxation_days(light, 1, 300.0))
 
 
-def test_relaxation_moves_toward_equilibrium_and_never_past_it():
+def test_relaxation_never_overshoots_its_target():
+    """Whatever the step, a body lands between where it started and where it is
+    heading -- never past.  An overshoot would mean a body cooling below what
+    the sunlight on it supports and then oscillating, which is the failure mode
+    an explicit Euler step has and the analytic one cannot.
+    """
     world = _sun_and(ROCK, 1.0)
     target = thermal.equilibrium_temperature(world, 1)
-    world.temperature[1] = 3000.0
-    previous = 3000.0
-    for _ in range(50):
-        thermal.advance(world, 1.0)
+    for start in (3000.0, 1000.0, 300.0, 10.0):
+        for step in (0.001, 0.1, 1.0, 100.0, 1.0e6):
+            world.temperature[1] = start
+            thermal.advance(world, step)
+            landed = float(world.temperature[1])
+            lo, hi = min(start, target), max(start, target)
+            assert lo - 1e-9 <= landed <= hi + 1e-9, (start, step, landed)
+
+
+def test_a_hot_body_cools_toward_equilibrium_step_by_step():
+    """Strict monotonicity needs a step well inside tau.  Note what tau is
+    here: 400 K rock relaxes over about three and a half days, so a 0.05-day
+    step moves it roughly 1.4% of the remaining gap.  Take a *whole day* at
+    3000 K instead and tau is 0.008 days -- one step is 120 e-foldings, the
+    body lands on equilibrium to the last bit of a float64, and there is no
+    monotonic tail left to check.
+    """
+    world = _sun_and(ROCK, 1.0)
+    target = thermal.equilibrium_temperature(world, 1)
+    world.temperature[1] = 400.0
+    previous = 400.0
+    for _ in range(20):
+        thermal.advance(world, 0.05)
         current = float(world.temperature[1])
         assert current < previous
-        assert current >= target - 1e-6
+        assert current > target
         previous = current
 
 
