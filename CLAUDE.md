@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (671 tests, ~3:40)
+python selftest.py                      # whole suite (744 tests, ~3:35)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -26,7 +26,7 @@ Three layers, enforced by `tests/test_layering.py`:
 
 | | |
 |---|---|
-| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`. |
+| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`, and `thermal.py` (every body's temperature). |
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
 
@@ -96,6 +96,24 @@ or fast time scales.
 - **Events go interface → tool → global keys** (`src/app/input.py`). The throw tool reads
   any press as an aim, so tool-first ordering would fire a comet through the Delete button.
 - `World.MAX_BODIES` is 200 and must not be raised; the O(n²) force kernel is budgeted for it.
+- **Temperature is state, not a derived quantity.** It lives in `World.temperature`
+  because it changes every step and must survive being edited; `Body.spin` and
+  `Body.disk` are on the Body because they are static appearance. Every path that
+  creates a body — `World.add`, every collision outcome, every tidal fragment —
+  must give it one, or it starts at absolute zero, which is colder than the
+  universe allows and produces a warm-up nobody asked for.
+- **`thermal.pinned_temperature` decides who is free.** A star's temperature is
+  `units.star_temperature(mass)` and a black hole's is its Hawking temperature;
+  neither relaxes, neither is editable, and `edits.set_temperature` refuses both
+  even though the panel already omits the row — the panel is not the only caller.
+  `edits._refresh_kind` and `edits.collapse` write the pinned value the moment a
+  body changes kind, so the array is never a frame behind what the body is.
+- **`thermal.advance` runs once a frame, never per substep.** The same rule
+  `update_trails` follows, and for the same reason: the pass is O(n²), and at ten
+  years a second the integrator takes thousands of substeps per frame. Ablation
+  inside the substep loop therefore reads a temperature that is up to one frame
+  old, which is harmless because the analytic step has already snapped a body to
+  equilibrium at any time scale where a frame is long.
 - Angles are radians everywhere except the source data tables in `src/scenarios.py`.
 - Pixel-size constants scale by `internal_height / scale.REF_HEIGHT` (360); interface sizes
   come from `widgets.Metrics`, which derives every one of them from the font. Neither may
@@ -110,6 +128,33 @@ or fast time scales.
 
 ### Design decisions worth knowing before changing them
 
+- **A body is heated by every other body, not by stars** (`thermal.py`). One sum:
+  `T_eq^4 = (1-A)/4 * sum_j T_j^4 (R_j/d_ij)^2 + T_CMB^4`. The Sun heating Mercury
+  and a molten Earth heating the Moon are the same term, which is why "a hot planet
+  warms its neighbours" needed no code of its own, and why a black hole needs no
+  exception — 6e-8 K over a horizon a few km wide evaluates to nothing. Fluxes add;
+  temperatures do not. There is deliberately **no greenhouse term**: it would be a
+  tuned per-material constant rather than derived physics, so Earth reads −19 °C,
+  which is true. Reproduces the real solar system to within a few kelvin.
+- **Temperature relaxes on a one-metre skin, integrated analytically**
+  (`units.THERMAL_SKIN_DEPTH_M`). Heating a whole planet gives a time constant near
+  a hundred thousand years — real, and invisible; real surfaces equilibrate in days
+  because only a thin skin follows the sunlight. `tau = rho h c_p / (4 sigma T^3)`
+  linearised at the *hotter* of the body and its target, so a body dropped to 3 K
+  beside the Sun warms up instead of staying frozen. The step is
+  `T <- T_eq + (T-T_eq) exp(-dt/tau)`, unconditionally stable; an explicit step
+  would need `dt < tau`, and tau is under an hour for anything glowing. Beware when
+  writing tests: at 3000 K tau is 0.008 days, so a one-day step lands on equilibrium
+  to the last bit of a float64 and there is no monotonic tail left to assert on.
+- **An impact heats what survives it** (`thermal.IMPACT_HEAT_FRACTION`). 30% of the
+  Q_R `collisions.py` already computes, over the material's specific heat. A
+  Moon-forming impact puts ~1900 K into the remnant, which is what really happened.
+- **A hot body's colour comes from the Planck locus, not the palette**
+  (`render/palette.blackbody_rgb`). Temperature is quantised to 100 K before it
+  reaches the sprite cache key, for the same reason the lighting angle is bucketed
+  to 16 points: a body cooling continuously would miss the cache every frame. The
+  blend runs before the star branch too, so a red dwarf is red and a blue giant is
+  blue off the same helper.
 - **Velocity Verlet, not RK4** (`integrator.py`). Symplectic: bounded oscillatory energy
   error rather than the secular inward spiral RK4 gives over thousands of orbits. dt is
   restricted to `DT_BASE / 2**k` — a continuously varying dt destroys symplecticity — and
