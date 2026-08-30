@@ -108,6 +108,18 @@ def format_temperature(kelvin):
     return "%.3g billionths of a K" % nano
 
 
+def format_body_temperature(kelvin):
+    """Kelvin with Celsius beside it -- "254 K  (-19 C)".
+
+    Two units rather than one because the two readers need different ones: the
+    physics is in kelvin and every threshold in the sandbox is quoted there,
+    while an eight-year-old knows what -19 C feels like and does not yet know
+    what 254 K means.  Grouped digits, never an exponent, for the same reason
+    ``format_length`` refuses them.
+    """
+    return "{:,.0f} K  ({:,.0f} C)".format(kelvin, units.to_celsius(kelvin))
+
+
 def orbit_facts(world, index):
     """Osculating orbit of ``index`` about whatever it is bound to.
 
@@ -250,6 +262,8 @@ class Hud:
                 ("Radius     %s" % format_length(radius), palette.TEXT),
                 ("           %.3g Earths" % units.to_earth_radii(radius),
                  palette.TEXT_DIM),
+                ("Temp       %s" % format_body_temperature(
+                    float(world.temperature[index])), palette.TEXT),
                 ("Density    %.3g g/cm3" % units.to_gcm3(density), palette.TEXT),
                 ("Gravity    %.3g g" % units.surface_gravity_g(mass, radius),
                  palette.TEXT),

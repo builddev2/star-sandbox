@@ -293,3 +293,47 @@ def test_hawking_temperature_of_a_ten_solar_mass_hole_is_unchanged():
     # The number should be around 6.17 billionths
     assert "6.17" in text or "6.2" in text, \
         f"Should show approximately 6.17 billionths: {text}"
+
+
+# --- body temperature ---------------------------------------------------------
+
+def test_temperature_is_shown_in_kelvin_with_celsius_alongside():
+    """Kelvin because that is the unit the physics is in; Celsius because that
+    is the unit the audience has."""
+    from src.render.hud import format_body_temperature
+    assert format_body_temperature(273.15) == "273 K  (0 C)"
+    assert format_body_temperature(254.0) == "254 K  (-19 C)"
+
+
+def test_a_hot_temperature_uses_grouped_digits_not_an_exponent():
+    from src.render.hud import format_body_temperature
+    text = format_body_temperature(5772.0)
+    assert "e+" not in text
+    assert "5,772 K" in text
+
+
+def test_the_inspector_shows_a_temperature_for_a_planet(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    state.select(next(b for b in state.sim.world.bodies if b.name == "Earth").id)
+    rows = Hud(PixelFont(10))._rows(state, state.selected_index)
+    assert any(text.startswith("Temp") for text, _ in rows)
+
+
+def test_a_star_shows_the_surface_temperature_its_mass_gives_it(state):
+    from src import units
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    state.select(next(b for b in state.sim.world.bodies if b.name == "Sun").id)
+    rows = Hud(PixelFont(10))._rows(state, state.selected_index)
+    temp_row = next(text for text, _ in rows if text.startswith("Temp"))
+    assert "{:,.0f} K".format(units.star_temperature(1.0)) in temp_row
+
+
+def test_the_temperature_row_fits_the_inspector_panel():
+    """The panel is a fixed number of characters wide; a row that overruns it
+    is a number nobody can read."""
+    from src import units
+    from src.render.hud import PANEL_WIDTH_CHARS, format_body_temperature
+    hottest = "Temp       %s" % format_body_temperature(units.MAX_TEMPERATURE_K)
+    assert len(hottest) <= PANEL_WIDTH_CHARS
