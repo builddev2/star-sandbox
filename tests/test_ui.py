@@ -289,6 +289,81 @@ def test_the_zoom_buttons_work_without_a_wheel(state, ui):
     assert state.camera.zoom == pytest.approx(before)
 
 
+def test_the_zoom_slider_exists_and_shows_the_current_zoom(state, ui):
+    slider = find(ui, "view.zoom_slider")
+    assert slider is not None
+    assert slider.value == pytest.approx(state.camera.zoom_fraction)
+
+
+def test_clicking_the_top_of_the_slider_zooms_all_the_way_in(state, ui):
+    slider = find(ui, "view.zoom_slider")
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                   pos=(slider.rect.centerx, slider.rect.top),
+                                   button=1), state)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP,
+                                   pos=(slider.rect.centerx, slider.rect.top),
+                                   button=1), state)
+    assert state.camera.zoom_fraction == pytest.approx(1.0, abs=0.02)
+
+
+def test_clicking_the_bottom_of_the_slider_zooms_all_the_way_out(state, ui):
+    slider = find(ui, "view.zoom_slider")
+    bottom = slider.rect.bottom - 1  # collidepoint excludes the bottom edge
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                   pos=(slider.rect.centerx, bottom),
+                                   button=1), state)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP,
+                                   pos=(slider.rect.centerx, bottom),
+                                   button=1), state)
+    assert state.camera.zoom_fraction == pytest.approx(0.0, abs=0.02)
+
+
+def test_dragging_the_slider_off_its_own_rect_keeps_tracking(state, ui):
+    """A drag that leaves the track must still move the thumb, the way the
+    button drag above stays swallowed once it starts on a panel."""
+    slider = find(ui, "view.zoom_slider")
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                   pos=slider.rect.center, button=1), state)
+    moved = pygame.event.Event(pygame.MOUSEMOTION,
+                               pos=(slider.rect.centerx, slider.rect.top - 500),
+                               rel=(0, -500), buttons=(1, 0, 0))
+    assert ui.on_event(moved, state)
+    assert state.camera.zoom_fraction == pytest.approx(1.0, abs=1e-9)
+
+
+def test_releasing_the_slider_does_not_fire_a_second_notch(state, ui):
+    """Unlike a button, a slider must not act again on release -- it already
+    acted continuously while held.
+
+    ``set_zoom_fraction`` is idempotent, so a before/after equality check would
+    pass even with the release guard removed -- a call count is what actually
+    tells the two apart.
+    """
+    calls = []
+    original = state.camera.set_zoom_fraction
+    state.camera.set_zoom_fraction = lambda frac: (calls.append(frac), original(frac))[1]
+
+    slider = find(ui, "view.zoom_slider")
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                   pos=(slider.rect.centerx, slider.rect.top),
+                                   button=1), state)
+    assert len(calls) == 1
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP,
+                                   pos=(slider.rect.centerx, slider.rect.top),
+                                   button=1), state)
+    assert len(calls) == 1
+
+
+def test_the_zoom_slider_rebuilds_to_match_the_wheel_and_the_buttons(state, ui):
+    state.camera.zoom_by(20)
+    ui.build(state, SIZE)
+    assert find(ui, "view.zoom_slider").value == pytest.approx(
+        state.camera.zoom_fraction)
+    click_id(ui, state, "view.zoom", payload=1)
+    assert find(ui, "view.zoom_slider").value == pytest.approx(
+        state.camera.zoom_fraction)
+
+
 def test_going_home_undoes_being_lost(state, ui):
     state.camera.centre[:] = (900.0, -400.0)
     state.camera.zoom_by(-60)

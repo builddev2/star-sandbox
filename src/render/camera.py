@@ -53,6 +53,26 @@ class Camera:
             moved = self.screen_to_world(sx, sy)
             self.centre += anchor - moved
 
+    @property
+    def zoom_fraction(self):
+        """Where ``log_zoom`` sits between :data:`MIN_ZOOM` and :data:`MAX_ZOOM`, 0..1.
+
+        The slider's one read of the camera: it never sees ``log_zoom`` itself,
+        so it cannot disagree with the log-space clamp every other zoom path
+        already respects.
+        """
+        lo, hi = math.log(MIN_ZOOM), math.log(MAX_ZOOM)
+        return (self.log_zoom - lo) / (hi - lo)
+
+    def set_zoom_fraction(self, frac):
+        """Jump straight to a fraction of the zoom range, the way a slider does.
+
+        Centred, not anchored -- a slider has no cursor position on the world to
+        keep still under, unlike a wheel notch or a button click.
+        """
+        lo, hi = math.log(MIN_ZOOM), math.log(MAX_ZOOM)
+        self.log_zoom = lo + min(1.0, max(0.0, frac)) * (hi - lo)
+
     # --- panning and following ---------------------------------------------------
 
     def pan_pixels(self, dx, dy):
