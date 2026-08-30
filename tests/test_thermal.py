@@ -38,3 +38,30 @@ def test_density_converts_to_si_kilograms_per_cubic_metre():
 def test_the_editable_range_spans_the_background_to_hotter_than_any_star():
     assert units.MIN_TEMPERATURE_K == pytest.approx(units.CMB_TEMPERATURE_K)
     assert units.MAX_TEMPERATURE_K > units.SUN_TEMPERATURE_K * 10.0
+
+
+# --- material properties -------------------------------------------------------
+
+def test_every_material_has_a_real_albedo_and_heat_capacity():
+    for m in materials.MATERIALS:
+        assert 0.0 <= m.albedo < 1.0, m.key
+        assert m.heat_capacity_j_kgk > 0.0, m.key
+
+
+def test_ice_is_bright_and_water_is_dark():
+    """Albedo is what makes an icy world colder than a rocky one at the same
+    distance -- the physical fact, not a tuning knob."""
+    assert materials.get("ice").albedo > materials.get("rock").albedo
+    assert materials.get("water").albedo < materials.get("rock").albedo
+
+
+def test_water_stores_far_more_heat_than_iron():
+    """4180 against 450 J/kg/K: the real ratio, and why oceans moderate
+    climate and a frying pan does not."""
+    assert (materials.get("water").heat_capacity_j_kgk
+            > 8.0 * materials.get("iron").heat_capacity_j_kgk)
+
+
+def test_a_singularity_reflects_nothing_and_cannot_be_heated():
+    assert materials.SINGULARITY.albedo == 0.0
+    assert materials.SINGULARITY.heat_capacity_j_kgk == math.inf
