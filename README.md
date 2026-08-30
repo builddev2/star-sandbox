@@ -70,6 +70,12 @@ sits next to buttons a small hand is reaching for anyway.
 - **Edit** Jupiter, and hold the mass **+** down. Somewhere around 84 times
   heavier it ignites into a second star -- and every shadow in the solar system
   swings round, because bodies are lit by whichever star is nearest.
+- Keep holding it past 150 solar masses and it collapses into a **black hole**
+  instead of a star -- that is really where nature stops making stars, not a
+  made-up ceiling. Or **Edit** any star and press **Collapse** to skip straight
+  there: the planets keep orbiting a point you cannot see, spaghettified if they
+  stray too close, swallowed whole if they touch it. A black hole is also its
+  own **Throw** preset, on key `6`.
 - Throw something fast enough at a planet and it will not merge. If the impact
   carries more energy than the planet's own gravity is holding it together with,
   it shatters into fragments that fly apart and then slowly pull themselves back
