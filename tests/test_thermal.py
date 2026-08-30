@@ -370,3 +370,96 @@ def test_temperature_never_leaves_the_allowed_range():
     for _ in range(20):
         thermal.advance(world, 10.0)
     assert units.MIN_TEMPERATURE_K <= float(world.temperature[1]) <= units.MAX_TEMPERATURE_K
+
+
+# --- impact heating ------------------------------------------------------------
+
+def test_impact_heating_scales_with_energy_and_against_heat_capacity():
+    a = thermal.impact_heating(ROCK, 1.0)
+    b = thermal.impact_heating(ROCK, 2.0)
+    assert b == pytest.approx(2.0 * a)
+    water = thermal.impact_heating(materials.get("water"), 1.0)
+    assert water == pytest.approx(
+        a * ROCK.heat_capacity_j_kgk / materials.get("water").heat_capacity_j_kgk)
+
+
+def test_a_giant_impact_melts_a_planet():
+    """About 5e6 J/kg for the Moon-forming impact, which is roughly 1900 K into
+    rock.  Earth really was a magma ocean afterwards."""
+    q_r = 5.0e6 / units.SPECIFIC_ENERGY_SI
+    assert thermal.impact_heating(ROCK, q_r) == pytest.approx(1875.0, rel=0.1)
+
+
+def test_a_singularity_cannot_be_heated_by_an_impact():
+    assert thermal.impact_heating(materials.SINGULARITY, 1.0e9) == 0.0
+
+
+def test_a_merge_mixes_the_two_temperatures_by_mass_and_adds_the_impact_heat():
+    # collisions.Collision has no `distance`/`impact_parameter` keywords (see
+    # its definition near ImpactEvent in src/collisions.py) -- build a real
+    # pair through find_collisions instead, as the plan's own fallback allows.
+    from src import collisions
+    world = World(8)
+    world.add("Big", ROCK, units.EARTH_MASS, units.EARTH_RADIUS,
+              np.zeros(2), np.zeros(2), temperature=300.0)
+    world.add("Small", ROCK, units.EARTH_MASS * 0.1, units.EARTH_RADIUS * 0.46,
+              np.array([units.EARTH_RADIUS * 1.4, 0.0]),
+              np.array([-0.005, 0.0]), temperature=100.0)
+    hits = collisions.find_collisions(world, world.pos[:world.n].copy())
+    assert hits, "expected a detected collision"
+    c = hits[0]
+    mixed = (units.EARTH_MASS * 300.0 + units.EARTH_MASS * 0.1 * 100.0) \
+        / (units.EARTH_MASS * 1.1)
+    heat = thermal.impact_heating(ROCK, collisions.specific_impact_energy(world, c))
+    idx = collisions.merge(world, c)
+    assert float(world.temperature[idx]) == pytest.approx(mixed + heat, rel=1e-6)
+
+
+def test_an_impact_makes_the_remnant_hotter_than_either_body_was():
+    from src import collisions
+    world = World(8)
+    world.add("Big", ROCK, units.EARTH_MASS, units.EARTH_RADIUS,
+              np.zeros(2), np.zeros(2), temperature=300.0)
+    world.add("Small", ROCK, units.EARTH_MASS * 0.1, units.EARTH_RADIUS * 0.46,
+              np.array([units.EARTH_RADIUS * 1.4, 0.0]),
+              np.array([-0.01, 0.0]), temperature=100.0)
+    hits = collisions.find_collisions(world, world.pos[:world.n].copy())
+    assert hits, "expected a detected collision"
+    c = hits[0]
+    idx = collisions.merge(world, c)
+    assert float(world.temperature[idx]) > 300.0
+
+
+def test_tidal_fragments_inherit_the_temperature_of_what_they_were():
+    from src import collisions
+    world = World(32)
+    world.add("Sun", HYDROGEN, 1.0, units.SUN_RADIUS, np.zeros(2), np.zeros(2),
+              kind=KIND_STAR)
+    world.add("Doomed", ROCK, units.EARTH_MASS, units.EARTH_RADIUS,
+              np.array([0.02, 0.0]), np.zeros(2), temperature=900.0)
+    resolver = collisions.CollisionResolver(seed=1)
+    made = resolver.tidal_disrupt(world, 1, 0)
+    assert made, "expected fragments"
+    for k in made:
+        assert float(world.temperature[k]) == pytest.approx(900.0)
+
+
+def test_no_collision_outcome_leaves_a_body_at_absolute_zero():
+    """Every path that creates a body has to give it a temperature.  A fragment
+    left at 0.0 would be colder than the universe allows and would then warm
+    up from a temperature it was never at."""
+    from src import collisions
+    world = World(64)
+    world.add("A", ROCK, units.EARTH_MASS, units.EARTH_RADIUS,
+              np.zeros(2), np.zeros(2), temperature=400.0)
+    world.add("B", ROCK, units.EARTH_MASS * 0.8, units.EARTH_RADIUS * 0.93,
+              np.array([units.EARTH_RADIUS * 1.9, 0.0]),
+              np.array([-0.05, 0.0]), temperature=400.0)
+    hits = collisions.find_collisions(world, world.pos[:world.n].copy())
+    assert hits, "expected a detected collision"
+    c = hits[0]
+    resolver = collisions.CollisionResolver(seed=3)
+    resolver.shatter(world, c)
+    assert world.n > 0
+    for k in range(world.n):
+        assert float(world.temperature[k]) >= units.MIN_TEMPERATURE_K

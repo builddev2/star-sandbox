@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import edits, units
+from . import edits, thermal, units
 from .body import KIND_BLACK_HOLE, KIND_DEBRIS, KIND_PLANET, KIND_STAR
 
 
@@ -230,6 +230,14 @@ def merge(world, c):
     mi, mj = float(world.mass[i]), float(world.mass[j])
     total = mi + mj
 
+    # Both read before the pair is mutated: specific_impact_energy needs the
+    # positions and velocities as they were on arrival, and a merge past the
+    # collapse threshold replaces the survivor's material with SINGULARITY.
+    heat = thermal.impact_heating(world.bodies[i].material,
+                                  specific_impact_energy(world, c))
+    mixed = (mi * float(world.temperature[i])
+             + mj * float(world.temperature[j])) / total
+
     momentum = mi * world.vel[i] + mj * world.vel[j]
     centre = (mi * world.pos[i] + mj * world.pos[j]) / total
 
@@ -264,6 +272,10 @@ def merge(world, c):
     # true radius it is stretched from, and the render layer only refreshes
     # it once a frame.
     world.contact_radius[i] = world.radius[i]
+
+    # Heat is conserved the way momentum is: the pair's own warmth mixes by
+    # mass, and the impact adds its own on top.
+    world.temperature[i] = min(mixed + heat, units.MAX_TEMPERATURE_K)
 
     world.remove(j)
     # remove() swap-removes, so i may no longer be the survivor's row.
@@ -353,6 +365,9 @@ class CollisionResolver:
         mi, mj = float(world.mass[i]), float(world.mass[j])
         ri, rj = float(world.radius[i]), float(world.radius[j])
         total = mi + mj
+        # Read before the velocities change: a graze is still an impact, and
+        # both bodies keep a share of its heat.
+        q_r = specific_impact_energy(world, c)
         momentum = mi * world.vel[i] + mj * world.vel[j]
 
         normal = world.pos[j] - world.pos[i]
@@ -394,6 +409,11 @@ class CollisionResolver:
             body = world.bodies[k]
             body.event_id = event_id
             body.no_collide_until = until
+
+        for k in (i, j):
+            heat = thermal.impact_heating(world.bodies[k].material, q_r)
+            world.temperature[k] = min(float(world.temperature[k]) + heat,
+                                       units.MAX_TEMPERATURE_K)
 
         return i, j
 
@@ -469,6 +489,7 @@ class CollisionResolver:
                 units.radius_from_mass_density(mass, density),
                 positions[k], velocities[k],
                 kind=KIND_DEBRIS, seed=int(self.rng.integers(0, 1 << 30)),
+                temperature=float(world.temperature[idx]),
             )
             if body is None:
                 break
@@ -492,6 +513,8 @@ class CollisionResolver:
         density = units.density_from_mass_radius(mass, r)
         material = world.bodies[i].material
         pos_i, vel_i = world.pos[i].copy(), world.vel[i].copy()
+        # Captured before world.remove(i) below takes the row away.
+        parent_temperature = float(world.temperature[i])
 
         room = world.capacity - (world.n - 1)
         count = min(MIN_FRAGMENTS, MAX_FRAGMENTS, room)
@@ -523,6 +546,7 @@ class CollisionResolver:
                 units.radius_from_mass_density(frag_mass, density),
                 positions[m], velocities[m],
                 kind=KIND_DEBRIS, seed=int(self.rng.integers(0, 1 << 30)),
+                temperature=parent_temperature,
             )
             if body is None:
                 break
@@ -565,6 +589,12 @@ class CollisionResolver:
 
         parent = world.bodies[i]
         material = parent.material
+        # Read before world.remove_many([i, j]) below: the fragments carry the
+        # pair's mixed heat plus what the impact put in.
+        fragment_temperature = min(
+            (mi * float(world.temperature[i]) + mj * float(world.temperature[j])) / total
+            + thermal.impact_heating(material, q_r),
+            units.MAX_TEMPERATURE_K)
         event_id = self._next_event_id
         self._next_event_id += 1
 
@@ -617,6 +647,7 @@ class CollisionResolver:
                 units.radius_from_mass_density(mass, density),
                 positions[k], velocities[k],
                 kind=KIND_DEBRIS, seed=int(self.rng.integers(0, 1 << 30)),
+                temperature=fragment_temperature,
             )
             if body is None:
                 break

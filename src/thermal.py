@@ -206,3 +206,27 @@ def settle(world):
             pinned = pinned_temperature(world, i)
             world.temperature[i] = (pinned if pinned is not None
                                     else _clamp(float(target[i])))
+
+
+#: Fraction of an impact's specific energy that stays behind as heat in what
+#: survives.  Giant-impact studies put the retained share at 0.2 to 0.5 -- the
+#: rest is radiated away or carried off by ejecta.  ``collisions.py`` already
+#: observed, in its own comment, that most of an impact's energy goes to heat
+#: rather than motion; nothing consumed that heat until now.
+IMPACT_HEAT_FRACTION = 0.3
+
+
+def impact_heating(material, specific_energy):
+    """Temperature rise from an impact, kelvin.
+
+    ``specific_energy`` is the Q_R of the literature in **simulation** units
+    (AU^2/day^2), exactly what ``collisions.specific_impact_energy`` returns;
+    ``units.SPECIFIC_ENERGY_SI`` converts it to the J/kg the specific heats are
+    quoted in.  A Moon-forming impact delivers about 5e6 J/kg, so rock gains
+    roughly 1900 K -- the remnant is a magma ocean, glows, and cools over
+    months.  That is what really happened.
+    """
+    c_p = material.heat_capacity_j_kgk
+    if not math.isfinite(c_p) or c_p <= 0.0:
+        return 0.0
+    return IMPACT_HEAT_FRACTION * float(specific_energy) * units.SPECIFIC_ENERGY_SI / c_p
