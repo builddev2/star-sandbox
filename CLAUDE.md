@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (800 tests, ~3:35)
+python selftest.py                      # whole suite (803 tests, ~3:35)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -115,11 +115,15 @@ or fast time scales.
   locked. The greyed-out stepper is the second line of defence, not the first: the
   arrow keys and the horizontal drag never pass through a button. A lock guards only
   its own field -- locking density does not stop a material swap from moving density
-  -- and it reaches no further than those setters, so `collapse` and the pinned
-  temperature `_refresh_kind` writes are unaffected. Locks live on the Body beside
-  `spin` and `disk` because the force kernel never reads them; nothing inherits them,
-  and a kind change leaves them alone, so a lock on a field the current kind does not
-  offer is inert rather than lost.
+  -- and it reaches no further than the edit path: `collapse`, a merge, ablation and
+  the pinned temperature `_refresh_kind` writes all still touch a locked field, because
+  none of them is an edit. **`thermal.advance` is the one exception** -- a locked
+  temperature would otherwise relax straight back to equilibrium on the very next
+  frame, so `advance` skips a body with `"temp"` locked, checked after the pinned-kind
+  branch so a star or hole ignores a stale lock left over from being a planet. Locks
+  live on the Body beside `spin` and `disk` because the force kernel never reads them;
+  nothing inherits them, and a kind change leaves them alone, so a lock on a field the
+  current kind does not offer is inert rather than lost.
 - **`thermal.advance` runs once a frame, never per substep.** The same rule
   `update_trails` follows, and for the same reason: the pass is O(n²), and at ten
   years a second the integrator takes thousands of substeps per frame. Ablation

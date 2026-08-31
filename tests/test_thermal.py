@@ -372,6 +372,41 @@ def test_temperature_never_leaves_the_allowed_range():
     assert units.MIN_TEMPERATURE_K <= float(world.temperature[1]) <= units.MAX_TEMPERATURE_K
 
 
+def test_a_locked_temperature_does_not_relax():
+    """The point of the lock: a child pins a temperature and it has to actually
+    stay put, not just refuse edits.set_temperature and then slide straight
+    back to equilibrium on the next frame.  edits.py is not the only writer --
+    advance() is the other one, and it has to honour the same lock."""
+    world = _sun_and(ROCK, 1.0)
+    world.temperature[1] = 900.0
+    world.bodies[1].locked_fields = frozenset({"temp"})
+    thermal.advance(world, 10.0)
+    assert float(world.temperature[1]) == pytest.approx(900.0)
+
+
+def test_an_unlocked_neighbour_still_relaxes_normally():
+    """The lock reaches only the locked body -- a neighbour with nothing
+    locked keeps behaving exactly as it always has."""
+    world = _sun_and(ROCK, 1.0)
+    world.temperature[1] = 900.0
+    thermal.advance(world, 10.0)
+    assert float(world.temperature[1]) != pytest.approx(900.0)
+
+
+def test_a_stale_temperature_lock_does_not_stop_a_star_being_pinned():
+    """A planet that locked its temperature and then ignited keeps the lock --
+    it is simply inert for a kind that offers no Temp row.  ``advance`` must
+    still pin it to its fusion temperature, not freeze it at the last planetary
+    reading, the same way ``edits.set_temperature`` already refuses a star
+    outright regardless of any lock."""
+    world = World(16)
+    world.add("Star", HYDROGEN, 1.0, units.SUN_RADIUS,
+              np.zeros(2), np.zeros(2), kind=KIND_STAR, temperature=400.0)
+    world.bodies[0].locked_fields = frozenset({"temp"})
+    thermal.advance(world, 10.0)
+    assert float(world.temperature[0]) == pytest.approx(units.star_temperature(1.0))
+
+
 # --- impact heating ------------------------------------------------------------
 
 def test_impact_heating_scales_with_energy_and_against_heat_capacity():

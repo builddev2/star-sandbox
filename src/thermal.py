@@ -172,6 +172,17 @@ def advance(world, days):
 
     Stars and black holes are written back to their pinned values rather than
     relaxed: neither warms in its own light.
+
+    A body with its temperature locked holds whatever value it already has,
+    instead of relaxing.  This is the other writer a lock has to reach: the
+    guard in ``edits.set_temperature`` only stops a scrub, and without this
+    check a pinned reading would slide straight back to equilibrium on the
+    very next frame -- the padlock would show closed over a value that kept
+    moving.  Checked *after* the pinned-kind branch, not before: a star or a
+    black hole ignores a stale lock left over from when it was a planet, the
+    same way ``edits.set_temperature`` already refuses both kinds outright --
+    a lock on a field the current kind does not offer is inert, never a
+    stronger claim than the body's own physics.
     """
     n = world.n
     if n == 0 or days <= 0.0:
@@ -181,6 +192,8 @@ def advance(world, days):
         pinned = pinned_temperature(world, i)
         if pinned is not None:
             world.temperature[i] = pinned
+            continue
+        if "temp" in world.bodies[i].locked_fields:
             continue
         t_eq = float(target[i])
         tau = relaxation_days(world, i, t_eq)
