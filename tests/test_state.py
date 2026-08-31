@@ -140,6 +140,24 @@ def test_reset_restores_everything(state):
     assert state.camera.follow_id is None
 
 
+def test_a_restart_clears_every_lock(state):
+    """Restart rebuilds every Body from the scenario, so a lock cannot survive
+    it -- the body it belonged to does not.  Right, but only accidentally so
+    until something says it out loud: a scenario builder that reused Body
+    objects instead of world.clear()-ing them would carry stale locks into a
+    world the child asked to have put back."""
+    from src import edits
+    body = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    for field in edits.edit_fields(body):
+        edits.toggle_lock(body, field)
+    assert body.locked_fields
+
+    state.reset()
+
+    assert all(b.locked_fields == frozenset() for b in state.sim.world.bodies)
+    assert all(b is not body for b in state.sim.world.bodies)
+
+
 def test_elapsed_label_reports_years_and_days(state):
     state.sim.world.time = 400.0
     label = state.elapsed_label

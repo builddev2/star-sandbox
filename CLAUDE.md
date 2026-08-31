@@ -123,7 +123,9 @@ or fast time scales.
   branch so a star or hole ignores a stale lock left over from being a planet. Locks
   live on the Body beside `spin` and `disk` because the force kernel never reads them;
   nothing inherits them, and a kind change leaves them alone, so a lock on a field the
-  current kind does not offer is inert rather than lost.
+  current kind does not offer is inert rather than lost. **A Restart (`F5`) drops every
+  lock**, because the scenario `world.clear()`s and rebuilds every `Body` from scratch,
+  and a lock is a property of a body that no longer exists.
 - **`thermal.advance` runs once a frame, never per substep.** The same rule
   `update_trails` follows, and for the same reason: the pass is O(n²), and at ten
   years a second the integrator takes thousands of substeps per frame. Ablation
