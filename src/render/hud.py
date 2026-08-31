@@ -35,6 +35,8 @@ KEY_HELP = (
     ("F", "follow the selected body"),
     ("1 2 3", "Look / Throw / Edit"),
     ("C", "collapse a star into a black hole (Edit)"),
+    ("K", "lock or unlock the selected field (Edit)"),
+    ("U", "unlock every field on the selected body (Edit)"),
     ("X", "lock a guaranteed-hit target (Throw)"),
     ("0", "stop the selected body dead"),
     ("T", "orbit trails on and off"),

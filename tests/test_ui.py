@@ -775,3 +775,77 @@ def test_every_button_says_what_it_does(state, ui):
         for control in ui.controls:
             if control.clickable:
                 assert control.hint(), "%s explains nothing" % control.id
+
+
+# --- locking a property -----------------------------------------------------------
+
+def _edit_earth(state, ui):
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    click_id(ui, state, "tool.edit")
+    return earth
+
+
+def test_locking_a_row_greys_out_its_steppers(state, ui):
+    """The second line of defence.  The first is in edits.py, and both have to
+    be there: perform() is the door the held repeat and the tests come
+    through."""
+    _edit_earth(state, ui)
+    assert find(ui, "edit.step", payload=("mass", 3)).enabled
+
+    click_id(ui, state, "edit.lock", payload="mass")
+
+    plus = find(ui, "edit.step", payload=("mass", 3))
+    assert not plus.enabled
+    before = float(state.sim.world.mass[state.selected_index])
+    assert not ui.perform(plus, state, None)
+    assert float(state.sim.world.mass[state.selected_index]) == pytest.approx(before)
+
+
+def test_the_padlock_button_unlocks_as_well_as_locks(state, ui):
+    from src import edits
+    earth = _edit_earth(state, ui)
+    click_id(ui, state, "edit.lock", payload="density")
+    assert edits.is_locked(earth, "density")
+    click_id(ui, state, "edit.lock", payload="density")
+    assert not edits.is_locked(earth, "density")
+    assert find(ui, "edit.step", payload=("density", 1)).enabled
+
+
+def test_unlock_all_is_dead_until_something_is_locked(state, ui):
+    earth = _edit_earth(state, ui)
+    assert not find(ui, "edit.unlock_all").enabled
+
+    click_id(ui, state, "edit.lock", payload="mass")
+    click_id(ui, state, "edit.lock", payload="material")
+    unlock = find(ui, "edit.unlock_all")
+    assert unlock.enabled
+
+    click(ui, state, unlock)
+    assert earth.locked_fields == frozenset()
+    assert not find(ui, "edit.unlock_all").enabled
+
+
+def test_a_lock_outlives_leaving_the_tool_and_the_selection(state, ui):
+    """It is a standing preference for this body, not a mode the Edit tool is
+    in."""
+    from src import edits
+    earth = _edit_earth(state, ui)
+    click_id(ui, state, "edit.lock", payload="mass")
+    click_id(ui, state, "tool.look")
+    state.select(state.sim.world.bodies[1].id)
+    click_id(ui, state, "tool.edit")
+    state.select(earth.id)
+    ui.build(state, SIZE)
+    assert edits.is_locked(earth, "mass")
+    assert not find(ui, "edit.step", payload=("mass", 3)).enabled
+
+
+def test_both_lock_keys_are_documented_and_have_buttons(state, ui):
+    """The parity test above reads KEY_HELP; this one says which two keys this
+    feature put in it, so a table edit that drops them is caught by name."""
+    from src.render.hud import KEY_HELP
+    documented = {combo for combo, _ in KEY_HELP}
+    assert "K" in documented and "U" in documented
+    _edit_earth(state, ui)
+    assert {c.hotkey for c in ui.controls} >= {"K", "U"}
