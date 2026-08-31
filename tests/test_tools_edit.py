@@ -330,3 +330,87 @@ def test_a_black_hole_gets_unlock_all_on_a_row_of_its_own(state):
                if any(c.id == "edit.unlock_all" for c in row))
     assert [c.id for c in row] == ["edit.unlock_all"]
     assert [c.payload for c in _locks(rows)] == ["mass", "spin", "disk"]
+
+
+def test_k_locks_the_selected_field_and_locks_it_again(state):
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    assert state.tool.on_event(_key(pygame.K_k), state)
+    assert edits.is_locked(body, "mass")
+    assert state.tool.on_event(_key(pygame.K_k), state)
+    assert not edits.is_locked(body, "mass")
+
+
+def test_k_locks_the_row_the_arrows_navigated_to(state):
+    """It mirrors Left/Right, which act on self.field_index, not on row zero."""
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    fields = edits.edit_fields(body)
+    state.tool.on_event(_key(pygame.K_DOWN), state)
+    state.tool.on_event(_key(pygame.K_k), state)
+    assert edits.is_locked(body, fields[1])
+    assert not edits.is_locked(body, fields[0])
+
+
+def test_a_locked_field_ignores_left_and_right(state):
+    """The point of the whole feature: a stray arrow key cannot nudge a pinned
+    value.  Enforced in edits.py, because a key never passes through the panel
+    that greyed the buttons out."""
+    index = state.selected_index
+    before = float(state.sim.world.mass[index])
+    state.tool.on_event(_key(pygame.K_k), state)
+    for _ in range(20):
+        state.tool.on_event(_key(pygame.K_RIGHT), state)
+        state.tool.on_event(_key(pygame.K_LEFT), state)
+    assert float(state.sim.world.mass[state.selected_index]) == pytest.approx(before)
+
+
+def test_a_locked_field_ignores_a_drag(state):
+    index = state.selected_index
+    before = float(state.sim.world.mass[index])
+    state.tool.on_event(_key(pygame.K_k), state)
+    state.tool.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(2, 2),
+                                           button=1), state)
+    state.tool.on_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(122, 2),
+                                           rel=(120, 0), buttons=(1, 0, 0)), state)
+    state.tool.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(122, 2),
+                                           button=1), state)
+    assert float(state.sim.world.mass[state.selected_index]) == pytest.approx(before)
+
+
+def test_locking_one_field_leaves_the_others_scrubbable(state):
+    index = state.selected_index
+    mass = float(state.sim.world.mass[index])
+    radius = float(state.sim.world.radius[index])
+    state.tool.on_event(_key(pygame.K_k), state)        # lock mass
+    state.tool.on_event(_key(pygame.K_DOWN), state)     # to density
+    state.tool.on_event(_key(pygame.K_RIGHT), state)
+    assert float(state.sim.world.mass[state.selected_index]) == pytest.approx(mass)
+    assert float(state.sim.world.radius[state.selected_index]) != radius
+
+
+def test_u_unlocks_everything_on_the_body(state):
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    for field in edits.edit_fields(body):
+        edits.toggle_lock(body, field)
+    assert state.tool.on_event(_key(pygame.K_u), state)
+    assert body.locked_fields == frozenset()
+
+
+def test_u_with_nothing_locked_does_nothing_and_says_so(state):
+    """It matches its own disabled button: nothing to undo, so the event is not
+    consumed either."""
+    assert not state.tool.on_event(_key(pygame.K_u), state)
+
+
+def test_k_and_u_with_nothing_selected_are_harmless(state):
+    state.selected_id = None
+    assert not state.tool.on_event(_key(pygame.K_k), state)
+    assert not state.tool.on_event(_key(pygame.K_u), state)
+
+
+def test_k_and_u_on_a_destroyed_body_are_harmless(state):
+    state.sim.world.remove(state.selected_index)
+    state.tool.on_event(_key(pygame.K_k), state)
+    state.tool.on_event(_key(pygame.K_u), state)

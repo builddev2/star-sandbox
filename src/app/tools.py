@@ -474,8 +474,8 @@ DRAG_PIXELS_PER_NOTCH = 6.0
 
 class EditTool(Tool):
     name = "Edit"
-    hint = ("Click a body, then use the -- and + buttons  -  or Up/Down to pick a "
-            "row and Left/Right to change it  -  hold a button to go faster")
+    hint = ("Click a body, then use the -- and + buttons  -  Up/Down picks a row "
+            "and Left/Right changes it  -  K locks a row so nothing can move it")
     context_title = "Edit"
 
     #: Notches one press of a stepper applies.  Mass moves three at a time
@@ -672,6 +672,10 @@ class EditTool(Tool):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_c:
                 return self._collapse(state)
+            if event.key == pygame.K_k:
+                return self._toggle_lock(state)
+            if event.key == pygame.K_u:
+                return self._unlock_all(state)
             if event.key == pygame.K_DOWN:
                 self.field_index = min(self._field_count(state) - 1,
                                        self.field_index + 1)
