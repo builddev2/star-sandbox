@@ -111,3 +111,45 @@ def test_a_window_one_pixel_under_the_floor_is_not_promised_anything():
     would be too generous, and the one-third preset would be needlessly wide.
     """
     assert config.MIN_INTERNAL[0] < LAPTOP[0] // 3
+
+
+def test_the_edit_panel_stays_clear_of_the_transport_bar():
+    """The Edit panel grows a row per field, and now a padlock on each of them.
+
+    Nothing else enforces that it stops above the transport bar: the two tests
+    above only ask that every control is inside the buffer, and a panel that
+    reaches over Play is inside the buffer.  At the floor there are six rows of
+    room and no more, which is why "Unlock all" shares the Collapse row instead
+    of taking one of its own.
+    """
+    from src import edits
+    from src.render.widgets import Metrics
+
+    for s in config.GRID_CHOICES:
+        internal = config.min_internal(s)
+        font = PixelFont(config.font_px(s))
+        metrics = Metrics(font, *internal)
+        state = AppState(Simulation(), Camera(*internal), ViewSettings())
+        state.set_tool(EditTool)
+        ui = UiLayer(font, Hud(font))
+
+        def deepest(name):
+            index = next(i for i, b in enumerate(state.sim.world.bodies)
+                         if b.name == name)
+            state.select(state.sim.world.bodies[index].id)
+            ui.build(state, internal, None)
+            return index, max(c.rect.bottom for c in ui.controls
+                              if c.id.startswith("edit."))
+
+        for name in ("Earth", "Sun"):          # a planet: four rows; a star: three
+            _, bottom = deepest(name)
+            assert bottom <= metrics.transport_y, \
+                "the Edit panel reaches %d, past the transport bar at %d " \
+                "(grid %d, %s)" % (bottom, metrics.transport_y, s, name)
+
+        index, _ = deepest("Sun")
+        edits.collapse(state.sim.world, index)
+        _, bottom = deepest("Sun")
+        assert bottom <= metrics.transport_y, \
+            "the black hole panel reaches %d, past %d (grid %d)" % (
+                bottom, metrics.transport_y, s)
