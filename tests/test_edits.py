@@ -288,3 +288,156 @@ def test_a_lock_survives_the_body_changing_kind(sim):
     edits.set_mass(sim.world, i, units.EARTH_MASS)
     assert body.kind == KIND_PLANET
     assert edits.is_locked(body, "temp")
+
+
+def _black_hole(sim):
+    """Ten solar masses of Earth, crushed.  Spin and disk take their defaults,
+    0.7 and 0.6, so a test can set something else and see it."""
+    i = _index(sim, "Earth")
+    edits.set_mass(sim.world, i, 10.0)
+    edits.collapse(sim.world, i)
+    return i
+
+
+def test_a_locked_mass_refuses_to_change(sim):
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    mass = float(sim.world.mass[i])
+    radius = float(sim.world.radius[i])
+    edits.toggle_lock(body, "mass")
+    edits.set_mass(sim.world, i, mass * 10.0)
+    assert float(sim.world.mass[i]) == pytest.approx(mass)
+    assert float(sim.world.radius[i]) == pytest.approx(radius)
+    edits.toggle_lock(body, "mass")
+    edits.set_mass(sim.world, i, mass * 10.0)
+    assert float(sim.world.mass[i]) == pytest.approx(mass * 10.0)
+
+
+def test_a_locked_mass_cannot_be_ignited(sim):
+    """The guard is at the top of the setter, so ``_refresh_kind`` is never
+    reached and the body does not quietly change kind on the way out."""
+    i = _index(sim, "Jupiter")
+    body = sim.world.bodies[i]
+    edits.toggle_lock(body, "mass")
+    edits.set_mass(sim.world, i, units.STAR_MASS_THRESHOLD * 2.0)
+    assert body.kind == KIND_PLANET
+
+
+def test_a_locked_density_refuses_to_change(sim):
+    # Saturn: 0.687 g/cm3, so four times that is still inside the material range
+    # and the clamp cannot be what holds the value still.
+    i = _index(sim, "Saturn")
+    body = sim.world.bodies[i]
+    density = edits.body_density(sim.world, i)
+    radius = float(sim.world.radius[i])
+    material = body.material.key
+    edits.toggle_lock(body, "density")
+    edits.set_density(sim.world, i, density * 4.0)
+    assert edits.body_density(sim.world, i) == pytest.approx(density, rel=1e-9)
+    assert float(sim.world.radius[i]) == pytest.approx(radius)
+    # set_density also relabels the composition; a refused edit relabels nothing.
+    assert body.material.key == material
+    edits.toggle_lock(body, "density")
+    edits.set_density(sim.world, i, density * 4.0)
+    assert edits.body_density(sim.world, i) == pytest.approx(density * 4.0, rel=1e-9)
+
+
+def test_a_locked_temperature_refuses_to_change(sim):
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    before = float(sim.world.temperature[i])
+    edits.toggle_lock(body, "temp")
+    edits.set_temperature(sim.world, i, 900.0)
+    assert float(sim.world.temperature[i]) == pytest.approx(before)
+    edits.toggle_lock(body, "temp")
+    edits.set_temperature(sim.world, i, 900.0)
+    assert float(sim.world.temperature[i]) == pytest.approx(900.0)
+
+
+def test_a_locked_spin_refuses_to_change(sim):
+    i = _black_hole(sim)
+    body = sim.world.bodies[i]
+    before = body.spin
+    edits.toggle_lock(body, "spin")
+    edits.set_spin(sim.world, i, 0.1)
+    assert body.spin == pytest.approx(before)
+    edits.toggle_lock(body, "spin")
+    edits.set_spin(sim.world, i, 0.1)
+    assert body.spin == pytest.approx(0.1)
+
+
+def test_a_locked_disk_refuses_to_change(sim):
+    i = _black_hole(sim)
+    body = sim.world.bodies[i]
+    before = body.disk
+    edits.toggle_lock(body, "disk")
+    edits.set_disk(sim.world, i, 0.2)
+    assert body.disk == pytest.approx(before)
+    edits.toggle_lock(body, "disk")
+    edits.set_disk(sim.world, i, 0.2)
+    assert body.disk == pytest.approx(0.2)
+
+
+def test_a_locked_material_refuses_to_change(sim):
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    key = body.material.key
+    radius = float(sim.world.radius[i])
+    edits.toggle_lock(body, "material")
+    edits.set_material(sim.world, i, materials.get("iron"))
+    assert body.material.key == key
+    assert float(sim.world.radius[i]) == pytest.approx(radius)
+    edits.cycle_material(sim.world, i, 1)
+    assert body.material.key == key
+    edits.toggle_lock(body, "material")
+    edits.cycle_material(sim.world, i, 1)
+    assert body.material.key != key
+
+
+def test_a_lock_guards_only_its_own_field(sim):
+    """The worked example the design is built around: pin the mass, then scrub
+    density, temperature and composition freely."""
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    mass = float(sim.world.mass[i])
+    edits.toggle_lock(body, "mass")
+    edits.set_density(sim.world, i, edits.body_density(sim.world, i) * 1.5)
+    edits.set_temperature(sim.world, i, 500.0)
+    edits.set_material(sim.world, i, materials.get("iron"))
+    assert float(sim.world.mass[i]) == pytest.approx(mass)
+    assert body.material.key == "iron"
+    assert float(sim.world.temperature[i]) == pytest.approx(500.0)
+
+
+def test_a_density_lock_does_not_chase_density_through_a_material_swap(sim):
+    """Decided during design: a lock blocks direct edits to its own field and
+    nothing else.  set_material is editing material, not density."""
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    edits.toggle_lock(body, "density")
+    edits.set_material(sim.world, i, materials.get("iron"))
+    assert edits.body_density(sim.world, i) == pytest.approx(
+        materials.get("iron").density, rel=1e-9)
+
+
+def test_collapse_is_not_stopped_by_a_locked_mass(sim):
+    """Collapse conserves mass, so it is not a mass edit -- and a lock reaches
+    no further than the setters it guards."""
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    edits.set_mass(sim.world, i, 10.0)
+    edits.toggle_lock(body, "mass")
+    edits.collapse(sim.world, i)
+    assert body.kind == KIND_BLACK_HOLE
+    assert float(sim.world.mass[i]) == pytest.approx(10.0)
+
+
+def test_a_star_still_takes_its_pinned_temperature_with_temp_locked(sim):
+    """The pin is not an edit: ``_refresh_kind`` writes the array directly, so a
+    body that ignites reads as a star at once, whatever its lock says."""
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    edits.toggle_lock(body, "temp")
+    edits.set_mass(sim.world, i, units.STAR_MASS_THRESHOLD * 1.1)
+    assert float(sim.world.temperature[i]) == pytest.approx(
+        units.star_temperature(float(sim.world.mass[i])), rel=1e-9)

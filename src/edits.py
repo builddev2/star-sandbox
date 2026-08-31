@@ -9,6 +9,11 @@ child does to Jupiter.
 Kind follows mass: cross ``units.STAR_MASS_THRESHOLD`` and the body ignites;
 drop back below and it goes out.
 
+Any field may be **locked**, per body: a locked field's setter returns without
+writing anything.  The check is here rather than in the panel because the panel
+is not the only caller -- the same argument ``set_temperature`` already makes
+about stars.
+
 Imports numpy and nothing from pygame -- ``tests/test_layering.py`` asserts it.
 """
 
@@ -145,6 +150,8 @@ def set_mass(world, index, mass):
     ``collapse`` or by the branch below.
     """
     body = world.bodies[index]
+    if is_locked(body, "mass"):
+        return
     mass = float(min(max(float(mass), MIN_MASS), MAX_MASS))
 
     if body.kind == KIND_BLACK_HOLE:
@@ -171,19 +178,30 @@ def set_temperature(world, index, kelvin):
     Refuses on a star or a black hole, whose temperatures their own physics
     fixes.  Guarded here as well as by the missing button, since the panel is
     not the only caller.
+
+    Refuses a locked temperature for the same reason, and in the same place:
+    the panel greys the row's buttons out, and this is what makes that mean
+    something to every other caller.
     """
-    if world.bodies[index].kind in (KIND_STAR, KIND_BLACK_HOLE):
+    body = world.bodies[index]
+    if body.kind in (KIND_STAR, KIND_BLACK_HOLE) or is_locked(body, "temp"):
         return
     world.temperature[index] = float(
         min(max(float(kelvin), units.MIN_TEMPERATURE_K), units.MAX_TEMPERATURE_K))
 
 
 def set_spin(world, index, spin):
-    world.bodies[index].spin = float(min(max(float(spin), 0.0), units.MAX_SPIN))
+    body = world.bodies[index]
+    if is_locked(body, "spin"):
+        return
+    body.spin = float(min(max(float(spin), 0.0), units.MAX_SPIN))
 
 
 def set_disk(world, index, disk):
-    world.bodies[index].disk = float(min(max(float(disk), 0.0), 1.0))
+    body = world.bodies[index]
+    if is_locked(body, "disk"):
+        return
+    body.disk = float(min(max(float(disk), 0.0), 1.0))
 
 
 def collapse(world, index):
@@ -212,6 +230,8 @@ def collapse(world, index):
 
 def set_density(world, index, density):
     """Set density, holding mass constant, so the radius follows."""
+    if is_locked(world.bodies[index], "density"):
+        return
     lo = units.from_gcm3(materials.MIN_DENSITY_GCM3)
     hi = units.from_gcm3(materials.MAX_DENSITY_GCM3)
     density = float(min(max(float(density), lo), hi))
@@ -223,7 +243,10 @@ def set_density(world, index, density):
 
 def set_material(world, index, material):
     """Adopt a substance, snapping density to that substance's real value."""
-    world.bodies[index].material = material
+    body = world.bodies[index]
+    if is_locked(body, "material"):
+        return
+    body.material = material
     world.radius[index] = units.radius_from_mass_density(
         float(world.mass[index]), material.density)
 
@@ -232,6 +255,8 @@ def cycle_material(world, index, step=1):
     body = world.bodies[index]
     if body.kind == KIND_BLACK_HOLE:
         return          # a hole is not made of anything to cycle through
+    if is_locked(body, "material"):
+        return
     keys = [m.key for m in materials.MATERIALS]
     current = keys.index(body.material.key)
     set_material(world, index, materials.MATERIALS[(current + step) % len(keys)])
