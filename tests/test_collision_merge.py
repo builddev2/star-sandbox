@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src import collisions, materials, units
+from src import collisions, edits, materials, units
 from src.body import KIND_STAR
 from src.world import World
 
@@ -143,3 +143,44 @@ def test_ejecta_is_suppressed_when_the_world_is_nearly_full():
     resolver = collisions.CollisionResolver(seed=1)
     resolver.accrete(world, c)
     assert world.n == before - 1, "should have merged with no room to spare for ejecta"
+
+
+def test_the_survivor_keeps_its_own_locks_and_the_merge_ignores_them():
+    """A merge is not an edit.
+
+    It writes mass, radius and temperature into the arrays directly rather than
+    through edits.set_*, so a locked mass does not stop a body growing by
+    eating another -- and the survivor is the same Body object throughout, so
+    the locks it was wearing must come out the far side untouched.  Every
+    other lock test covers a *fresh* body starting unlocked; this is the one
+    body that is neither fresh nor destroyed.
+    """
+    r = units.EARTH_RADIUS
+    world = _pair(units.EARTH_MASS, r, (0.0, 0.0),
+                  units.MOON_MASS, r * 0.27, (0.0, 0.0), r)
+    world.temperature[0] = 500.0
+    world.temperature[1] = 100.0
+    survivor = world.bodies[0]
+    edits.toggle_lock(survivor, "mass")
+    edits.toggle_lock(survivor, "temp")
+    mass, temperature = float(world.mass[0]), float(world.temperature[0])
+
+    idx = collisions.merge(world, collisions.Collision(0, 1, 0.5, 0.0))
+
+    assert world.bodies[idx] is survivor
+    assert survivor.locked_fields == frozenset({"mass", "temp"})
+    assert float(world.mass[idx]) > mass
+    assert float(world.temperature[idx]) != pytest.approx(temperature)
+
+
+def test_a_merge_does_not_hand_the_victims_locks_to_the_survivor():
+    """Nothing inherits a lock -- not a fragment, and not the body that ate
+    its owner."""
+    r = units.EARTH_RADIUS
+    world = _pair(units.EARTH_MASS, r, (0.0, 0.0),
+                  units.MOON_MASS, r * 0.27, (0.0, 0.0), r)
+    edits.toggle_lock(world.bodies[1], "material")
+
+    idx = collisions.merge(world, collisions.Collision(0, 1, 0.5, 0.0))
+
+    assert world.bodies[idx].locked_fields == frozenset()
