@@ -551,23 +551,43 @@ class EditTool(Tool):
             # Material is a list of substances, not a quantity, so it gets
             # arrows rather than a minus and a plus, and it does not repeat.
             icons = ("left", "right") if field == "material" else ("minus", "plus")
+            # Greying the steppers out is the *second* line of defence -- the
+            # first is the guard in edits.py, which is what stops the drag and
+            # the arrow keys, neither of which comes through a button.
+            locked = edits.is_locked(body, field)
             rows.append([
                 Control("edit.step", icon=icons[0], payload=(field, -step),
                         compact=True, repeat=field != "material",
-                        tooltip="Less %s" % field),
+                        enabled=not locked, tooltip="Less %s" % field),
                 Control("edit.field", label="%s  %s" % (field.title(), values[field]),
                         payload=field, active=k == self.field_index,
                         tooltip="Or pick this row with Up/Down and change it "
                                 "with Left/Right"),
                 Control("edit.step", icon=icons[1], payload=(field, step),
                         compact=True, repeat=field != "material",
-                        tooltip="More %s" % field),
+                        enabled=not locked, tooltip="More %s" % field),
+                Control("edit.lock", icon="lock" if locked else "unlock",
+                        payload=field, compact=True, hotkey="K", active=locked,
+                        tooltip=("Unlock %s -- let it be changed again" % field)
+                        if locked else ("Lock %s -- pin it where it is" % field)),
             ])
+        # Unlock-all shares the Collapse row rather than taking one of its own:
+        # at the interface floor a seventh row reaches past the transport bar.
+        # A black hole has no Collapse to share with, so it gets the row.
+        unlock_all = Control(
+            "edit.unlock_all", label="Unlock all", icon="unlock", hotkey="U",
+            enabled=bool(body.locked_fields),
+            tooltip="Free every locked field on this body")
         if body.kind != KIND_BLACK_HOLE:
-            rows.append([Control(
-                "edit.collapse", label="Collapse", icon="blackhole", hotkey="C",
-                enabled=body.kind == KIND_STAR,
-                tooltip="Crush this star into a black hole -- there is no way back")])
+            rows.append([
+                Control("edit.collapse", label="Collapse", icon="blackhole",
+                        hotkey="C", enabled=body.kind == KIND_STAR,
+                        tooltip="Crush this star into a black hole -- "
+                                "there is no way back"),
+                unlock_all,
+            ])
+        else:
+            rows.append([unlock_all])
         rows.append([Control("edit.status", label=self.status_label(world, index),
                              readout=True)])
         return rows
@@ -583,6 +603,10 @@ class EditTool(Tool):
             self.field_index = fields.index(field)
             self._scrub(state, notches)
             return True
+        if control.id == "edit.lock":
+            return self._toggle_lock(state, control.payload)
+        if control.id == "edit.unlock_all":
+            return self._unlock_all(state)
         if control.id == "edit.collapse":
             return self._collapse(state)
         return False
@@ -602,6 +626,46 @@ class EditTool(Tool):
             return False
         edits.collapse(state.sim.world, index)
         state.sim.refresh()
+        return True
+
+    def _toggle_lock(self, state, field=None):
+        """Lock or free one field on the selected body.
+
+        ``field`` is the row whose padlock was pressed; the key path passes
+        None and means "whichever row is selected", the way Left and Right
+        already do.  A click also picks the row, so the arrows carry on from
+        where the mouse left off.
+
+        No ``sim.refresh()``: a lock changes no mass, no radius and no
+        membership, so nothing the integrator caches has gone stale.
+        """
+        index = state.selected_index
+        if index is None:
+            return False
+        world = state.sim.world
+        fields = self._fields(world, index)
+        if field is None:
+            field = fields[min(self.field_index, len(fields) - 1)]
+        else:
+            self.field_index = fields.index(field)
+        edits.toggle_lock(world.bodies[index], field)
+        return True
+
+    def _unlock_all(self, state):
+        """Free every field on the selected body at once.
+
+        Re-checks that there is something to free rather than leaning on the
+        button being drawn disabled: a keyboard event never passes through
+        ``UiLayer.perform``, so the control's ``enabled`` flag cannot gate it --
+        the same rule ``_collapse`` follows for ``C``.
+        """
+        index = state.selected_index
+        if index is None:
+            return False
+        body = state.sim.world.bodies[index]
+        if not body.locked_fields:
+            return False
+        edits.unlock_all(body)
         return True
 
     def on_event(self, event, state):

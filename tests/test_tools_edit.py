@@ -207,3 +207,126 @@ def test_the_panel_survives_every_body_and_every_field(state):
         for field in range(3):
             state.tool.field_index = field
             assert state.tool.controls(state, metrics)
+
+
+# --- locking ----------------------------------------------------------------------
+
+def _locks(rows):
+    return [c for row in rows for c in row if c.id == "edit.lock"]
+
+
+def _steps(rows, field):
+    return [c for row in rows for c in row
+            if c.id == "edit.step" and c.payload[0] == field]
+
+
+def test_every_field_row_carries_a_lock_button(state):
+    from src import edits
+    fields = edits.edit_fields(state.sim.world.bodies[state.selected_index])
+    locks = _locks(state.tool.controls(state, _metrics()))
+    assert [c.payload for c in locks] == list(fields)
+
+
+def test_the_lock_button_swaps_its_icon(state):
+    """The same icon-swap-on-state the play/pause button already uses: the
+    button is the readout."""
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    lock = next(c for c in _locks(state.tool.controls(state, _metrics()))
+                if c.payload == "mass")
+    assert lock.icon == "unlock"
+    edits.toggle_lock(body, "mass")
+    lock = next(c for c in _locks(state.tool.controls(state, _metrics()))
+                if c.payload == "mass")
+    assert lock.icon == "lock"
+    assert lock.active
+
+
+def test_a_locked_row_greys_out_both_its_steppers(state):
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    edits.toggle_lock(body, "mass")
+    rows = state.tool.controls(state, _metrics())
+    assert [c.enabled for c in _steps(rows, "mass")] == [False, False]
+    assert all(c.enabled for c in _steps(rows, "density"))
+
+
+def test_the_row_itself_stays_selectable_when_it_is_locked(state):
+    """Only the two steppers go inert.  The value still reads out, and the row
+    can still be picked."""
+    from src import edits
+    edits.toggle_lock(state.sim.world.bodies[state.selected_index], "mass")
+    rows = state.tool.controls(state, _metrics())
+    field = next(c for row in rows for c in row
+                 if c.id == "edit.field" and c.payload == "mass")
+    assert field.clickable
+    assert field.label.startswith("Mass")
+
+
+def test_the_lock_button_is_never_itself_disabled(state):
+    """Otherwise locking a field would be one-way through the mouse."""
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    for field in edits.edit_fields(body):
+        edits.toggle_lock(body, field)
+    assert all(c.enabled for c in _locks(state.tool.controls(state, _metrics())))
+
+
+def test_pressing_a_lock_toggles_it_and_picks_that_row(state):
+    """A click on a row's padlock also selects the row, so Up/Down and
+    Left/Right carry on from where the mouse left off -- the same thing
+    edit.step already does."""
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    fields = edits.edit_fields(body)
+    lock = next(c for c in _locks(state.tool.controls(state, _metrics()))
+                if c.payload == fields[-1])
+    assert state.tool.perform(lock, state)
+    assert edits.is_locked(body, fields[-1])
+    assert state.tool.field_index == len(fields) - 1
+    assert state.tool.perform(lock, state)
+    assert not edits.is_locked(body, fields[-1])
+
+
+def test_unlock_all_is_disabled_until_something_is_locked(state):
+    from src import edits
+    rows = state.tool.controls(state, _metrics())
+    unlock = next(c for row in rows for c in row if c.id == "edit.unlock_all")
+    assert not unlock.enabled
+    edits.toggle_lock(state.sim.world.bodies[state.selected_index], "density")
+    rows = state.tool.controls(state, _metrics())
+    unlock = next(c for row in rows for c in row if c.id == "edit.unlock_all")
+    assert unlock.enabled
+
+
+def test_unlock_all_clears_every_lock(state):
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    for field in edits.edit_fields(body):
+        edits.toggle_lock(body, field)
+    rows = state.tool.controls(state, _metrics())
+    unlock = next(c for row in rows for c in row if c.id == "edit.unlock_all")
+    assert state.tool.perform(unlock, state)
+    assert body.locked_fields == frozenset()
+
+
+def test_unlock_all_shares_the_collapse_row(state):
+    """A seventh row would draw over the transport bar at the interface floor;
+    tests/test_layout.py is what holds this in place."""
+    rows = state.tool.controls(state, _metrics())
+    row = next(row for row in rows
+               if any(c.id == "edit.unlock_all" for c in row))
+    assert {c.id for c in row} == {"edit.collapse", "edit.unlock_all"}
+
+
+def test_a_black_hole_gets_unlock_all_on_a_row_of_its_own(state):
+    """It has no Collapse button to share with."""
+    from src import edits
+    index = state.selected_index
+    edits.set_mass(state.sim.world, index, 10.0)
+    edits.collapse(state.sim.world, index)
+    rows = state.tool.controls(state, _metrics())
+    row = next(row for row in rows
+               if any(c.id == "edit.unlock_all" for c in row))
+    assert [c.id for c in row] == ["edit.unlock_all"]
+    assert [c.payload for c in _locks(rows)] == ["mass", "spin", "disk"]
