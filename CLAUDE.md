@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (744 tests, ~3:35)
+python selftest.py                      # whole suite (800 tests, ~3:35)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -108,6 +108,18 @@ or fast time scales.
   even though the panel already omits the row — the panel is not the only caller.
   `edits._refresh_kind` and `edits.collapse` write the pinned value the moment a
   body changes kind, so the array is never a frame behind what the body is.
+- **A locked field is refused in `edits.py`, not in the panel.** `Body.locked_fields`
+  is a frozenset of the same names `edits.edit_fields` returns, and every setter
+  (`set_mass`, `set_density`, `set_temperature`, `set_spin`, `set_disk`,
+  `set_material`/`cycle_material`) returns without writing when its **own** field is
+  locked. The greyed-out stepper is the second line of defence, not the first: the
+  arrow keys and the horizontal drag never pass through a button. A lock guards only
+  its own field -- locking density does not stop a material swap from moving density
+  -- and it reaches no further than those setters, so `collapse` and the pinned
+  temperature `_refresh_kind` writes are unaffected. Locks live on the Body beside
+  `spin` and `disk` because the force kernel never reads them; nothing inherits them,
+  and a kind change leaves them alone, so a lock on a field the current kind does not
+  offer is inert rather than lost.
 - **`thermal.advance` runs once a frame, never per substep.** The same rule
   `update_trails` follows, and for the same reason: the pass is O(n²), and at ten
   years a second the integrator takes thousands of substeps per frame. Ablation
@@ -270,6 +282,11 @@ Add a `Control` in the relevant `_build_*` method of `src/app/ui.py` and a branc
 `UiLayer.perform`. Give it a `hotkey` only if the key actually exists, and add the key to
 `hud.KEY_HELP` — the parity test reads that table. `enabled=False` disables it everywhere,
 including `perform`, which is the door the held-repeat and the tests come through.
+
+A tool panel row is not free: `tests/test_layout.py` checks that the Edit panel stops
+above the transport bar at `config.min_internal(3)`, where there is room for six rows
+and no more. That is why "Unlock all" shares the Collapse row rather than taking one of
+its own.
 
 ## Docs
 
