@@ -416,6 +416,15 @@ def test_k_and_u_on_a_destroyed_body_are_harmless(state):
     state.tool.on_event(_key(pygame.K_u), state)
 
 
+def test_the_hint_still_says_a_stepper_repeats_when_held():
+    """Regression guard for the prose loss nothing else would have caught: the
+    K-lock clause once replaced "hold a button to go faster" outright, and mass
+    scrubs by ratio at 1.06 a notch -- one click at a time to ignite Jupiter is
+    unusable, so the hint has to keep saying so."""
+    from src.app.tools import EditTool
+    assert "hold" in EditTool.hint
+
+
 def test_the_padlock_tooltip_does_not_promise_K_acts_on_this_row(state):
     """Control.hint() appends "[K]" to anything carrying a hotkey, and K acts on
     the *selected* row, not the hovered one.  So hovering the Density padlock

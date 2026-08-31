@@ -671,8 +671,8 @@ class EditTool(Tool):
         if index is None:
             return False
         world = state.sim.world
-        fields = self._fields(world, index)
         if field is None:
+            fields = self._fields(world, index)
             field = fields[min(self.field_index, len(fields) - 1)]
         elif not self._pick_row(state, field):
             return False
