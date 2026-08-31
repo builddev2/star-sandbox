@@ -414,3 +414,19 @@ def test_k_and_u_on_a_destroyed_body_are_harmless(state):
     state.sim.world.remove(state.selected_index)
     state.tool.on_event(_key(pygame.K_k), state)
     state.tool.on_event(_key(pygame.K_u), state)
+
+
+def test_the_padlock_tooltip_does_not_promise_K_acts_on_this_row(state):
+    """Control.hint() appends "[K]" to anything carrying a hotkey, and K acts on
+    the *selected* row, not the hovered one.  So hovering the Density padlock
+    while Mass is picked must not read as a promise that K will lock density.
+    """
+    from src import edits
+    body = state.sim.world.bodies[state.selected_index]
+    for field in edits.edit_fields(body):
+        edits.toggle_lock(body, field)          # check the locked wording too
+    for lock in _locks(state.tool.controls(state, _metrics())):
+        assert "the row that is picked" in lock.tooltip, lock.tooltip
+    edits.unlock_all(body)
+    for lock in _locks(state.tool.controls(state, _metrics())):
+        assert "the row that is picked" in lock.tooltip, lock.tooltip

@@ -566,10 +566,13 @@ class EditTool(Tool):
                 Control("edit.step", icon=icons[1], payload=(field, step),
                         compact=True, repeat=field != "material",
                         enabled=not locked, tooltip="More %s" % field),
+                # The hotkey is appended by Control.hint(), and K acts on
+                # whichever row is *selected* -- so the text must not read as a
+                # promise about this row, which may not be the selected one.
                 Control("edit.lock", icon="lock" if locked else "unlock",
                         payload=field, compact=True, hotkey="K", active=locked,
-                        tooltip=("Unlock %s -- let it be changed again" % field)
-                        if locked else ("Lock %s -- pin it where it is" % field)),
+                        tooltip="%s %s -- K locks or frees the row that is picked"
+                                % ("Unlock" if locked else "Lock", field)),
             ])
         # Unlock-all shares the Collapse row rather than taking one of its own:
         # at the interface floor a seventh row reaches past the transport bar.
