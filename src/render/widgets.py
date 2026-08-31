@@ -483,6 +483,32 @@ def draw_icon(surface, name, rect, colour):
     elif name == "close":
         pygame.draw.line(surface, colour, (cx - r, cy - r), (cx + r, cy + r), 1)
         pygame.draw.line(surface, colour, (cx - r, cy + r), (cx + r, cy - r), 1)
+    elif name in ("lock", "unlock"):
+        # A padlock: a body with a keyhole, and a shackle above it.  Drawn from
+        # straight lines rather than an arc because an arc inside a box this
+        # small renders nothing at all, and this button is eleven pixels square
+        # at the coarsest grid.  The two states differ by where the shackle
+        # sits -- seated in the body, or lifted and slid off to one side -- so
+        # they read as one object in two states rather than two glyphs.
+        body_box = pygame.Rect(0, 0, max(5, 2 * r - 1), max(4, r + 1))
+        body_box.centerx = cx
+        body_box.bottom = min(rect.bottom - 1, cy + r)
+        pygame.draw.rect(surface, colour, body_box, 1)
+        surface.set_at((body_box.centerx, body_box.centery), colour)
+        top = max(y, body_box.top - max(2, r - 1))
+        left = body_box.left + 2
+        right = max(left + 2, body_box.right - 3)
+        if name == "lock":
+            pygame.draw.line(surface, colour, (left, top), (right, top), 1)
+            pygame.draw.line(surface, colour, (left, top), (left, body_box.top), 1)
+            pygame.draw.line(surface, colour, (right, top), (right, body_box.top), 1)
+        else:
+            shift = max(1, r // 2)
+            lifted, hinge = left + shift, min(rect.right - 1, right + shift)
+            pygame.draw.line(surface, colour, (lifted, top), (hinge, top), 1)
+            pygame.draw.line(surface, colour, (hinge, top), (hinge, body_box.top), 1)
+            pygame.draw.line(surface, colour, (lifted, top),
+                             (lifted, top + max(1, (body_box.top - top) // 2)), 1)
     elif name == "circle":
         pygame.draw.circle(surface, colour, (cx, cy), r, 1)
     elif name == "star":

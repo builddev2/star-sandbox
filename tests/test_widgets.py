@@ -98,7 +98,8 @@ def test_a_readout_is_not_clickable():
 ICON_NAMES = ("look", "throw", "edit", "play", "pause", "slower", "faster", "reset",
               "trails", "sizes", "labels", "grid", "fullscreen", "follow", "flyto",
               "stop", "trash", "plus", "minus", "left", "right", "up", "down",
-              "list", "close", "circle", "star", "blackhole", "help", "home", "power")
+              "list", "close", "circle", "star", "blackhole", "help", "home", "power",
+              "lock", "unlock")
 
 
 @pytest.mark.parametrize("name", ICON_NAMES)
@@ -176,3 +177,26 @@ def test_an_empty_tooltip_draws_nothing(font):
     surface.fill((0, 0, 0))
     assert draw_tooltip(surface, font, "", pygame.Rect(10, 10, 10, 10)) is None
     assert _ink(surface, (0, 0, 0)) == 0
+
+
+def test_the_lock_and_unlock_icons_read_as_a_pair_at_button_size():
+    """These two are the whole readout on the padlock button, and they have to
+    work at the size the +/- glyphs already draw at -- eight pixels, at the
+    coarsest grid in the smallest window.  Which is also why neither is drawn
+    with an arc: pygame renders nothing at all for an arc in a box this small.
+    """
+    from src.render import widgets
+    drawn = {}
+    for name in ("lock", "unlock"):
+        surface = pygame.Surface((24, 24))
+        surface.fill((0, 0, 0))
+        rect = pygame.Rect(8, 8, 8, 8)
+        widgets.draw_icon(surface, name, rect, (255, 255, 255))
+        drawn[name] = {(x, y) for x in range(24) for y in range(24)
+                       if surface.get_at((x, y))[:3] != (0, 0, 0)}
+        assert len(drawn[name]) >= 8, "%s is invisible at eight pixels" % name
+        for point in drawn[name]:
+            assert rect.inflate(2, 2).collidepoint(point), \
+                "%s escaped its box" % name
+    assert drawn["lock"] != drawn["unlock"], \
+        "locked and unlocked draw the same thing"
