@@ -474,8 +474,9 @@ DRAG_PIXELS_PER_NOTCH = 6.0
 
 class EditTool(Tool):
     name = "Edit"
-    hint = ("Click a body, then use the -- and + buttons  -  Up/Down picks a row "
-            "and Left/Right changes it  -  K locks a row so nothing can move it")
+    hint = ("Click a body, then use the -- and + buttons  -  hold one to go faster "
+            " -  Up/Down picks a row and Left/Right changes it  -  K locks a row "
+            "so nothing can move it")
     context_title = "Edit"
 
     #: Notches one press of a stepper applies.  Mass moves three at a time
