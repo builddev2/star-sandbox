@@ -508,6 +508,32 @@ class EditTool(Tool):
             return 1
         return len(self._fields(state.sim.world, index))
 
+    def _pick_row(self, state, field):
+        """Point ``field_index`` at ``field``'s row.  False if there is no such row.
+
+        The panel is built at the end of a frame from the body as it was then,
+        and the press it answers arrives at the start of the next one -- or,
+        for a held stepper, many frames later, because ``UiLayer`` keeps the
+        pressed ``Control`` object while ``ui.build`` replaces the panel around
+        it.  In between the body can change kind, and ``edit_fields`` then
+        returns a different tuple: a planet that merges past the ignition
+        threshold loses its Temp row, and ``fields.index("temp")`` on a star
+        raises.  A destroyed body is the same story with ``selected_index``
+        gone.
+
+        Doing nothing is the whole fix.  Guessing a row by position would pin
+        or scrub whichever field happened to land at that index instead, and
+        the panel is rebuilt from the new kind before the next press anyway.
+        """
+        index = state.selected_index
+        if index is None:
+            return False
+        fields = self._fields(state.sim.world, index)
+        if field not in fields:
+            return False
+        self.field_index = fields.index(field)
+        return True
+
     def field_values(self, world, index):
         """The editable values, formatted the way the panel shows them.
 
@@ -598,13 +624,11 @@ class EditTool(Tool):
 
     def perform(self, control, state):
         if control.id == "edit.field":
-            fields = self._fields(state.sim.world, state.selected_index)
-            self.field_index = fields.index(control.payload)
-            return True
+            return self._pick_row(state, control.payload)
         if control.id == "edit.step":
             field, notches = control.payload
-            fields = self._fields(state.sim.world, state.selected_index)
-            self.field_index = fields.index(field)
+            if not self._pick_row(state, field):
+                return False
             self._scrub(state, notches)
             return True
         if control.id == "edit.lock":
@@ -650,8 +674,8 @@ class EditTool(Tool):
         fields = self._fields(world, index)
         if field is None:
             field = fields[min(self.field_index, len(fields) - 1)]
-        else:
-            self.field_index = fields.index(field)
+        elif not self._pick_row(state, field):
+            return False
         edits.toggle_lock(world.bodies[index], field)
         return True
 

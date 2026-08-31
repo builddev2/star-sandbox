@@ -430,3 +430,73 @@ def test_the_padlock_tooltip_does_not_promise_K_acts_on_this_row(state):
     edits.unlock_all(body)
     for lock in _locks(state.tool.controls(state, _metrics())):
         assert "the row that is picked" in lock.tooltip, lock.tooltip
+
+
+# --- a control from a panel the body has outgrown ---------------------------------
+
+def _stale_planet_controls(state):
+    """The Edit panel for a planet, and then a body that is no longer one.
+
+    The panel is built at the end of a frame from the body as it was then; the
+    press it answers arrives at the start of the next one, or -- with a held
+    stepper, which UiLayer keeps a reference to across frames -- many frames
+    later.  A merge in between can ignite the body, and edit_fields then stops
+    offering Temp.
+    """
+    from src import edits, units
+    rows = state.tool.controls(state, _metrics())
+    stale = {
+        "step": next(c for row in rows for c in row
+                     if c.id == "edit.step" and c.payload[0] == "temp"),
+        "field": next(c for row in rows for c in row
+                      if c.id == "edit.field" and c.payload == "temp"),
+        "lock": next(c for row in rows for c in row
+                     if c.id == "edit.lock" and c.payload == "temp"),
+    }
+    edits.set_mass(state.sim.world, state.selected_index,
+                   units.STAR_MASS_THRESHOLD * 1.1)
+    assert "temp" not in edits.edit_fields(
+        state.sim.world.bodies[state.selected_index])
+    return stale
+
+
+def test_a_stale_control_is_ignored_rather_than_raising(state):
+    """fields.index() raises ValueError on a row that has gone.  Saying "that
+    row is gone" and doing nothing is right: the panel is rebuilt from the new
+    kind before the next press anyway."""
+    stale = _stale_planet_controls(state)
+    # Read *after* igniting: _refresh_kind pins a star's temperature the moment
+    # it lights up, so the pre-ignition value is not what a no-op must preserve.
+    temperature = float(state.sim.world.temperature[state.selected_index])
+    for control in stale.values():
+        assert state.tool.perform(control, state) is False
+    assert float(state.sim.world.temperature[state.selected_index]) == \
+        pytest.approx(temperature)
+
+
+def test_a_stale_control_leaves_the_selected_row_alone(state):
+    """A press that does nothing must not move the cursor either."""
+    state.tool.field_index = 1
+    for control in _stale_planet_controls(state).values():
+        state.tool.perform(control, state)
+    assert state.tool.field_index == 1
+
+
+def test_a_stale_lock_does_not_lock_the_wrong_field(state):
+    """The worst outcome of guessing: silently pinning whatever row happens to
+    sit at that index in the new tuple."""
+    stale = _stale_planet_controls(state)
+    body = state.sim.world.bodies[state.selected_index]
+    state.tool.perform(stale["lock"], state)
+    assert body.locked_fields == frozenset()
+
+
+def test_pressing_an_edit_control_with_nothing_selected_is_harmless(state):
+    """selected_index is None once the selected body is destroyed, and
+    world.bodies[None] raises TypeError -- which edit.step and edit.field did."""
+    rows = state.tool.controls(state, _metrics())
+    controls = [c for row in rows for c in row
+                if c.id in ("edit.step", "edit.field", "edit.lock")]
+    state.selected_id = None
+    for control in controls:
+        assert state.tool.perform(control, state) is False
