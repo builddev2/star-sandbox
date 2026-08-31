@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from src import edits, materials, units
-from src.body import KIND_PLANET, KIND_STAR
+from src.body import KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR
 from src.sim import Simulation
 
 
@@ -227,3 +227,64 @@ def test_a_planet_is_offered_four_fields_and_a_star_only_three(sim):
     assert edits.edit_fields(earth) == ("mass", "density", "temp", "material")
     assert edits.edit_fields(sun) == ("mass", "density", "material")
     assert "temp" not in edits.edit_fields(sun)
+
+
+# --- locking ----------------------------------------------------------------------
+
+def test_every_body_starts_with_nothing_locked(sim):
+    for body in sim.world.bodies:
+        assert body.locked_fields == frozenset()
+
+
+def test_the_lock_set_is_a_frozenset(sim):
+    """Rebinding is the only way to change it, so two bodies can never end up
+    sharing one mutable set."""
+    body = sim.world.bodies[_index(sim, "Earth")]
+    assert isinstance(body.locked_fields, frozenset)
+
+
+def test_a_body_added_to_the_world_starts_unlocked(sim):
+    """Every fragment path -- shatter, graze, cratering ejecta, tidal debris --
+    goes through World.add, so this is also what says debris never inherits its
+    parent's locks."""
+    body = sim.world.add("Pebble", materials.get("rock"), 1e-9, 1e-6,
+                         (5.0, 0.0), (0.0, 1.0))
+    assert body.locked_fields == frozenset()
+
+
+def test_toggle_lock_flips_one_field_and_leaves_the_others(sim):
+    body = sim.world.bodies[_index(sim, "Earth")]
+    assert not edits.is_locked(body, "mass")
+    edits.toggle_lock(body, "mass")
+    assert edits.is_locked(body, "mass")
+    assert not edits.is_locked(body, "density")
+    edits.toggle_lock(body, "mass")
+    assert not edits.is_locked(body, "mass")
+
+
+def test_unlock_all_empties_the_set(sim):
+    body = sim.world.bodies[_index(sim, "Earth")]
+    for field in ("mass", "density", "temp", "material"):
+        edits.toggle_lock(body, field)
+    edits.unlock_all(body)
+    assert body.locked_fields == frozenset()
+
+
+def test_unlock_all_with_nothing_locked_is_harmless(sim):
+    body = sim.world.bodies[_index(sim, "Earth")]
+    edits.unlock_all(body)
+    assert body.locked_fields == frozenset()
+
+
+def test_a_lock_survives_the_body_changing_kind(sim):
+    """A star that cools back into a planet finds its old temperature lock
+    still in place.  A kind change is not a reset -- while the body is a star
+    the lock is simply inert, because the panel offers no Temp row for one."""
+    i = _index(sim, "Earth")
+    body = sim.world.bodies[i]
+    edits.toggle_lock(body, "temp")
+    edits.set_mass(sim.world, i, units.STAR_MASS_THRESHOLD * 1.1)
+    assert body.kind == KIND_STAR
+    edits.set_mass(sim.world, i, units.EARTH_MASS)
+    assert body.kind == KIND_PLANET
+    assert edits.is_locked(body, "temp")

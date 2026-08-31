@@ -70,7 +70,8 @@ class Body:
     """Identity and appearance of one simulated object."""
 
     __slots__ = ("id", "name", "kind", "material", "trail", "born_day",
-                 "event_id", "no_collide_until", "seed", "rings", "spin", "disk")
+                 "event_id", "no_collide_until", "seed", "rings", "spin", "disk",
+                 "locked_fields")
 
     def __init__(self, body_id, name, material, kind=KIND_PLANET, born_day=0.0, seed=0):
         self.id = body_id
@@ -93,6 +94,14 @@ class Body:
         #: Feeding rate, 0 .. 1, driving how bright and how wide the accretion
         #: disk is drawn.  0 is a starved hole: shadow and photon ring only.
         self.disk = 0.0
+        #: Fields the child has pinned, named the way ``edits.edit_fields``
+        #: names them.  On the Body rather than in World's arrays for the same
+        #: reason ``spin`` and ``disk`` are: the O(n^2) force kernel never reads
+        #: it.  A frozenset because rebinding is then the only way to change it,
+        #: so two bodies can never end up sharing one mutable set -- and nothing
+        #: inherits it: a fresh body, a collision fragment and a tidal fragment
+        #: all arrive with nothing locked.
+        self.locked_fields = frozenset()
 
     @property
     def is_star(self):

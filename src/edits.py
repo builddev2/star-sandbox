@@ -235,3 +235,34 @@ def cycle_material(world, index, step=1):
     keys = [m.key for m in materials.MATERIALS]
     current = keys.index(body.material.key)
     set_material(world, index, materials.MATERIALS[(current + step) % len(keys)])
+
+
+# --- locking ----------------------------------------------------------------------
+#
+# A lock is a standing preference for *this* body rather than a session flag,
+# which is why it lives on the Body and not in this module: select away and back,
+# or leave the Edit tool and return, and it is still there.
+#
+# It guards its **own** field and nothing else.  Locking density does not stop a
+# material swap from moving density, because ``set_material`` is editing
+# material, not density.  Chasing a value through every other field that touches
+# it is bookkeeping nobody asked for, and it would make "locked" mean something
+# slightly different in every row.
+
+
+def is_locked(body, field):
+    """True if ``field`` on this body refuses to be edited."""
+    return field in body.locked_fields
+
+
+def toggle_lock(body, field):
+    """Lock ``field`` if it is free; free it if it is locked."""
+    if field in body.locked_fields:
+        body.locked_fields = body.locked_fields - {field}
+    else:
+        body.locked_fields = body.locked_fields | {field}
+
+
+def unlock_all(body):
+    """Free every field at once -- one press to undo a panel full of padlocks."""
+    body.locked_fields = frozenset()
