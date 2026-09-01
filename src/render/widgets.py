@@ -310,6 +310,20 @@ def draw_slider(surface, control, rect, pressed=False):
     pygame.draw.rect(surface, palette.BUTTON_EDGE_ACTIVE, thumb, 1)
 
 
+def draw_bar(surface, rect, fraction, colour, bg=None):
+    """A horizontal filled bar, clamped to 0..1 -- a bounded quantity read at a
+    glance (how close to ignition, how close to boiling) instead of only as a
+    number nobody has an intuition for.
+    """
+    pygame.draw.rect(surface, bg if bg is not None else palette.BUTTON, rect)
+    frac = min(1.0, max(0.0, fraction))
+    if frac > 0.0:
+        fill = pygame.Rect(rect.x, rect.y, max(1, int(round(rect.width * frac))),
+                           rect.height)
+        pygame.draw.rect(surface, colour, fill)
+    pygame.draw.rect(surface, palette.BUTTON_EDGE, rect, 1)
+
+
 # --- tooltips -------------------------------------------------------------------
 
 def draw_tooltip(surface, font, text, anchor, prefer_above=True):

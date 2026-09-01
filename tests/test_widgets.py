@@ -49,6 +49,25 @@ def test_raised_edge_is_lighter_than_the_ordinary_button_edge():
     assert sum(palette.RAISED_EDGE) > sum(palette.BUTTON_EDGE)
 
 
+def test_a_bar_fills_by_fraction():
+    from src.render import palette, widgets
+    surface = pygame.Surface((100, 10))
+    surface.fill((0, 0, 0))
+    widgets.draw_bar(surface, pygame.Rect(0, 0, 100, 10), 0.5, palette.ACCENT)
+    lit = [x for x in range(100) if surface.get_at((x, 5))[:3] == palette.ACCENT]
+    assert 40 <= len(lit) <= 55
+
+
+def test_a_bar_clamps_outside_zero_and_one():
+    from src.render import palette, widgets
+    for fraction, expected_min in ((-1.0, 0), (5.0, 95)):
+        surface = pygame.Surface((100, 10))
+        surface.fill((0, 0, 0))
+        widgets.draw_bar(surface, pygame.Rect(0, 0, 100, 10), fraction, palette.ACCENT)
+        lit = sum(1 for x in range(100) if surface.get_at((x, 5))[:3] == palette.ACCENT)
+        assert lit >= expected_min or lit == 0
+
+
 # --- metrics ----------------------------------------------------------------------
 
 def test_every_size_grows_with_the_font(font):
