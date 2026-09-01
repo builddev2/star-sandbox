@@ -30,6 +30,25 @@ def _ink(surface, palette_space=None):
                if surface.get_at((x, y))[:3] != background)
 
 
+# --- palette tiers ------------------------------------------------------------------
+
+def test_the_elevation_ladder_only_ever_gets_lighter():
+    from src.render import palette
+    ladder = [palette.SPACE, palette.PANEL, palette.PANEL_ROW, palette.BUTTON]
+    for dim, brighter in zip(ladder, ladder[1:]):
+        assert sum(brighter) > sum(dim), "%s is not lighter than %s" % (brighter, dim)
+
+
+def test_text_faint_is_dimmer_than_text_dim():
+    from src.render import palette
+    assert sum(palette.TEXT_FAINT) < sum(palette.TEXT_DIM)
+
+
+def test_raised_edge_is_lighter_than_the_ordinary_button_edge():
+    from src.render import palette
+    assert sum(palette.RAISED_EDGE) > sum(palette.BUTTON_EDGE)
+
+
 # --- metrics ----------------------------------------------------------------------
 
 def test_every_size_grows_with_the_font(font):
