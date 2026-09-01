@@ -174,9 +174,37 @@ def orbit_facts(world, index):
 # --- drawing ----------------------------------------------------------------------
 
 class Hud:
+    #: Follow/Fly-to/Stop/Delete now sit above the stats, always as a fixed
+    #: 2x2 grid -- see the design spec's "Right context column" section for
+    #: why fixed beats the old one-row-if-it-fits branch.
+    ACTIONS_ROWS = 2
+
     def __init__(self, font):
         self.font = font
         self.line = font.height + 2
+
+    def actions_band_height(self, m):
+        """Pixels the fixed action grid reserves above the stats."""
+        return (self.ACTIONS_ROWS * m.btn_h + (self.ACTIONS_ROWS - 1) * m.gap
+                + 2 * m.gap)
+
+    def headline_stats(self, world, index):
+        """The one or two numbers worth seeing before the chevron is clicked.
+
+        Kind-specific, the same split `_rows` already makes: a star has
+        nothing more headline-worthy than its mass, a planet's temperature is
+        the number a child asks about second, and a black hole's horizon is
+        the number that makes it a black hole.
+        """
+        body = world.bodies[index]
+        mass = float(world.mass[index])
+        if body.kind == KIND_BLACK_HOLE:
+            return [("Mass", format_mass(mass)),
+                    ("Horizon", format_length(float(world.radius[index])))]
+        if body.kind == KIND_STAR:
+            return [("Mass", format_mass(mass))]
+        return [("Mass", format_mass(mass)),
+                ("Temp", format_body_temperature(float(world.temperature[index])))]
 
     def _panel(self, surface, rect):
         box = pygame.Surface(rect.size, pygame.SRCALPHA)
@@ -303,24 +331,37 @@ class Hud:
     def visible_rows(self, state, index, height):
         """The inspector rows that fit above the buttons underneath it.
 
-        On a short window the readout is trimmed rather than allowed to grow
-        under the action buttons: a number you cannot see is worth less than a
-        button you cannot press.
+        Collapsed, this is identity plus `headline_stats` -- a glance.
+        Expanded, it is the old trimmed-to-fit full readout.  Either way the
+        panel that grows under a short window is the *expanded* one, since
+        collapsed is already short enough to never need trimming in practice.
         """
+        world = state.sim.world
+        body = world.bodies[index]
+        if not state.inspector_expanded:
+            rows = [(body.name, palette.SELECT),
+                    ("black hole" if body.kind == KIND_BLACK_HOLE
+                     else "%s  -  %s" % (body.kind, body.material.name),
+                     palette.TEXT_DIM)]
+            rows += [("%-10s %s" % (label, value), palette.TEXT)
+                     for label, value in self.headline_stats(world, index)]
+            return rows
         rows = self._rows(state, index)
         m = self.metrics(0, height)
-        # Two button rows plus the gaps around them is the worst case the
-        # interface can place below this panel.
-        reserved = 2 * (m.btn_h + m.gap) + m.gap
+        reserved = self.actions_band_height(m) + m.gap
         room = m.content_bottom - m.content_top - reserved - PAD * 2
         return rows[:max(1, room // self.line)]
 
     def inspector_rect(self, state, width, height):
-        """Where the selected-body readout sits, or None when nothing is selected.
+        """Where the selected-body panel sits, or None with no selection.
 
-        ``ui.py`` anchors the Follow/Fly to/Stop/Delete buttons to this, which
-        is why it is computed here rather than inside the drawing code: one
-        rectangle, two readers, no chance of them disagreeing.
+        Starts a fixed `actions_band_height` below the top of the column --
+        actions sit above this rect, not below it, so this method no longer
+        needs to know anything about the action buttons themselves, only how
+        tall their fixed band is.  ``ui.py`` reads this rect to anchor the
+        actions, the expand chevron and the live tool's own controls, which is
+        why it is computed here rather than inside the drawing code: one
+        rectangle, several readers, no chance of them disagreeing.
         """
         index = state.selected_index
         if index is None:
@@ -329,7 +370,8 @@ class Hud:
         rows = self.visible_rows(state, index, height)
         panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + PAD * 2
         panel_h = len(rows) * self.line + PAD * 2
-        return pygame.Rect(width - panel_w - PAD, m.content_top, panel_w, panel_h)
+        top = m.content_top + self.actions_band_height(m) + m.gap
+        return pygame.Rect(width - panel_w - PAD, top, panel_w, panel_h)
 
     def _draw_inspector(self, surface, state):
         index = state.selected_index
