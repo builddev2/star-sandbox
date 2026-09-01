@@ -963,3 +963,38 @@ def test_no_tether_without_a_selection(state, ui):
     surface = pygame.Surface(SIZE)
     surface.fill(palette.SPACE)
     ui.draw(surface, state)
+
+
+def _tether_visible(ui, state):
+    from src.render import palette
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)
+    inspector = ui.hud.inspector_rect(state, *SIZE)
+    strip_x = inspector.left - 4
+    return any(surface.get_at((strip_x, y))[:3] == palette.SELECT
+              for y in range(inspector.top, inspector.bottom))
+
+
+def test_the_tether_fades_a_few_seconds_after_a_selection(state, ui):
+    from src.app.ui import TETHER_VISIBLE_MS
+    body = state.sim.world.bodies[3]
+    now = pygame.time.get_ticks()
+    state.select(body.id, now=now)
+    ui.build(state, SIZE)
+    assert _tether_visible(ui, state)
+
+    state.selected_at = now - TETHER_VISIBLE_MS - 1
+    assert not _tether_visible(ui, state)
+
+
+def test_reselecting_the_same_body_brings_the_tether_back(state, ui):
+    from src.app.ui import TETHER_VISIBLE_MS
+    body = state.sim.world.bodies[3]
+    now = pygame.time.get_ticks()
+    state.select(body.id, now=now - TETHER_VISIBLE_MS - 1)
+    ui.build(state, SIZE)
+    assert not _tether_visible(ui, state)
+
+    state.select(body.id, now=now)
+    assert _tether_visible(ui, state)

@@ -41,6 +41,13 @@ REPEAT_INTERVAL_MS = 55
 #: Never spend a whole frame catching up on repeats after a stall.
 MAX_REPEATS_PER_FRAME = 8
 
+#: How long the selection tether stays drawn after a selection, in ms.  A
+#: permanent line to the inspector reads as clutter once the eye has made
+#: the connection; a few seconds is enough to make it, and re-picking a body
+#: (even the one already selected) restarts the countdown -- see
+#: AppState.select's ``selected_at``.
+TETHER_VISIBLE_MS = 3000
+
 #: Width of the body list, in characters.
 BODY_LIST_CHARS = 16
 
@@ -757,6 +764,8 @@ class UiLayer:
             return
         index = state.selected_index
         if index is None:
+            return
+        if pygame.time.get_ticks() - state.selected_at >= TETHER_VISIBLE_MS:
             return
         inspector = self.hud.inspector_rect(state, self.metrics.width,
                                             self.metrics.height)

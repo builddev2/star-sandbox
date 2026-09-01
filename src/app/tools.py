@@ -104,7 +104,7 @@ class SelectTool(Tool):
         if previous_id == body_id and now - previous_time < DOUBLE_CLICK_MS:
             state.camera.frame_body(state.sim.world, index)
             state.camera.follow_id = body_id
-        state.selected_id = body_id
+        state.select(body_id, now=now)
         self._last_click = (body_id, now)
 
 
@@ -405,7 +405,7 @@ class LaunchTool(Tool):
         if kind == KIND_BLACK_HOLE:
             body.spin = DEFAULT_BLACK_HOLE_SPIN
             body.disk = DEFAULT_BLACK_HOLE_DISK
-        state.selected_id = body.id
+        state.select(body.id)
         state.sim.refresh()
 
     # --- overlay ----------------------------------------------------------------
@@ -721,7 +721,7 @@ class EditTool(Tool):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             index = state.pick_body_at(*event.pos)
             if index is not None:
-                state.selected_id = state.sim.world.bodies[index].id
+                state.select(state.sim.world.bodies[index].id)
             self._drag_x = event.pos[0]
             return True
 

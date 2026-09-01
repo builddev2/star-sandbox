@@ -1,9 +1,22 @@
+import os
+
 import numpy as np
 import pytest
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
+import pygame
 
 from src.render.camera import Camera
 from src.render.draw import ViewSettings
 from src.sim import Simulation
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pygame():
+    pygame.init()
+    yield
+    pygame.quit()
 
 
 @pytest.fixture
@@ -185,3 +198,26 @@ def test_deselecting_collapses_the_inspector(state):
     state.toggle_inspector_expanded()
     state.select(None)
     assert state.inspector_expanded is False
+
+
+def test_selecting_stamps_the_selection_time(state):
+    state.select(state.sim.world.bodies[0].id, now=1000)
+    assert state.selected_at == 1000
+
+
+def test_reselecting_the_same_body_restamps_the_time(state):
+    """The tether line's 3-second countdown has to restart even when the
+    click lands on the body that was already selected -- this is what makes
+    that possible without watching selected_id for a change that never
+    happens."""
+    body = state.sim.world.bodies[0]
+    state.select(body.id, now=1000)
+    state.select(body.id, now=5000)
+    assert state.selected_at == 5000
+
+
+def test_cycling_selection_restamps_the_time(state):
+    state.select(state.sim.world.bodies[0].id, now=1000)
+    before = pygame.time.get_ticks()
+    state.cycle_selection()
+    assert state.selected_at >= before

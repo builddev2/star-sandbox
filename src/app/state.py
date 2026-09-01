@@ -7,6 +7,8 @@ start referring to a different planet.  Every read goes through index_of.
 
 import math
 
+import pygame
+
 from .. import units
 from ..render import scale
 from ..render.effects import EffectField
@@ -47,6 +49,13 @@ class AppState:
         #: and it would need a place to live on Body for a feature nobody
         #: requested.
         self.inspector_expanded = False
+        #: When the current selection was made, in ``pygame.time.get_ticks()``
+        #: milliseconds.  The selection tether (``ui.py``) reads this to fade
+        #: itself out a few seconds after a selection, and to restart that
+        #: countdown when a selection happens again -- including re-picking
+        #: the body that was already selected, which changes nothing else
+        #: this state tracks.
+        self.selected_at = 0
         self.time_index = DEFAULT_TIME_INDEX
         self.running = True
         self.help_visible = False
@@ -106,9 +115,10 @@ class AppState:
         index = self.selected_index
         return None if index is None else self.sim.world.bodies[index]
 
-    def select(self, body_id):
+    def select(self, body_id, now=None):
         self.selected_id = body_id
         self.inspector_expanded = False
+        self.selected_at = pygame.time.get_ticks() if now is None else now
 
     def toggle_inspector_expanded(self):
         self.inspector_expanded = not self.inspector_expanded
@@ -120,7 +130,7 @@ class AppState:
             return
         current = self.selected_index
         nxt = 0 if current is None else (current + step) % world.n
-        self.selected_id = world.bodies[nxt].id
+        self.select(world.bodies[nxt].id)
 
     def pick_body_at(self, sx, sy, internal_height=None):
         """Index of the body under a screen point, or None.
