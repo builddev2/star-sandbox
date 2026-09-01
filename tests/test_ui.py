@@ -927,3 +927,30 @@ def test_the_bodies_list_now_opens_on_the_left(state, ui):
     ui.build(state, SIZE)
     row = find(ui, "select.body")
     assert row.rect.centerx < SIZE[0] // 2
+
+
+def test_a_selected_bodys_tether_reaches_toward_the_inspector(state, ui):
+    from src.render import palette
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)
+
+    inspector = ui.hud.inspector_rect(state, *SIZE)
+    # A strip just left of the inspector's left edge, spanning its height:
+    # the tether has to cross this strip on its way from the body to the
+    # panel, wherever exactly the body sits.
+    strip_x = inspector.left - 4
+    hit = any(surface.get_at((strip_x, y))[:3] == palette.SELECT
+             for y in range(inspector.top, inspector.bottom))
+    assert hit
+
+
+def test_no_tether_without_a_selection(state, ui):
+    from src.render import palette
+    ui.build(state, SIZE)
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)

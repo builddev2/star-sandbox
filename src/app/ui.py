@@ -719,9 +719,31 @@ class UiLayer:
                         hovered=self._modal_control is hovered,
                         pressed=self._modal_control is self._pressed)
 
+        self._draw_tether(surface, state)
+
         if hovered is not None:
             draw_tooltip(surface, self.font, hovered.hint(), hovered.rect,
                          prefer_above=hovered.rect.centery > surface.get_height() // 2)
+
+    def _draw_tether(self, surface, state):
+        """A leader line from the selected body to the inspector's corner --
+        the "this on screen is that panel" link opposite corners used to
+        give away for free.  ``palette.SELECT`` throughout: it is already the
+        selection ring's colour (``render/draw.py``) and the inspector name
+        row's colour, so this does not introduce a fourth meaning for a new
+        colour, just extends the one selection already has.
+        """
+        index = state.selected_index
+        if index is None:
+            return
+        inspector = self.hud.inspector_rect(state, self.metrics.width,
+                                            self.metrics.height)
+        if inspector is None:
+            return
+        body_pos = state.camera.world_to_screen(state.sim.world.pos[index])
+        anchor = (inspector.left, inspector.top + self.metrics.line)
+        pygame.draw.line(surface, palette.SELECT,
+                         (int(body_pos[0]), int(body_pos[1])), anchor, 1)
 
     def _set_cursor(self, over_control):
         """Hand over a button, arrow everywhere else.
