@@ -11,7 +11,7 @@ import pygame
 
 from .. import orbits, units
 from ..body import KIND_BLACK_HOLE, KIND_STAR
-from . import palette
+from . import palette, widgets
 from .widgets import Metrics
 
 PAD = 6
@@ -325,8 +325,27 @@ class Hud:
                  palette.WARN),
             ]
 
-        rows += [("", palette.TEXT), (body.material.blurb, palette.TEXT_DIM)]
+        rows += [("", palette.TEXT), (body.material.blurb, palette.TEXT_FAINT)]
         return rows
+
+    def bar_specs(self, world, index, rows):
+        """(row_index, fraction, colour) for every row `_rows` gave a bar to.
+
+        Matched by the same text prefix `_rows` already writes, so the two
+        cannot drift apart without a row's own label changing too.
+        """
+        body = world.bodies[index]
+        specs = []
+        for i, (text, _colour) in enumerate(rows):
+            if text.startswith("Temp") and body.kind not in (KIND_STAR, KIND_BLACK_HOLE):
+                vapour = body.material.vapour_temperature_k
+                frac = float(world.temperature[index]) / vapour if vapour > 0 else 0.0
+                specs.append((i, frac, palette.WARN))
+            elif "heavier to ignite" in text:
+                mass = float(world.mass[index])
+                frac = mass / units.STAR_MASS_THRESHOLD if mass > 0 else 0.0
+                specs.append((i, frac, palette.ACCENT))
+        return specs
 
     def visible_rows(self, state, index, height):
         """The inspector rows that fit above the buttons underneath it.
@@ -381,9 +400,24 @@ class Hud:
         rect = self.inspector_rect(state, width, height)
         rows = self.visible_rows(state, index, height)
         self._panel(surface, rect)
+        if not state.inspector_expanded:
+            # The collapsed card is its own, slightly raised elevation tier --
+            # one step lighter than the panel it sits in, the same ladder
+            # `palette.py` defines for buttons, applied to a group of rows
+            # instead of a control.
+            pygame.draw.rect(surface, palette.PANEL_ROW, rect.inflate(-4, -4))
+        bars = dict((i, (frac, colour)) for i, frac, colour
+                   in self.bar_specs(state.sim.world, index, rows)) \
+               if state.inspector_expanded else {}
         for k, (text, colour) in enumerate(rows):
-            self.font.draw(surface, rect.x + PAD, rect.y + PAD + k * self.line,
-                           text, colour)
+            y = rect.y + PAD + k * self.line
+            self.font.draw(surface, rect.x + PAD, y, text, colour)
+            if k in bars:
+                frac, bar_colour = bars[k]
+                bar_w = self.font.width("X") * 10
+                bar_rect = pygame.Rect(rect.right - PAD - bar_w,
+                                       y + (self.line - 4) // 2, bar_w, 4)
+                widgets.draw_bar(surface, bar_rect, frac, bar_colour)
 
     def _draw_hint(self, surface, state):
         width, height = surface.get_size()
