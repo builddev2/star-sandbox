@@ -158,14 +158,10 @@ class UiLayer:
         self._build_bottom_hotbar(state, m, ctx)
         self._build_view_buttons(state, m, ctx)
         self._build_zoom_cluster(state, m)
-        # (m.pad, 0, m.content_top) is a placeholder rail-shaped tuple -- Task
-        # 10 replaces this with a real anchor below the inspector.  Bodies
-        # still has to sit clear of wherever this panel currently draws, or
-        # the two overlap and steal each other's clicks.
-        context_w = self._build_tool_context(state, m, (m.pad, 0, m.content_top))
-        self._build_body_list(state, m, m.pad + max(0, context_w))
         self._build_inspector_actions(state, m)
         self._build_inspector_expand(state, m)
+        self._build_tool_context(state, m)
+        self._build_body_list(state, m)
         self._build_help(state, m)
         return self.controls
 
@@ -218,21 +214,30 @@ class UiLayer:
 
         self._build_transport(state, m, top + m.btn_h + m.gap)
 
-    def _build_tool_context(self, state, m, rail):
-        """Whatever the live tool offers: throw presets, edit steppers."""
+    def _build_tool_context(self, state, m):
+        """Whatever the live tool offers: throw presets, edit steppers.
+
+        Anchored below the inspector when something is selected (the reading
+        path research kept coming back to: tool controls and the thing they
+        act on, one column, top to bottom) -- or near the top of the same
+        column when nothing is, since Throw needs no selection at all.
+        """
         tool = state.tool
         rows = tool.controls(state, m) if tool is not None else []
         if not rows:
             return 0
-        x, rail_w, bottom = rail
-        # The panel is as wide as its widest row, never narrower than the tool
-        # palette above it -- "Rocky planet" does not fit in a rail sized by the
-        # word "Throw", and a clipped label is a button nobody presses.
-        width = max(rail_w, max(
+
+        panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + 2 * HUD_PAD
+        width = max(panel_w, max(
             sum(m.icon_btn_w if c.compact else m.button_width(c) for c in row)
             + m.gap * (len(row) - 1) for row in rows))
-        top = bottom + m.gap * 4
-        height = len(rows) * m.btn_h + (len(rows) - 1) * m.gap + m.gap * 3 + m.line
+        x = m.width - width - HUD_PAD
+
+        inspector = self.hud.inspector_rect(state, m.width, m.height)
+        bottom = inspector.bottom if inspector is not None else m.content_top
+
+        top = bottom
+        height = len(rows) * m.btn_h + (len(rows) - 1) * m.gap + m.line
         self._panel(pygame.Rect(x - m.gap, top - m.gap, width + 2 * m.gap, height),
                     tool.context_title)
 
@@ -368,7 +373,7 @@ class UiLayer:
             self._place([(control, pygame.Rect(x, top, w, m.btn_h))])
             x += w + m.gap
 
-    def _build_body_list(self, state, m, left_edge):
+    def _build_body_list(self, state, m):
         """A scrollable list of everything in the system, selectable by name.
 
         This is what replaces Tab for someone who has never pressed Tab: the
@@ -378,7 +383,7 @@ class UiLayer:
             return
         world = state.sim.world
         width = m.font.width("X") * BODY_LIST_CHARS + 2 * m.pad
-        x = left_edge + m.gap * 3
+        x = m.pad
         top = m.content_top
         header = m.btn_h + m.gap
         row_h = m.line + 2

@@ -866,8 +866,13 @@ def test_the_tool_picker_and_transport_share_the_bottom_hotbar(ui):
     assert 0 <= gap < ui.metrics.btn_h
 
 
-def test_no_control_sits_on_the_left_edge_any_more(ui):
-    """The whole reason for this redesign: the left edge is open canvas."""
+def test_no_control_sits_on_the_left_edge_with_the_list_closed(state, ui):
+    """The whole reason for this redesign: the left edge is open canvas by
+    default.  It is legitimate for the Bodies drawer to use that space while
+    it is open (a later test covers that) -- this is the *closed* baseline.
+    """
+    state.show_body_list = False
+    ui.build(state, SIZE)
     left_band = ui.metrics.pad + ui.metrics.gap * 2
     assert not any(c.rect.left < left_band and c.rect.top > ui.metrics.top_h
                   for c in ui.controls)
@@ -897,3 +902,28 @@ def test_the_expand_chevron_opens_and_closes_the_full_stats(state, ui):
 
 def test_there_is_no_expand_chevron_without_a_selection(state, ui):
     assert find(ui, "inspector.expand") is None
+
+
+def test_the_throw_panel_sits_under_the_inspector_when_something_is_selected(state, ui):
+    from src.app.tools import LaunchTool
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    state.set_tool(LaunchTool)
+    ui.build(state, SIZE)
+    preset = find(ui, "throw.preset", payload=0)
+    inspector_bottom = ui.hud.inspector_rect(state, *SIZE).bottom
+    assert preset.rect.top >= inspector_bottom
+
+
+def test_the_throw_panel_sits_near_the_top_with_nothing_selected(state, ui):
+    from src.app.tools import LaunchTool
+    state.set_tool(LaunchTool)
+    ui.build(state, SIZE)
+    preset = find(ui, "throw.preset", payload=0)
+    assert preset.rect.top < SIZE[1] // 3
+
+
+def test_the_bodies_list_now_opens_on_the_left(state, ui):
+    ui.build(state, SIZE)
+    row = find(ui, "select.body")
+    assert row.rect.centerx < SIZE[0] // 2

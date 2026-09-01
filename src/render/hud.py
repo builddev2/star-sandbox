@@ -185,8 +185,7 @@ class Hud:
 
     def actions_band_height(self, m):
         """Pixels the fixed action grid reserves above the stats."""
-        return (self.ACTIONS_ROWS * m.btn_h + (self.ACTIONS_ROWS - 1) * m.gap
-                + 2 * m.gap)
+        return self.ACTIONS_ROWS * m.btn_h + (self.ACTIONS_ROWS - 1) * m.gap
 
     def headline_stats(self, world, index):
         """The one or two numbers worth seeing before the chevron is clicked.
@@ -358,10 +357,11 @@ class Hud:
         world = state.sim.world
         body = world.bodies[index]
         if not state.inspector_expanded:
-            rows = [(body.name, palette.SELECT),
-                    ("black hole" if body.kind == KIND_BLACK_HOLE
-                     else "%s  -  %s" % (body.kind, body.material.name),
-                     palette.TEXT_DIM)]
+            # Name plus the headline numbers only -- kind and material still
+            # show, one click away, in the expanded `_rows` groups.  Keeping
+            # the glance card to this few rows is what lets it fit at the
+            # floor window size without trimming the numbers themselves.
+            rows = [(body.name, palette.SELECT)]
             rows += [("%-10s %s" % (label, value), palette.TEXT)
                      for label, value in self.headline_stats(world, index)]
             return rows
@@ -389,7 +389,7 @@ class Hud:
         rows = self.visible_rows(state, index, height)
         panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + PAD * 2
         panel_h = len(rows) * self.line + PAD * 2
-        top = m.content_top + self.actions_band_height(m) + m.gap
+        top = m.content_top + self.actions_band_height(m)
         return pygame.Rect(width - panel_w - PAD, top, panel_w, panel_h)
 
     def _draw_inspector(self, surface, state):
