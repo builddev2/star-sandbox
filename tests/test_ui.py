@@ -871,3 +871,12 @@ def test_no_control_sits_on_the_left_edge_any_more(ui):
     left_band = ui.metrics.pad + ui.metrics.gap * 2
     assert not any(c.rect.left < left_band and c.rect.top > ui.metrics.top_h
                   for c in ui.controls)
+
+
+def test_the_action_buttons_sit_above_the_inspector_stats(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    follow = find(ui, "body.follow")
+    stats_top = ui.hud.inspector_rect(state, *SIZE).top
+    assert follow.rect.bottom <= stats_top

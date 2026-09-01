@@ -25,6 +25,8 @@ belongs to that panel until the button comes back up.
 import pygame
 
 from ..render import palette
+from ..render.hud import PAD as HUD_PAD
+from ..render.hud import PANEL_WIDTH_CHARS
 from ..render.widgets import (Control, Metrics, draw_button, draw_panel,
                               draw_tooltip, slider_track)
 from . import tools as tools_module
@@ -414,40 +416,35 @@ class UiLayer:
             y += row_h
 
     def _build_inspector_actions(self, state, m):
-        """What you can do to the selected body, under its readout panel."""
+        """Follow/Fly to/Stop/Delete -- always a fixed 2x2 grid, at the very
+        top of the right column.  Above the stats, not below them: these are
+        what the panel is for, and the stats are reference.
+        """
         if state.selected_index is None:
             return
-        rect = self.hud.inspector_rect(state, m.width, m.height) \
-            if self.hud is not None else None
-        if rect is not None:
-            left, right, top = rect.x, rect.right, rect.bottom + m.gap
-        else:
-            width = m.width // 4
-            left, right, top = m.width - m.pad - width, m.width - m.pad, m.content_top
+        panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + 2 * HUD_PAD
+        left = m.width - panel_w - HUD_PAD
+        top = m.content_top
 
         following = state.camera.follow_id == state.selected_id
-        row = [
+        rows = [[
             Control("body.follow", label="Follow", icon="follow", hotkey="F",
                     tooltip="Keep the camera on it", active=following),
             Control("body.flyto", label="Fly to", icon="flyto",
                     tooltip="Zoom right in on it"),
+        ], [
             Control("body.stop", label="Stop", icon="stop", hotkey="0",
                     tooltip="Take its speed away and watch it fall"),
             Control("body.delete", icon="trash", hotkey="Del", compact=True,
                     danger=True, tooltip="Remove it from the system"),
-        ]
+        ]]
 
-        # Two rows when the inspector is too narrow for four buttons.
-        width = right - left
-        natural = sum(m.icon_btn_w if c.compact else m.button_width(c) for c in row)
-        natural += m.gap * (len(row) - 1)
-        rows = [row] if natural <= width else [row[:2], row[2:]]
-
-        height = len(rows) * m.btn_h + (len(rows) - 1) * m.gap + 2 * m.gap
-        self._panel(pygame.Rect(left - m.gap, top - m.gap, width + 2 * m.gap, height))
+        height = self.hud.actions_band_height(m) - 2 * m.gap
+        self._panel(pygame.Rect(left - m.gap, top - m.gap,
+                                panel_w + 2 * m.gap, height + 2 * m.gap))
         y = top
         for group in rows:
-            self._place(layout_row(group, left, y, m, width))
+            self._place(layout_row(group, left, y, m, panel_w))
             y += m.btn_h + m.gap
 
     # --- hit testing -------------------------------------------------------------
