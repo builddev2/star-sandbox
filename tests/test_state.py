@@ -166,3 +166,22 @@ def test_elapsed_label_reports_years_and_days(state):
 
 def test_hint_falls_back_when_no_tool_is_active(state):
     assert isinstance(state.hint, str) and state.hint
+
+
+def test_the_inspector_starts_collapsed(state):
+    assert state.inspector_expanded is False
+
+
+def test_selecting_a_new_body_collapses_the_inspector_again(state):
+    state.select(state.sim.world.bodies[0].id)
+    state.toggle_inspector_expanded()
+    assert state.inspector_expanded is True
+    state.select(state.sim.world.bodies[1].id)
+    assert state.inspector_expanded is False
+
+
+def test_deselecting_collapses_the_inspector(state):
+    state.select(state.sim.world.bodies[0].id)
+    state.toggle_inspector_expanded()
+    state.select(None)
+    assert state.inspector_expanded is False

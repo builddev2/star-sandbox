@@ -42,6 +42,11 @@ class AppState:
         self.view = view
         self.effects = EffectField()
         self.selected_id = None
+        #: Collapsed by default: a headline number is what a fresh selection
+        #: earns, not a page of stats.  Not per-body -- nothing asked for that,
+        #: and it would need a place to live on Body for a feature nobody
+        #: requested.
+        self.inspector_expanded = False
         self.time_index = DEFAULT_TIME_INDEX
         self.running = True
         self.help_visible = False
@@ -103,6 +108,10 @@ class AppState:
 
     def select(self, body_id):
         self.selected_id = body_id
+        self.inspector_expanded = False
+
+    def toggle_inspector_expanded(self):
+        self.inspector_expanded = not self.inspector_expanded
 
     def cycle_selection(self, step=1):
         world = self.sim.world
