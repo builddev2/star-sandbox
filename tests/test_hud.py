@@ -330,6 +330,132 @@ def test_a_star_shows_the_surface_temperature_its_mass_gives_it(state):
     assert "{:,.0f} K".format(units.star_temperature(1.0)) in temp_row
 
 
+def test_headline_stats_for_a_planet_are_mass_and_temperature(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    stats = Hud(PixelFont(14)).headline_stats(state.sim.world, state.selected_index)
+    labels = [label for label, _ in stats]
+    assert labels == ["Mass", "Temp"]
+
+
+def test_headline_stats_for_a_star_are_mass_only(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    sun = next(b for b in state.sim.world.bodies if b.name == "Sun")
+    state.select(sun.id)
+    stats = Hud(PixelFont(14)).headline_stats(state.sim.world, state.selected_index)
+    assert [label for label, _ in stats] == ["Mass"]
+
+
+def test_headline_stats_for_a_black_hole_are_mass_and_horizon(state):
+    from src import edits
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    sun = next(b for b in state.sim.world.bodies if b.name == "Sun")
+    state.select(sun.id)
+    edits.collapse(state.sim.world, state.selected_index)
+    stats = Hud(PixelFont(14)).headline_stats(state.sim.world, state.selected_index)
+    assert [label for label, _ in stats] == ["Mass", "Horizon"]
+
+
+def test_a_collapsed_inspector_shows_far_fewer_rows_than_expanded(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    hud = Hud(PixelFont(14))
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    state.inspector_expanded = False
+    collapsed = hud.visible_rows(state, state.selected_index, 700)
+    state.inspector_expanded = True
+    expanded = hud.visible_rows(state, state.selected_index, 700)
+    assert len(collapsed) < len(expanded)
+
+
+def test_the_inspector_rect_is_shorter_collapsed_than_expanded(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    hud = Hud(PixelFont(14))
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    state.inspector_expanded = False
+    collapsed = hud.inspector_rect(state, 1000, 700)
+    state.inspector_expanded = True
+    expanded = hud.inspector_rect(state, 1000, 700)
+    assert collapsed.height < expanded.height
+    # Both still reserve the same fixed actions band above them, so they start
+    # at the same top -- only the bottom moves.
+    assert collapsed.top == expanded.top
+
+
+def test_bar_specs_include_the_ignition_row_for_a_light_planet(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    hud = Hud(PixelFont(14))
+    rows = hud._rows(state, state.selected_index)
+    specs = hud.bar_specs(state.sim.world, state.selected_index, rows)
+    ignition_i = next(i for i, (text, _) in enumerate(rows)
+                      if "heavier to ignite" in text)
+    assert any(i == ignition_i for i, _frac, _colour in specs)
+
+
+def test_bar_specs_include_the_temperature_row(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    hud = Hud(PixelFont(14))
+    rows = hud._rows(state, state.selected_index)
+    specs = hud.bar_specs(state.sim.world, state.selected_index, rows)
+    temp_i = next(i for i, (text, _) in enumerate(rows) if text.startswith("Temp"))
+    assert any(i == temp_i for i, _frac, _colour in specs)
+    frac = next(f for i, f, _c in specs if i == temp_i)
+    assert 0.0 <= frac <= 1.0
+
+
+def test_a_star_has_no_ignition_bar(state):
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    sun = next(b for b in state.sim.world.bodies if b.name == "Sun")
+    state.select(sun.id)
+    hud = Hud(PixelFont(14))
+    rows = hud._rows(state, state.selected_index)
+    specs = hud.bar_specs(state.sim.world, state.selected_index, rows)
+    assert not any("heavier to ignite" in rows[i][0] for i, _f, _c in specs)
+
+
+def test_the_material_blurb_is_the_dimmest_row(state):
+    from src.render import palette
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    rows = Hud(PixelFont(14))._rows(state, state.selected_index)
+    text, colour = rows[-1]
+    assert text == earth.material.blurb
+    assert colour == palette.TEXT_FAINT
+
+
+def test_the_collapsed_card_draws_a_raised_background_band(state):
+    from src.render import palette
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    state.inspector_expanded = False
+    hud = Hud(PixelFont(14))
+    surface = pygame.Surface((1000, 700))
+    surface.fill(palette.SPACE)
+    hud.draw(surface, state)
+    rect = hud.inspector_rect(state, 1000, 700)
+    band = [surface.get_at((x, rect.centery))[:3]
+           for x in range(rect.left, rect.right)]
+    assert palette.PANEL_ROW in band
+
+
 def test_the_temperature_row_fits_the_inspector_panel():
     """The panel is a fixed number of characters wide; a row that overruns it
     is a number nobody can read."""

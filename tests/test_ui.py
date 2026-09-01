@@ -403,7 +403,16 @@ def test_clicking_a_name_selects_that_body(state, ui):
     earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
     click_id(ui, state, "select.body", payload=earth.id)
     assert state.selected_id == earth.id
-    assert find(ui, "select.body", payload=earth.id).active
+
+
+def test_picking_a_name_closes_the_drawer(state, ui):
+    """Borrowed space, not a permanent column -- picking a name is what the
+    drawer is for, so picking one closes it, the same as its own X does."""
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    assert state.show_body_list
+    click_id(ui, state, "select.body", payload=earth.id)
+    assert not state.show_body_list
+    assert find(ui, "select.body") is None
 
 
 def test_the_list_closes_and_the_rail_button_brings_it_back(state, ui):
@@ -849,3 +858,143 @@ def test_both_lock_keys_are_documented_and_have_buttons(state, ui):
     assert "K" in documented and "U" in documented
     _edit_earth(state, ui)
     assert {c.hotkey for c in ui.controls} >= {"K", "U"}
+
+
+# --- the bottom hotbar --------------------------------------------------------------
+
+def test_the_tool_picker_and_transport_share_the_bottom_hotbar(ui):
+    tool_bottoms = {c.rect.bottom for c in ui.controls
+                    if c.id.startswith("tool.") or c.id == "panel.bodies"}
+    transport_tops = {c.rect.top for c in ui.controls
+                      if c.id in ("sim.reset", "time.pause")}
+    # Adjacent, not merely "somewhere above" -- the old rail already sat
+    # above the transport bar spatially, so ordering alone would pass without
+    # the merge.  A gap smaller than a button's own height is what "directly
+    # above, same bar" actually means.
+    gap = min(transport_tops) - max(tool_bottoms)
+    assert 0 <= gap < ui.metrics.btn_h
+
+
+def test_no_control_sits_on_the_left_edge_with_the_list_closed(state, ui):
+    """The whole reason for this redesign: the left edge is open canvas by
+    default.  It is legitimate for the Bodies drawer to use that space while
+    it is open (a later test covers that) -- this is the *closed* baseline.
+    """
+    state.show_body_list = False
+    ui.build(state, SIZE)
+    left_band = ui.metrics.pad + ui.metrics.gap * 2
+    assert not any(c.rect.left < left_band and c.rect.top > ui.metrics.top_h
+                  for c in ui.controls)
+
+
+def test_the_action_buttons_sit_above_the_inspector_stats(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    follow = find(ui, "body.follow")
+    stats_top = ui.hud.inspector_rect(state, *SIZE).top
+    assert follow.rect.bottom <= stats_top
+
+
+def test_the_expand_chevron_opens_and_closes_the_full_stats(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    assert not state.inspector_expanded
+    short = ui.hud.inspector_rect(state, *SIZE).height
+
+    click_id(ui, state, "inspector.expand")
+    assert state.inspector_expanded
+    tall = ui.hud.inspector_rect(state, *SIZE).height
+    assert tall > short
+
+
+def test_there_is_no_expand_chevron_without_a_selection(state, ui):
+    assert find(ui, "inspector.expand") is None
+
+
+def test_the_throw_panel_sits_under_the_inspector_when_something_is_selected(state, ui):
+    from src.app.tools import LaunchTool
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    state.set_tool(LaunchTool)
+    ui.build(state, SIZE)
+    preset = find(ui, "throw.preset", payload=0)
+    inspector_bottom = ui.hud.inspector_rect(state, *SIZE).bottom
+    assert preset.rect.top >= inspector_bottom
+
+
+def test_the_throw_panel_sits_near_the_top_with_nothing_selected(state, ui):
+    from src.app.tools import LaunchTool
+    state.set_tool(LaunchTool)
+    ui.build(state, SIZE)
+    preset = find(ui, "throw.preset", payload=0)
+    assert preset.rect.top < SIZE[1] // 3
+
+
+def test_the_bodies_list_now_opens_on_the_left(state, ui):
+    ui.build(state, SIZE)
+    row = find(ui, "select.body")
+    assert row.rect.centerx < SIZE[0] // 2
+
+
+def test_a_selected_bodys_tether_reaches_toward_the_inspector(state, ui):
+    from src.render import palette
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)
+
+    inspector = ui.hud.inspector_rect(state, *SIZE)
+    # A strip just left of the inspector's left edge, spanning its height:
+    # the tether has to cross this strip on its way from the body to the
+    # panel, wherever exactly the body sits.
+    strip_x = inspector.left - 4
+    hit = any(surface.get_at((strip_x, y))[:3] == palette.SELECT
+             for y in range(inspector.top, inspector.bottom))
+    assert hit
+
+
+def test_no_tether_without_a_selection(state, ui):
+    from src.render import palette
+    ui.build(state, SIZE)
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)
+
+
+def _tether_visible(ui, state):
+    from src.render import palette
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, state)
+    inspector = ui.hud.inspector_rect(state, *SIZE)
+    strip_x = inspector.left - 4
+    return any(surface.get_at((strip_x, y))[:3] == palette.SELECT
+              for y in range(inspector.top, inspector.bottom))
+
+
+def test_the_tether_fades_a_few_seconds_after_a_selection(state, ui):
+    from src.app.ui import TETHER_VISIBLE_MS
+    body = state.sim.world.bodies[3]
+    now = pygame.time.get_ticks()
+    state.select(body.id, now=now)
+    ui.build(state, SIZE)
+    assert _tether_visible(ui, state)
+
+    state.selected_at = now - TETHER_VISIBLE_MS - 1
+    assert not _tether_visible(ui, state)
+
+
+def test_reselecting_the_same_body_brings_the_tether_back(state, ui):
+    from src.app.ui import TETHER_VISIBLE_MS
+    body = state.sim.world.bodies[3]
+    now = pygame.time.get_ticks()
+    state.select(body.id, now=now - TETHER_VISIBLE_MS - 1)
+    ui.build(state, SIZE)
+    assert not _tether_visible(ui, state)
+
+    state.select(body.id, now=now)
+    assert _tether_visible(ui, state)

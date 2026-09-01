@@ -116,7 +116,12 @@ class Metrics:
         self.icon_btn_w = self.btn_h
         self.top_h = self.btn_h + 2 * self.gap
         self.hint_h = self.line + self.pad
-        self.transport_h = self.btn_h + 2 * self.gap
+        #: Two rows now: the tool picker sits directly above the transport
+        #: row, in the same bottom-anchored bar, one gap between them.  Fixed
+        #: rather than width-dependent -- see the design spec's "Bottom
+        #: hotbar" section for why a conditional one-row/two-row branch was
+        #: rejected.
+        self.transport_h = 2 * self.btn_h + 3 * self.gap
         self.radius = 2
 
     # --- reserved bands ---------------------------------------------------------
@@ -210,11 +215,25 @@ def _draw_button_content(surface, font, control, rect, hovered, pressed):
         edge = palette.DANGER
     pygame.draw.rect(surface, edge, rect, 1)
 
+    if state not in (STATE_DISABLED, STATE_DOWN):
+        # The elevation cue: a raised element's own top edge reads one step
+        # lighter than the rest of its border.  Skipped when pressed -- a
+        # button being pushed in is the one moment it should not look raised.
+        pygame.draw.line(surface, palette.RAISED_EDGE,
+                         (rect.x + 1, rect.y), (rect.right - 2, rect.y))
+
     if state == STATE_ACTIVE:
         # A lit edge alone is easy to miss on a small button; the stripe is what
         # makes the current tool obvious without reading anything.
         pygame.draw.line(surface, palette.BUTTON_EDGE_ACTIVE,
                          (rect.x + 1, rect.y + 1), (rect.x + 1, rect.bottom - 2), 1)
+
+    # A 1px press-down offset on the drawn content only -- the fill and edge
+    # stay exactly where the layout put them, so the button does not visibly
+    # resize, but the icon/label/hotkey nudge the way a real key does when
+    # struck.  This is the cheapest of the flat-vs-depth fixes: no shadow, no
+    # new colour, one moved rectangle.
+    content = rect.move(1, 1) if state == STATE_DOWN else rect
 
     if state == STATE_DISABLED:
         text_colour = palette.DISABLED
@@ -231,28 +250,28 @@ def _draw_button_content(surface, font, control, rect, hovered, pressed):
 
     if control.compact:
         if control.icon:
-            side = min(icon_side, rect.width - 4, rect.height - 4)
+            side = min(icon_side, content.width - 4, content.height - 4)
             icon_rect = pygame.Rect(0, 0, side, side)
-            icon_rect.center = rect.center
+            icon_rect.center = content.center
             draw_icon(surface, control.icon, icon_rect, text_colour)
         elif control.label:
-            x = rect.x + (rect.width - font.width(control.label)) // 2
-            font.draw(surface, x, rect.y + (rect.height - font.height) // 2,
+            x = content.x + (content.width - font.width(control.label)) // 2
+            font.draw(surface, x, content.y + (content.height - font.height) // 2,
                       control.label, text_colour)
         return
 
-    x = rect.x + pad
+    x = content.x + pad
     if control.icon:
-        icon_rect = pygame.Rect(x, rect.y + (rect.height - icon_side) // 2,
+        icon_rect = pygame.Rect(x, content.y + (content.height - icon_side) // 2,
                                 icon_side, icon_side)
         draw_icon(surface, control.icon, icon_rect, text_colour)
         x += icon_side + gap
 
-    font.draw(surface, x, rect.y + (rect.height - font.height) // 2,
+    font.draw(surface, x, content.y + (content.height - font.height) // 2,
               control.label, text_colour)
 
     if control.hotkey:
-        draw_hotkey(surface, font, control.hotkey, rect,
+        draw_hotkey(surface, font, control.hotkey, content,
                     dim=state in (STATE_REST, STATE_DISABLED))
 
 
@@ -308,6 +327,20 @@ def draw_slider(surface, control, rect, pressed=False):
     thumb.centery = int(round(top + height - frac * height))
     pygame.draw.rect(surface, palette.BUTTON_DOWN if pressed else palette.BUTTON_ACTIVE, thumb)
     pygame.draw.rect(surface, palette.BUTTON_EDGE_ACTIVE, thumb, 1)
+
+
+def draw_bar(surface, rect, fraction, colour, bg=None):
+    """A horizontal filled bar, clamped to 0..1 -- a bounded quantity read at a
+    glance (how close to ignition, how close to boiling) instead of only as a
+    number nobody has an intuition for.
+    """
+    pygame.draw.rect(surface, bg if bg is not None else palette.BUTTON, rect)
+    frac = min(1.0, max(0.0, fraction))
+    if frac > 0.0:
+        fill = pygame.Rect(rect.x, rect.y, max(1, int(round(rect.width * frac))),
+                           rect.height)
+        pygame.draw.rect(surface, colour, fill)
+    pygame.draw.rect(surface, palette.BUTTON_EDGE, rect, 1)
 
 
 # --- tooltips -------------------------------------------------------------------

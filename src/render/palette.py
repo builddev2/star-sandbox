@@ -10,8 +10,15 @@ import math
 SPACE = (6, 8, 16)
 PANEL = (14, 18, 30)
 PANEL_EDGE = (44, 54, 78)
+#: One elevation tier above PANEL, one below BUTTON -- the background a group
+#: of related stat rows sits on, so grouping reads from a colour step instead
+#: of only from a blank row.
+PANEL_ROW = (19, 24, 39)
 TEXT = (226, 234, 246)
 TEXT_DIM = (128, 142, 168)
+#: A third, dimmer text tier for the least important line in the inspector --
+#: TEXT is the value, TEXT_DIM is the label, this is what is left over.
+TEXT_FAINT = (92, 103, 126)
 ACCENT = (108, 196, 232)
 WARN = (236, 152, 72)
 SELECT = (250, 226, 108)
@@ -31,6 +38,9 @@ BUTTON_HOVER = (42, 54, 82)
 BUTTON_DOWN = (56, 72, 108)
 BUTTON_ACTIVE = (28, 62, 94)
 BUTTON_EDGE = (58, 72, 104)
+#: A raised element's own top edge, one step lighter than its resting border --
+#: the one-pixel highlight elevation is built from, not a drop shadow.
+RAISED_EDGE = (78, 96, 132)
 #: An active control is outlined in the accent colour, which is the one visual
 #: cue that survives being read at a glance from across the room.
 BUTTON_EDGE_ACTIVE = ACCENT

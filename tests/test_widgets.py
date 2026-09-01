@@ -30,6 +30,80 @@ def _ink(surface, palette_space=None):
                if surface.get_at((x, y))[:3] != background)
 
 
+# --- palette tiers ------------------------------------------------------------------
+
+def test_the_elevation_ladder_only_ever_gets_lighter():
+    from src.render import palette
+    ladder = [palette.SPACE, palette.PANEL, palette.PANEL_ROW, palette.BUTTON]
+    for dim, brighter in zip(ladder, ladder[1:]):
+        assert sum(brighter) > sum(dim), "%s is not lighter than %s" % (brighter, dim)
+
+
+def test_text_faint_is_dimmer_than_text_dim():
+    from src.render import palette
+    assert sum(palette.TEXT_FAINT) < sum(palette.TEXT_DIM)
+
+
+def test_raised_edge_is_lighter_than_the_ordinary_button_edge():
+    from src.render import palette
+    assert sum(palette.RAISED_EDGE) > sum(palette.BUTTON_EDGE)
+
+
+def test_a_bar_fills_by_fraction():
+    from src.render import palette, widgets
+    surface = pygame.Surface((100, 10))
+    surface.fill((0, 0, 0))
+    widgets.draw_bar(surface, pygame.Rect(0, 0, 100, 10), 0.5, palette.ACCENT)
+    lit = [x for x in range(100) if surface.get_at((x, 5))[:3] == palette.ACCENT]
+    assert 40 <= len(lit) <= 55
+
+
+def test_a_bar_clamps_outside_zero_and_one():
+    from src.render import palette, widgets
+    for fraction, expected_min in ((-1.0, 0), (5.0, 95)):
+        surface = pygame.Surface((100, 10))
+        surface.fill((0, 0, 0))
+        widgets.draw_bar(surface, pygame.Rect(0, 0, 100, 10), fraction, palette.ACCENT)
+        lit = sum(1 for x in range(100) if surface.get_at((x, 5))[:3] == palette.ACCENT)
+        assert lit >= expected_min or lit == 0
+
+
+def test_a_resting_button_has_a_raised_top_highlight(font):
+    from src.render import palette
+    from src.render.widgets import Control, draw_button
+    surface = pygame.Surface((40, 40))
+    surface.fill((0, 0, 0))
+    control = Control("x", label="Follow")
+    control.rect = pygame.Rect(4, 4, 32, 20)
+    draw_button(surface, font, control)
+    top_row = [surface.get_at((x, 4))[:3] for x in range(5, 35)]
+    assert palette.RAISED_EDGE in top_row
+
+
+def test_a_pressed_icon_button_nudges_its_icon_down_and_right(font):
+    """The fill and edge blanket the whole rect regardless of press state, so
+    this isolates pixels drawn in ``palette.TEXT`` -- the icon stroke colour a
+    hovered, non-active button uses -- rather than "anything non-background"."""
+    from src.render import palette
+    from src.render.widgets import Control, draw_button
+
+    def icon_bbox(pressed):
+        surface = pygame.Surface((40, 40))
+        surface.fill((0, 0, 0))
+        control = Control("x", icon="plus", compact=True)
+        control.rect = pygame.Rect(4, 4, 32, 32)
+        draw_button(surface, font, control, hovered=True, pressed=pressed)
+        points = [(x, y) for x in range(40) for y in range(40)
+                  if surface.get_at((x, y))[:3] == palette.TEXT]
+        xs = [x for x, _ in points]
+        ys = [y for _, y in points]
+        return min(xs), min(ys)
+
+    rest_x, rest_y = icon_bbox(False)
+    down_x, down_y = icon_bbox(True)
+    assert (down_x, down_y) == (rest_x + 1, rest_y + 1)
+
+
 # --- metrics ----------------------------------------------------------------------
 
 def test_every_size_grows_with_the_font(font):

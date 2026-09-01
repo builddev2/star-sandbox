@@ -25,6 +25,8 @@ belongs to that panel until the button comes back up.
 import pygame
 
 from ..render import palette
+from ..render.hud import PAD as HUD_PAD
+from ..render.hud import PANEL_WIDTH_CHARS
 from ..render.widgets import (Control, Metrics, draw_button, draw_panel,
                               draw_tooltip, slider_track)
 from . import tools as tools_module
@@ -38,6 +40,13 @@ REPEAT_DELAY_MS = 320
 REPEAT_INTERVAL_MS = 55
 #: Never spend a whole frame catching up on repeats after a stall.
 MAX_REPEATS_PER_FRAME = 8
+
+#: How long the selection tether stays drawn after a selection, in ms.  A
+#: permanent line to the inspector reads as clutter once the eye has made
+#: the connection; a few seconds is enough to make it, and re-picking a body
+#: (even the one already selected) restarts the countdown -- see
+#: AppState.select's ``selected_at``.
+TETHER_VISIBLE_MS = 3000
 
 #: Width of the body list, in characters.
 BODY_LIST_CHARS = 16
@@ -153,13 +162,13 @@ class UiLayer:
         self.controls = []
         self.panels = []
 
-        rail = self._build_tool_rail(state, m)
-        context_w = self._build_tool_context(state, m, rail)
+        self._build_bottom_hotbar(state, m, ctx)
         self._build_view_buttons(state, m, ctx)
         self._build_zoom_cluster(state, m)
-        self._build_transport(state, m)
-        self._build_body_list(state, m, rail[0] + max(rail[1], context_w))
         self._build_inspector_actions(state, m)
+        self._build_inspector_expand(state, m)
+        self._build_tool_context(state, m)
+        self._build_body_list(state, m)
         self._build_help(state, m)
         return self.controls
 
@@ -185,56 +194,77 @@ class UiLayer:
             control.rect = rect
             self.controls.append(control)
 
-    def _build_tool_rail(self, state, m):
-        """The vertical tool palette down the left edge.
+    def _build_bottom_hotbar(self, state, m, ctx=None):
+        """Tool picker above transport, one bottom-anchored bar.
 
-        Returns (x, width, bottom) so everything else can sit clear of it.
+        Tools moved off the left edge so the canvas has no permanent chrome
+        there at all -- the whole point of this redesign.  Bodies travels
+        with them: it is a mode toggle (the list open or closed), the same
+        kind of thing Look/Throw/Edit are.
         """
-        samples = [Control("", label=label, icon=icon, hotkey=key)
-                   for _, label, icon, key, _ in TOOL_BUTTONS]
-        samples.append(Control("", label="Bodies", icon="list", hotkey="B"))
-        width = max(m.button_width(c) for c in samples)
+        top = m.transport_y
+        self._panel(pygame.Rect(m.pad - m.gap, top - m.gap,
+                                m.width - 2 * (m.pad - m.gap), m.transport_h))
 
-        x, y = m.pad, m.content_top
-        rows = len(TOOL_BUTTONS) + 1
-        height = rows * m.btn_h + (rows - 1) * m.gap + 2 * m.gap + m.gap * 2
-        self._panel(pygame.Rect(x - m.gap, y - m.gap, width + 2 * m.gap, height))
+        tool_row = [Control(cid, icon=icon, hotkey=key, compact=True,
+                            tooltip=tip, active=state.tool_name == label)
+                   for cid, label, icon, key, tip in TOOL_BUTTONS]
+        tool_row.append(Control("panel.bodies", icon="list", hotkey="B",
+                                compact=True,
+                                tooltip="Every body in the system, by name",
+                                active=state.show_body_list))
+        tool_w = (len(tool_row) * m.icon_btn_w + (len(tool_row) - 1) * m.gap)
+        x = max(m.pad, (m.width - tool_w) // 2)
+        for control in tool_row:
+            self._place([(control, pygame.Rect(x, top, m.icon_btn_w, m.btn_h))])
+            x += m.icon_btn_w + m.gap
 
-        for cid, label, icon, key, tip in TOOL_BUTTONS:
-            control = Control(cid, label=label, icon=icon, hotkey=key, tooltip=tip,
-                              active=state.tool_name == label)
-            self._place([(control, pygame.Rect(x, y, width, m.btn_h))])
-            y += m.btn_h + m.gap
+        self._build_transport(state, m, top + m.btn_h + m.gap)
 
-        y += m.gap
-        control = Control("panel.bodies", label="Bodies", icon="list", hotkey="B",
-                          tooltip="Every body in the system, by name",
-                          active=state.show_body_list)
-        self._place([(control, pygame.Rect(x, y, width, m.btn_h))])
-        return x, width, y + m.btn_h
+    def _build_tool_context(self, state, m):
+        """Whatever the live tool offers: throw presets, edit steppers.
 
-    def _build_tool_context(self, state, m, rail):
-        """Whatever the live tool offers: throw presets, edit steppers."""
+        Anchored below the inspector when something is selected (the reading
+        path research kept coming back to: tool controls and the thing they
+        act on, one column, top to bottom) -- or near the top of the same
+        column when nothing is, since Throw needs no selection at all.
+        """
         tool = state.tool
         rows = tool.controls(state, m) if tool is not None else []
         if not rows:
             return 0
-        x, rail_w, bottom = rail
-        # The panel is as wide as its widest row, never narrower than the tool
-        # palette above it -- "Rocky planet" does not fit in a rail sized by the
-        # word "Throw", and a clipped label is a button nobody presses.
-        width = max(rail_w, max(
+
+        panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + 2 * HUD_PAD
+        width = max(panel_w, max(
             sum(m.icon_btn_w if c.compact else m.button_width(c) for c in row)
             + m.gap * (len(row) - 1) for row in rows))
-        top = bottom + m.gap * 4
-        height = len(rows) * m.btn_h + (len(rows) - 1) * m.gap + m.gap * 3 + m.line
+        x = m.width - width - self.hud.right_margin(m)
+
+        inspector = self.hud.inspector_rect(state, m.width, m.height)
+        bottom = inspector.bottom if inspector is not None else m.content_top
+
+        top = bottom
+        # Row gap, then the title's own line, shrink only if the full
+        # layout would reach into the bottom hotbar -- a tool with many rows
+        # (Throw's six presets plus circular-orbit and target-lock) at the
+        # narrowest window and a coarse grid.  Normal spacing everywhere
+        # else; this is the same "trim only what has to give" rule the
+        # collapsed inspector card and the actions band already follow.
+        row_gap, title_h = m.gap, m.line
+        height = len(rows) * m.btn_h + (len(rows) - 1) * row_gap + title_h
+        if top + height > m.content_bottom:
+            row_gap = 0
+            height = len(rows) * m.btn_h + (len(rows) - 1) * row_gap + title_h
+        if top + height > m.content_bottom:
+            title_h = m.gap
+            height = len(rows) * m.btn_h + (len(rows) - 1) * row_gap + title_h
         self._panel(pygame.Rect(x - m.gap, top - m.gap, width + 2 * m.gap, height),
                     tool.context_title)
 
-        y = top + m.line
+        y = top + title_h
         for row in rows:
             self._place(layout_row(row, x, y, m, width))
-            y += m.btn_h + m.gap
+            y += m.btn_h + row_gap
         return width
 
     def _build_view_buttons(self, state, m, ctx):
@@ -325,8 +355,14 @@ class UiLayer:
             self._place([(control, pygame.Rect(x, y, m.icon_btn_w, h))])
             y += h + m.gap
 
-    def _build_transport(self, state, m):
-        """Play, speed and restart, centred along the bottom like any game."""
+    def _build_transport(self, state, m, top):
+        """Scenario, restart, speed and play -- the lower row of the hotbar.
+
+        Takes its own ``top`` rather than reading ``m.transport_y`` directly,
+        because it is now the *second* of two rows in one bar;
+        ``_build_bottom_hotbar`` is what owns the bar's single panel and the
+        tool row above this one.
+        """
         paused = state.sim.paused
         speed_w = max(m.font.width(label)
                       for label in state.time_labels) + 4 * m.pad
@@ -353,14 +389,11 @@ class UiLayer:
         total = sum(widths) + m.gap * (len(row) - 1)
 
         x = max(m.pad, (m.width - total) // 2)
-        y = m.transport_y + (m.transport_h - m.btn_h) // 2
-        self._panel(pygame.Rect(x - m.gap, m.transport_y,
-                                total + 2 * m.gap, m.transport_h))
         for control, w in zip(row, widths):
-            self._place([(control, pygame.Rect(x, y, w, m.btn_h))])
+            self._place([(control, pygame.Rect(x, top, w, m.btn_h))])
             x += w + m.gap
 
-    def _build_body_list(self, state, m, left_edge):
+    def _build_body_list(self, state, m):
         """A scrollable list of everything in the system, selectable by name.
 
         This is what replaces Tab for someone who has never pressed Tab: the
@@ -370,7 +403,7 @@ class UiLayer:
             return
         world = state.sim.world
         width = m.font.width("X") * BODY_LIST_CHARS + 2 * m.pad
-        x = left_edge + m.gap * 3
+        x = m.pad
         top = m.content_top
         header = m.btn_h + m.gap
         row_h = m.line + 2
@@ -409,41 +442,53 @@ class UiLayer:
             y += row_h
 
     def _build_inspector_actions(self, state, m):
-        """What you can do to the selected body, under its readout panel."""
+        """Follow/Fly to/Stop/Delete -- always a fixed 2x2 grid, at the very
+        top of the right column.  Above the stats, not below them: these are
+        what the panel is for, and the stats are reference.
+        """
         if state.selected_index is None:
             return
-        rect = self.hud.inspector_rect(state, m.width, m.height) \
-            if self.hud is not None else None
-        if rect is not None:
-            left, right, top = rect.x, rect.right, rect.bottom + m.gap
-        else:
-            width = m.width // 4
-            left, right, top = m.width - m.pad - width, m.width - m.pad, m.content_top
+        panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + 2 * HUD_PAD
+        left = m.width - panel_w - self.hud.right_margin(m)
+        top = m.content_top
 
         following = state.camera.follow_id == state.selected_id
-        row = [
+        rows = [[
             Control("body.follow", label="Follow", icon="follow", hotkey="F",
                     tooltip="Keep the camera on it", active=following),
             Control("body.flyto", label="Fly to", icon="flyto",
                     tooltip="Zoom right in on it"),
+        ], [
             Control("body.stop", label="Stop", icon="stop", hotkey="0",
                     tooltip="Take its speed away and watch it fall"),
             Control("body.delete", icon="trash", hotkey="Del", compact=True,
                     danger=True, tooltip="Remove it from the system"),
-        ]
+        ]]
 
-        # Two rows when the inspector is too narrow for four buttons.
-        width = right - left
-        natural = sum(m.icon_btn_w if c.compact else m.button_width(c) for c in row)
-        natural += m.gap * (len(row) - 1)
-        rows = [row] if natural <= width else [row[:2], row[2:]]
-
-        height = len(rows) * m.btn_h + (len(rows) - 1) * m.gap + 2 * m.gap
-        self._panel(pygame.Rect(left - m.gap, top - m.gap, width + 2 * m.gap, height))
+        height = self.hud.actions_band_height(m) - 2 * m.gap
+        self._panel(pygame.Rect(left - m.gap, top - m.gap,
+                                panel_w + 2 * m.gap, height + 2 * m.gap))
         y = top
         for group in rows:
-            self._place(layout_row(group, left, y, m, width))
+            self._place(layout_row(group, left, y, m, panel_w))
             y += m.btn_h + m.gap
+
+    def _build_inspector_expand(self, state, m):
+        """The chevron that opens the full stat groups.  Sits at the top-right
+        corner of the inspector panel, the same corner the help panel's own
+        close button already claims on *its* panel -- one established place
+        for "the button that changes what this panel is showing"."""
+        rect = self.hud.inspector_rect(state, m.width, m.height)
+        if rect is None:
+            return
+        control = Control("inspector.expand",
+                          icon="up" if state.inspector_expanded else "down",
+                          compact=True,
+                          active=state.inspector_expanded,
+                          tooltip="Fewer details" if state.inspector_expanded
+                          else "More detail")
+        self._place([(control, pygame.Rect(
+            rect.right - m.icon_btn_w - 2, rect.y + 2, m.icon_btn_w, m.icon_btn_w))])
 
     # --- hit testing -------------------------------------------------------------
 
@@ -589,6 +634,10 @@ class UiLayer:
             return True
         if cid == "select.body":
             state.select(payload)
+            # The drawer borrows the freed left edge while it is open, not
+            # permanently -- picking a name is what it is for, so picking one
+            # closes it, the same way it already closes on its own X button.
+            state.show_body_list = False
             return True
 
         if cid == "view.trails":
@@ -613,6 +662,9 @@ class UiLayer:
                 return False
             ctx.toggle_fullscreen()
             state.on_resize(ctx)
+            return True
+        if cid == "inspector.expand":
+            state.toggle_inspector_expanded()
             return True
         if cid == "view.help":
             state.help_visible = not state.help_visible
@@ -691,9 +743,38 @@ class UiLayer:
                         hovered=self._modal_control is hovered,
                         pressed=self._modal_control is self._pressed)
 
+        self._draw_tether(surface, state)
+
         if hovered is not None:
             draw_tooltip(surface, self.font, hovered.hint(), hovered.rect,
                          prefer_above=hovered.rect.centery > surface.get_height() // 2)
+
+    def _draw_tether(self, surface, state):
+        """A leader line from the selected body to the inspector's corner --
+        the "this on screen is that panel" link opposite corners used to
+        give away for free.  ``palette.SELECT`` throughout: it is already the
+        selection ring's colour (``render/draw.py``) and the inspector name
+        row's colour, so this does not introduce a fourth meaning for a new
+        colour, just extends the one selection already has.
+        """
+        if self.modal is not None:
+            # The help panel dims and covers everything else on purpose --
+            # a line drawn through it would read as part of the world behind
+            # the veil, not as the help reading as one thing to deal with.
+            return
+        index = state.selected_index
+        if index is None:
+            return
+        if pygame.time.get_ticks() - state.selected_at >= TETHER_VISIBLE_MS:
+            return
+        inspector = self.hud.inspector_rect(state, self.metrics.width,
+                                            self.metrics.height)
+        if inspector is None:
+            return
+        body_pos = state.camera.world_to_screen(state.sim.world.pos[index])
+        anchor = (inspector.left, inspector.top + self.metrics.line)
+        pygame.draw.line(surface, palette.SELECT,
+                         (int(body_pos[0]), int(body_pos[1])), anchor, 1)
 
     def _set_cursor(self, over_control):
         """Hand over a button, arrow everywhere else.
