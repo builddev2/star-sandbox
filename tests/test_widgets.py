@@ -68,6 +68,42 @@ def test_a_bar_clamps_outside_zero_and_one():
         assert lit >= expected_min or lit == 0
 
 
+def test_a_resting_button_has_a_raised_top_highlight(font):
+    from src.render import palette
+    from src.render.widgets import Control, draw_button
+    surface = pygame.Surface((40, 40))
+    surface.fill((0, 0, 0))
+    control = Control("x", label="Follow")
+    control.rect = pygame.Rect(4, 4, 32, 20)
+    draw_button(surface, font, control)
+    top_row = [surface.get_at((x, 4))[:3] for x in range(5, 35)]
+    assert palette.RAISED_EDGE in top_row
+
+
+def test_a_pressed_icon_button_nudges_its_icon_down_and_right(font):
+    """The fill and edge blanket the whole rect regardless of press state, so
+    this isolates pixels drawn in ``palette.TEXT`` -- the icon stroke colour a
+    hovered, non-active button uses -- rather than "anything non-background"."""
+    from src.render import palette
+    from src.render.widgets import Control, draw_button
+
+    def icon_bbox(pressed):
+        surface = pygame.Surface((40, 40))
+        surface.fill((0, 0, 0))
+        control = Control("x", icon="plus", compact=True)
+        control.rect = pygame.Rect(4, 4, 32, 32)
+        draw_button(surface, font, control, hovered=True, pressed=pressed)
+        points = [(x, y) for x in range(40) for y in range(40)
+                  if surface.get_at((x, y))[:3] == palette.TEXT]
+        xs = [x for x, _ in points]
+        ys = [y for _, y in points]
+        return min(xs), min(ys)
+
+    rest_x, rest_y = icon_bbox(False)
+    down_x, down_y = icon_bbox(True)
+    assert (down_x, down_y) == (rest_x + 1, rest_y + 1)
+
+
 # --- metrics ----------------------------------------------------------------------
 
 def test_every_size_grows_with_the_font(font):

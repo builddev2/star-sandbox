@@ -210,11 +210,25 @@ def _draw_button_content(surface, font, control, rect, hovered, pressed):
         edge = palette.DANGER
     pygame.draw.rect(surface, edge, rect, 1)
 
+    if state not in (STATE_DISABLED, STATE_DOWN):
+        # The elevation cue: a raised element's own top edge reads one step
+        # lighter than the rest of its border.  Skipped when pressed -- a
+        # button being pushed in is the one moment it should not look raised.
+        pygame.draw.line(surface, palette.RAISED_EDGE,
+                         (rect.x + 1, rect.y), (rect.right - 2, rect.y))
+
     if state == STATE_ACTIVE:
         # A lit edge alone is easy to miss on a small button; the stripe is what
         # makes the current tool obvious without reading anything.
         pygame.draw.line(surface, palette.BUTTON_EDGE_ACTIVE,
                          (rect.x + 1, rect.y + 1), (rect.x + 1, rect.bottom - 2), 1)
+
+    # A 1px press-down offset on the drawn content only -- the fill and edge
+    # stay exactly where the layout put them, so the button does not visibly
+    # resize, but the icon/label/hotkey nudge the way a real key does when
+    # struck.  This is the cheapest of the flat-vs-depth fixes: no shadow, no
+    # new colour, one moved rectangle.
+    content = rect.move(1, 1) if state == STATE_DOWN else rect
 
     if state == STATE_DISABLED:
         text_colour = palette.DISABLED
@@ -231,28 +245,28 @@ def _draw_button_content(surface, font, control, rect, hovered, pressed):
 
     if control.compact:
         if control.icon:
-            side = min(icon_side, rect.width - 4, rect.height - 4)
+            side = min(icon_side, content.width - 4, content.height - 4)
             icon_rect = pygame.Rect(0, 0, side, side)
-            icon_rect.center = rect.center
+            icon_rect.center = content.center
             draw_icon(surface, control.icon, icon_rect, text_colour)
         elif control.label:
-            x = rect.x + (rect.width - font.width(control.label)) // 2
-            font.draw(surface, x, rect.y + (rect.height - font.height) // 2,
+            x = content.x + (content.width - font.width(control.label)) // 2
+            font.draw(surface, x, content.y + (content.height - font.height) // 2,
                       control.label, text_colour)
         return
 
-    x = rect.x + pad
+    x = content.x + pad
     if control.icon:
-        icon_rect = pygame.Rect(x, rect.y + (rect.height - icon_side) // 2,
+        icon_rect = pygame.Rect(x, content.y + (content.height - icon_side) // 2,
                                 icon_side, icon_side)
         draw_icon(surface, control.icon, icon_rect, text_colour)
         x += icon_side + gap
 
-    font.draw(surface, x, rect.y + (rect.height - font.height) // 2,
+    font.draw(surface, x, content.y + (content.height - font.height) // 2,
               control.label, text_colour)
 
     if control.hotkey:
-        draw_hotkey(surface, font, control.hotkey, rect,
+        draw_hotkey(surface, font, control.hotkey, content,
                     dim=state in (STATE_REST, STATE_DISABLED))
 
 
