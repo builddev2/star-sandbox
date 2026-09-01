@@ -880,3 +880,20 @@ def test_the_action_buttons_sit_above_the_inspector_stats(state, ui):
     follow = find(ui, "body.follow")
     stats_top = ui.hud.inspector_rect(state, *SIZE).top
     assert follow.rect.bottom <= stats_top
+
+
+def test_the_expand_chevron_opens_and_closes_the_full_stats(state, ui):
+    body = state.sim.world.bodies[3]
+    state.select(body.id)
+    ui.build(state, SIZE)
+    assert not state.inspector_expanded
+    short = ui.hud.inspector_rect(state, *SIZE).height
+
+    click_id(ui, state, "inspector.expand")
+    assert state.inspector_expanded
+    tall = ui.hud.inspector_rect(state, *SIZE).height
+    assert tall > short
+
+
+def test_there_is_no_expand_chevron_without_a_selection(state, ui):
+    assert find(ui, "inspector.expand") is None

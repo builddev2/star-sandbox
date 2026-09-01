@@ -165,6 +165,7 @@ class UiLayer:
         context_w = self._build_tool_context(state, m, (m.pad, 0, m.content_top))
         self._build_body_list(state, m, m.pad + max(0, context_w))
         self._build_inspector_actions(state, m)
+        self._build_inspector_expand(state, m)
         self._build_help(state, m)
         return self.controls
 
@@ -447,6 +448,23 @@ class UiLayer:
             self._place(layout_row(group, left, y, m, panel_w))
             y += m.btn_h + m.gap
 
+    def _build_inspector_expand(self, state, m):
+        """The chevron that opens the full stat groups.  Sits at the top-right
+        corner of the inspector panel, the same corner the help panel's own
+        close button already claims on *its* panel -- one established place
+        for "the button that changes what this panel is showing"."""
+        rect = self.hud.inspector_rect(state, m.width, m.height)
+        if rect is None:
+            return
+        control = Control("inspector.expand",
+                          icon="up" if state.inspector_expanded else "down",
+                          compact=True,
+                          active=state.inspector_expanded,
+                          tooltip="Fewer details" if state.inspector_expanded
+                          else "More detail")
+        self._place([(control, pygame.Rect(
+            rect.right - m.icon_btn_w - 2, rect.y + 2, m.icon_btn_w, m.icon_btn_w))])
+
     # --- hit testing -------------------------------------------------------------
 
     def control_at(self, pos):
@@ -615,6 +633,9 @@ class UiLayer:
                 return False
             ctx.toggle_fullscreen()
             state.on_resize(ctx)
+            return True
+        if cid == "inspector.expand":
+            state.toggle_inspector_expanded()
             return True
         if cid == "view.help":
             state.help_visible = not state.help_visible
