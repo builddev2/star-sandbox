@@ -153,12 +153,15 @@ class UiLayer:
         self.controls = []
         self.panels = []
 
-        rail = self._build_tool_rail(state, m)
-        context_w = self._build_tool_context(state, m, rail)
+        self._build_bottom_hotbar(state, m, ctx)
         self._build_view_buttons(state, m, ctx)
         self._build_zoom_cluster(state, m)
-        self._build_transport(state, m)
-        self._build_body_list(state, m, rail[0] + max(rail[1], context_w))
+        # (m.pad, 0, m.content_top) is a placeholder rail-shaped tuple -- Task
+        # 10 replaces this with a real anchor below the inspector.  Bodies
+        # still has to sit clear of wherever this panel currently draws, or
+        # the two overlap and steal each other's clicks.
+        context_w = self._build_tool_context(state, m, (m.pad, 0, m.content_top))
+        self._build_body_list(state, m, m.pad + max(0, context_w))
         self._build_inspector_actions(state, m)
         self._build_help(state, m)
         return self.controls
@@ -185,33 +188,32 @@ class UiLayer:
             control.rect = rect
             self.controls.append(control)
 
-    def _build_tool_rail(self, state, m):
-        """The vertical tool palette down the left edge.
+    def _build_bottom_hotbar(self, state, m, ctx=None):
+        """Tool picker above transport, one bottom-anchored bar.
 
-        Returns (x, width, bottom) so everything else can sit clear of it.
+        Tools moved off the left edge so the canvas has no permanent chrome
+        there at all -- the whole point of this redesign.  Bodies travels
+        with them: it is a mode toggle (the list open or closed), the same
+        kind of thing Look/Throw/Edit are.
         """
-        samples = [Control("", label=label, icon=icon, hotkey=key)
-                   for _, label, icon, key, _ in TOOL_BUTTONS]
-        samples.append(Control("", label="Bodies", icon="list", hotkey="B"))
-        width = max(m.button_width(c) for c in samples)
+        top = m.transport_y
+        self._panel(pygame.Rect(m.pad - m.gap, top - m.gap,
+                                m.width - 2 * (m.pad - m.gap), m.transport_h))
 
-        x, y = m.pad, m.content_top
-        rows = len(TOOL_BUTTONS) + 1
-        height = rows * m.btn_h + (rows - 1) * m.gap + 2 * m.gap + m.gap * 2
-        self._panel(pygame.Rect(x - m.gap, y - m.gap, width + 2 * m.gap, height))
+        tool_row = [Control(cid, icon=icon, hotkey=key, compact=True,
+                            tooltip=tip, active=state.tool_name == label)
+                   for cid, label, icon, key, tip in TOOL_BUTTONS]
+        tool_row.append(Control("panel.bodies", icon="list", hotkey="B",
+                                compact=True,
+                                tooltip="Every body in the system, by name",
+                                active=state.show_body_list))
+        tool_w = (len(tool_row) * m.icon_btn_w + (len(tool_row) - 1) * m.gap)
+        x = max(m.pad, (m.width - tool_w) // 2)
+        for control in tool_row:
+            self._place([(control, pygame.Rect(x, top, m.icon_btn_w, m.btn_h))])
+            x += m.icon_btn_w + m.gap
 
-        for cid, label, icon, key, tip in TOOL_BUTTONS:
-            control = Control(cid, label=label, icon=icon, hotkey=key, tooltip=tip,
-                              active=state.tool_name == label)
-            self._place([(control, pygame.Rect(x, y, width, m.btn_h))])
-            y += m.btn_h + m.gap
-
-        y += m.gap
-        control = Control("panel.bodies", label="Bodies", icon="list", hotkey="B",
-                          tooltip="Every body in the system, by name",
-                          active=state.show_body_list)
-        self._place([(control, pygame.Rect(x, y, width, m.btn_h))])
-        return x, width, y + m.btn_h
+        self._build_transport(state, m, top + m.btn_h + m.gap)
 
     def _build_tool_context(self, state, m, rail):
         """Whatever the live tool offers: throw presets, edit steppers."""
@@ -325,8 +327,14 @@ class UiLayer:
             self._place([(control, pygame.Rect(x, y, m.icon_btn_w, h))])
             y += h + m.gap
 
-    def _build_transport(self, state, m):
-        """Play, speed and restart, centred along the bottom like any game."""
+    def _build_transport(self, state, m, top):
+        """Scenario, restart, speed and play -- the lower row of the hotbar.
+
+        Takes its own ``top`` rather than reading ``m.transport_y`` directly,
+        because it is now the *second* of two rows in one bar;
+        ``_build_bottom_hotbar`` is what owns the bar's single panel and the
+        tool row above this one.
+        """
         paused = state.sim.paused
         speed_w = max(m.font.width(label)
                       for label in state.time_labels) + 4 * m.pad
@@ -353,11 +361,8 @@ class UiLayer:
         total = sum(widths) + m.gap * (len(row) - 1)
 
         x = max(m.pad, (m.width - total) // 2)
-        y = m.transport_y + (m.transport_h - m.btn_h) // 2
-        self._panel(pygame.Rect(x - m.gap, m.transport_y,
-                                total + 2 * m.gap, m.transport_h))
         for control, w in zip(row, widths):
-            self._place([(control, pygame.Rect(x, y, w, m.btn_h))])
+            self._place([(control, pygame.Rect(x, top, w, m.btn_h))])
             x += w + m.gap
 
     def _build_body_list(self, state, m, left_edge):

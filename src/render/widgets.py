@@ -116,7 +116,12 @@ class Metrics:
         self.icon_btn_w = self.btn_h
         self.top_h = self.btn_h + 2 * self.gap
         self.hint_h = self.line + self.pad
-        self.transport_h = self.btn_h + 2 * self.gap
+        #: Two rows now: the tool picker sits directly above the transport
+        #: row, in the same bottom-anchored bar, one gap between them.  Fixed
+        #: rather than width-dependent -- see the design spec's "Bottom
+        #: hotbar" section for why a conditional one-row/two-row branch was
+        #: rejected.
+        self.transport_h = 2 * self.btn_h + 3 * self.gap
         self.radius = 2
 
     # --- reserved bands ---------------------------------------------------------

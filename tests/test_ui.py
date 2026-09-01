@@ -849,3 +849,25 @@ def test_both_lock_keys_are_documented_and_have_buttons(state, ui):
     assert "K" in documented and "U" in documented
     _edit_earth(state, ui)
     assert {c.hotkey for c in ui.controls} >= {"K", "U"}
+
+
+# --- the bottom hotbar --------------------------------------------------------------
+
+def test_the_tool_picker_and_transport_share_the_bottom_hotbar(ui):
+    tool_bottoms = {c.rect.bottom for c in ui.controls
+                    if c.id.startswith("tool.") or c.id == "panel.bodies"}
+    transport_tops = {c.rect.top for c in ui.controls
+                      if c.id in ("sim.reset", "time.pause")}
+    # Adjacent, not merely "somewhere above" -- the old rail already sat
+    # above the transport bar spatially, so ordering alone would pass without
+    # the merge.  A gap smaller than a button's own height is what "directly
+    # above, same bar" actually means.
+    gap = min(transport_tops) - max(tool_bottoms)
+    assert 0 <= gap < ui.metrics.btn_h
+
+
+def test_no_control_sits_on_the_left_edge_any_more(ui):
+    """The whole reason for this redesign: the left edge is open canvas."""
+    left_band = ui.metrics.pad + ui.metrics.gap * 2
+    assert not any(c.rect.left < left_band and c.rect.top > ui.metrics.top_h
+                  for c in ui.controls)
