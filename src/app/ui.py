@@ -231,20 +231,33 @@ class UiLayer:
         width = max(panel_w, max(
             sum(m.icon_btn_w if c.compact else m.button_width(c) for c in row)
             + m.gap * (len(row) - 1) for row in rows))
-        x = m.width - width - HUD_PAD
+        x = m.width - width - self.hud.right_margin(m)
 
         inspector = self.hud.inspector_rect(state, m.width, m.height)
         bottom = inspector.bottom if inspector is not None else m.content_top
 
         top = bottom
-        height = len(rows) * m.btn_h + (len(rows) - 1) * m.gap + m.line
+        # Row gap, then the title's own line, shrink only if the full
+        # layout would reach into the bottom hotbar -- a tool with many rows
+        # (Throw's six presets plus circular-orbit and target-lock) at the
+        # narrowest window and a coarse grid.  Normal spacing everywhere
+        # else; this is the same "trim only what has to give" rule the
+        # collapsed inspector card and the actions band already follow.
+        row_gap, title_h = m.gap, m.line
+        height = len(rows) * m.btn_h + (len(rows) - 1) * row_gap + title_h
+        if top + height > m.content_bottom:
+            row_gap = 0
+            height = len(rows) * m.btn_h + (len(rows) - 1) * row_gap + title_h
+        if top + height > m.content_bottom:
+            title_h = m.gap
+            height = len(rows) * m.btn_h + (len(rows) - 1) * row_gap + title_h
         self._panel(pygame.Rect(x - m.gap, top - m.gap, width + 2 * m.gap, height),
                     tool.context_title)
 
-        y = top + m.line
+        y = top + title_h
         for row in rows:
             self._place(layout_row(row, x, y, m, width))
-            y += m.btn_h + m.gap
+            y += m.btn_h + row_gap
         return width
 
     def _build_view_buttons(self, state, m, ctx):
@@ -429,7 +442,7 @@ class UiLayer:
         if state.selected_index is None:
             return
         panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + 2 * HUD_PAD
-        left = m.width - panel_w - HUD_PAD
+        left = m.width - panel_w - self.hud.right_margin(m)
         top = m.content_top
 
         following = state.camera.follow_id == state.selected_id
@@ -614,6 +627,10 @@ class UiLayer:
             return True
         if cid == "select.body":
             state.select(payload)
+            # The drawer borrows the freed left edge while it is open, not
+            # permanently -- picking a name is what it is for, so picking one
+            # closes it, the same way it already closes on its own X button.
+            state.show_body_list = False
             return True
 
         if cid == "view.trails":
@@ -733,6 +750,11 @@ class UiLayer:
         row's colour, so this does not introduce a fourth meaning for a new
         colour, just extends the one selection already has.
         """
+        if self.modal is not None:
+            # The help panel dims and covers everything else on purpose --
+            # a line drawn through it would read as part of the world behind
+            # the veil, not as the help reading as one thing to deal with.
+            return
         index = state.selected_index
         if index is None:
             return

@@ -95,6 +95,26 @@ def test_every_panel_is_inside_the_window(window, s, tool):
                 "panels %s off screen at %s grid %d" % (outside, screen.size, s)
 
 
+@pytest.mark.parametrize("window,s,tool", list(cases()),
+                         ids=lambda v: getattr(v, "name", str(v)))
+def test_no_two_controls_overlap(window, s, tool):
+    """"Inside the window" is not "reachable" -- a control drawn under
+    another one is inside the buffer and still cannot be clicked.  The right
+    column (actions, the inspector, the live tool's own controls) grew tall
+    enough at the window floor to reach down into the zoom cluster's corner;
+    this is the regression guard for that class of bug, not just this one
+    instance of it.
+    """
+    for show_list in (False, True):
+        ui, _ = build(window, s, tool, show_list, False)
+        controls = ui.controls
+        for i, a in enumerate(controls):
+            for b in controls[i + 1:]:
+                assert not a.rect.colliderect(b.rect), \
+                    "%s overlaps %s at %s grid %d (list=%s)" % (
+                        a.id, b.id, window, s, show_list)
+
+
 def test_the_help_panel_never_outgrows_the_window():
     """It is the one panel sized by its contents rather than by the window."""
     for s in config.GRID_CHOICES:

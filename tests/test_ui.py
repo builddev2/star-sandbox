@@ -403,7 +403,16 @@ def test_clicking_a_name_selects_that_body(state, ui):
     earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
     click_id(ui, state, "select.body", payload=earth.id)
     assert state.selected_id == earth.id
-    assert find(ui, "select.body", payload=earth.id).active
+
+
+def test_picking_a_name_closes_the_drawer(state, ui):
+    """Borrowed space, not a permanent column -- picking a name is what the
+    drawer is for, so picking one closes it, the same as its own X does."""
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    assert state.show_body_list
+    click_id(ui, state, "select.body", payload=earth.id)
+    assert not state.show_body_list
+    assert find(ui, "select.body") is None
 
 
 def test_the_list_closes_and_the_rail_button_brings_it_back(state, ui):

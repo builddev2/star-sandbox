@@ -187,6 +187,18 @@ class Hud:
         """Pixels the fixed action grid reserves above the stats."""
         return self.ACTIONS_ROWS * m.btn_h + (self.ACTIONS_ROWS - 1) * m.gap
 
+    def right_margin(self, m):
+        """Clearance the right column keeps from the window's right edge.
+
+        Wider than a bare ``PAD`` because the zoom cluster
+        (``ui._build_zoom_cluster``) is anchored independently in the same
+        bottom-right corner, at ``m.width - m.pad - m.icon_btn_w``.  Without
+        this, a tall Edit panel at the window floor grows down and sideways
+        into the zoom slider -- same bug class ``contact_radius`` exists to
+        prevent, a control drawn where it cannot be read as what it is.
+        """
+        return PAD + m.icon_btn_w + m.gap
+
     def headline_stats(self, world, index):
         """The one or two numbers worth seeing before the chevron is clicked.
 
@@ -390,7 +402,8 @@ class Hud:
         panel_w = self.font.width("X") * PANEL_WIDTH_CHARS + PAD * 2
         panel_h = len(rows) * self.line + PAD * 2
         top = m.content_top + self.actions_band_height(m)
-        return pygame.Rect(width - panel_w - PAD, top, panel_w, panel_h)
+        return pygame.Rect(width - panel_w - self.right_margin(m), top,
+                           panel_w, panel_h)
 
     def _draw_inspector(self, surface, state):
         index = state.selected_index
