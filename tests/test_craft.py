@@ -20,9 +20,12 @@ def test_a_craft_never_ignites_however_heavy_it_gets():
 
 def test_metres_per_second_round_trips():
     assert abs(units.to_ms(units.from_ms(7800.0)) - 7800.0) < 1e-6
-    # A round trip through x*k/k passes for any nonzero k, even a wrong one;
-    # this pins the conversion factor itself.
-    assert abs(units.from_ms(units.AUD_TO_MS) - 1.0) < 1e-12
+    # The round trip is x*k/k, which passes for any nonzero k -- including
+    # the plausible slip of reaching for AUD_TO_KMS.  So pin the factor
+    # against something outside itself: one AU per day, in metres per second,
+    # is the AU in metres over the seconds in a day.
+    assert abs(units.AUD_TO_MS - units.AU_M / units.SEC_PER_DAY) < 1e-9
+    assert abs(units.to_ms(1.0) - 1731456.8368) < 1.0
 
 
 def test_earth_orbital_speed_is_about_30_km_per_second():

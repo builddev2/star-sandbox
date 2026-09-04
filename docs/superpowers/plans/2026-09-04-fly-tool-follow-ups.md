@@ -90,11 +90,10 @@ suite noticed. It did not. Each of these edits still leaves the suite green:
 
 ## Smaller deferred items
 
-- `tests/test_craft.py`: the units round-trip assertion `from_ms(AUD_TO_MS) == 1.0` is a
-  **tautology** -- it holds for any nonzero conversion factor, which is the very failure
-  its comment claims to catch. Either delete it and its comment, or replace it with one
-  that pins the factor directly. (The factor is in fact already covered by the Earth
-  orbital-speed and Earth-to-Mars tests.)
+- ~~`tests/test_craft.py`: the units round-trip assertion is a **tautology**.~~
+  **Fixed 2026-09-04**: replaced with one that pins `AUD_TO_MS` against `AU_M /
+  SEC_PER_DAY` and against a literal. Verified by setting the factor to `AU_KM /
+  SEC_PER_DAY` -- the plausible slip -- which the test now catches.
 - ~~`maneuver.closest_approach`: the refinement pass's resolution is unpinned.~~
   **Checked 2026-09-04**: did not reproduce -- the reported minimum is exact and really is
   a minimum. Pinned by a regression test rather than fixed.
