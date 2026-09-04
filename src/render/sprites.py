@@ -220,7 +220,9 @@ def _make_black_hole(px, spin, disk, seed):
 # render as a box.
 
 #: Below this many pixels there is no room for a wing; draw a bright dot.
-CRAFT_DETAIL_PX = 7
+#: Matched to ``scale.CRAFT_MIN_PX`` so the silhouette appears exactly when the
+#: floor stops being a bare dot -- one threshold, not two that can disagree.
+CRAFT_DETAIL_PX = 5
 #: The render/pick floor that keeps a distant craft's silhouette readable
 #: lives in ``render.scale.craft_floor_px`` -- shared with picking, which is
 #: why it is not duplicated here.

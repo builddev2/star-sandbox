@@ -89,16 +89,20 @@ def visual_radii(world):
     return out
 
 
-#: However far out the camera is, a craft is drawn at least this big, so its
-#: silhouette stays readable.  Shared by ``render.draw`` (drawing) and
-#: ``app.state.pick_body_at`` (picking) through ``craft_floor_px`` below --
-#: they used to disagree, because only the draw side scaled with the window:
-#: at h=360 that was a rounding error (drawn 9px, picked ~10px), but at
-#: h=1440 the drawn floor had grown to 36px against a pick radius still
-#: pinned near 12px, leaving two-thirds of the visible shuttle unclickable.
-#: A render-only floor regardless: it must never reach ``contact_radius``,
-#: so a bigger picture must not buy a bigger target to *hit*.
-CRAFT_MIN_PX = 9
+#: However far out the camera is, a craft is drawn at least this big, so it
+#: stays findable.  Deliberately **below** ``FLOOR_MAX``: a craft is the
+#: smallest object in the sandbox and has to read that way.  An earlier 9 drew
+#: a delta wider than the Sun's own disc, swallowing the Earth it launched from.
+#:
+#: Shared by ``render.draw`` (drawing) and ``app.state.pick_body_at`` (picking)
+#: through ``craft_floor_px`` below, because only the draw side used to scale
+#: with the window: at h=360 the disagreement was a rounding error, but by
+#: h=1440 the drawn floor had outgrown the pick radius threefold and left most
+#: of the visible shuttle unclickable.
+#:
+#: A render-only floor either way -- it must never reach ``contact_radius``, so
+#: a bigger picture never buys a bigger target to *hit*.
+CRAFT_MIN_PX = 5
 
 
 def craft_floor_px(internal_height):
