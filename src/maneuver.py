@@ -224,7 +224,7 @@ def hohmann(mu, r1, r2, theta_craft, theta_target):
             "a_transfer": a_transfer}
 
 
-def flyby(mu_planet, v_inf, periapsis):
+def flyby(mu_planet, v_inf, periapsis, side=1.0):
     """How much a planet bends a passing craft, and where it leaves.
 
     A flyby is a hyperbola about the planet.  The speed the *planet* sees --
@@ -238,6 +238,16 @@ def flyby(mu_planet, v_inf, periapsis):
     rotated ``v_inf`` adds to the planet's own orbital motion differently
     than the original did.  That is why the drawing is a triangle: nothing
     about it is a fudge.
+
+    ``side`` exists because the sense of the rotation is not a free choice --
+    it is fixed by which side of the planet the craft passes, and that in
+    turn is exactly what decides whether an assist boosts or brakes the
+    craft relative to the star.  The sign equals the sign of the flyby's
+    angular momentum, ``r_rel x v_inf``: a craft passing on the +y side while
+    moving in +x is pulled toward -y, which is a clockwise (negative)
+    rotation, so a negative ``side`` matches a negative angular momentum. A
+    non-negative ``side`` rotates counter-clockwise, matching the sign
+    convention ``math.copysign`` already uses for a positive-signed zero.
     """
     v = np.asarray(v_inf, dtype=float)
     speed2 = float(v[0] * v[0] + v[1] * v[1])
@@ -246,8 +256,9 @@ def flyby(mu_planet, v_inf, periapsis):
 
     e = 1.0 + float(periapsis) * speed2 / float(mu_planet)
     turn = 2.0 * math.asin(min(1.0, 1.0 / e))
+    signed_turn = math.copysign(turn, side)
 
-    cos_t, sin_t = math.cos(turn), math.sin(turn)
+    cos_t, sin_t = math.cos(signed_turn), math.sin(signed_turn)
     return {"e": e, "turn": turn,
             "v_out": np.array([cos_t * v[0] - sin_t * v[1],
                                sin_t * v[0] + cos_t * v[1]])}

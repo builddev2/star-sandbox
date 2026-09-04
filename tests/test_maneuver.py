@@ -3,6 +3,7 @@
 import math
 
 import numpy as np
+import pytest
 
 from src import maneuver, materials, orbits, units
 from src.body import KIND_CRAFT, KIND_STAR
@@ -19,11 +20,6 @@ def _sun_and_craft(radius=1.0):
               units.CRAFT_RADIUS, np.array([radius, 0.0]),
               np.array([0.0, speed]), kind=KIND_CRAFT)
     return world
-
-
-def _elements(world, index, rel_pos, rel_vel):
-    mu = units.G * world.mass[0]
-    return orbits.elements_from_state(mu, rel_pos, rel_vel)
 
 
 def test_a_prograde_burn_raises_the_far_side_and_leaves_the_near_side_alone():
@@ -71,6 +67,45 @@ def test_a_node_in_the_future_is_evaluated_where_the_craft_will_be():
     assert pos[0] < -0.99
 
 
+def test_node_state_reads_due_time_as_absolute_not_a_countdown():
+    """``due_time`` is absolute world days (see the module docstring), so a
+    node due at day 150 when the clock reads 100 must be evaluated exactly
+    like a node due at day 50 when the clock reads 0 -- both are 50 days out.
+    A mutant that drops ``- world.time`` treats ``due_time`` as a countdown
+    instead and would advance 150 days here rather than 50, landing the
+    craft somewhere else on its circular orbit entirely."""
+    world_now = _sun_and_craft()
+    world_now.time = 100.0
+    node_now = maneuver.Maneuver(due_time=150.0, prograde=0.0)
+    _mu, pos_now, vel_now = maneuver.node_state(world_now, 1, node_now)
+
+    world_zero = _sun_and_craft()
+    node_zero = maneuver.Maneuver(due_time=50.0, prograde=0.0)
+    _mu, pos_zero, vel_zero = maneuver.node_state(world_zero, 1, node_zero)
+
+    assert np.allclose(pos_now, pos_zero, atol=1e-12)
+    assert np.allclose(vel_now, vel_zero, atol=1e-12)
+
+
+def test_plan_conics_advances_the_clock_from_world_time_not_from_zero():
+    """Same absolute-time promise as ``node_state``, but exercised through
+    ``plan_conics``'s own clock bookkeeping across two nodes."""
+    world_now = _sun_and_craft()
+    world_now.time = 100.0
+    plan_now = (maneuver.Maneuver(due_time=110.0, prograde=units.from_ms(800.0)),
+                maneuver.Maneuver(due_time=300.0, prograde=units.from_ms(600.0)))
+    _attractor, conics_now = maneuver.plan_conics(world_now, 1, plan_now, samples=64)
+
+    world_zero = _sun_and_craft()
+    plan_zero = (maneuver.Maneuver(due_time=10.0, prograde=units.from_ms(800.0)),
+                 maneuver.Maneuver(due_time=200.0, prograde=units.from_ms(600.0)))
+    _attractor, conics_zero = maneuver.plan_conics(world_zero, 1, plan_zero, samples=64)
+
+    for (points_now, bound_now), (points_zero, bound_zero) in zip(conics_now, conics_zero):
+        assert bound_now == bound_zero
+        assert np.allclose(points_now, points_zero, atol=1e-9)
+
+
 def test_craft_state_finds_the_star_as_the_attractor():
     world = _sun_and_craft()
     attractor, mu, rel_pos, _rel_vel = maneuver.craft_state(world, 1)
@@ -88,6 +123,30 @@ def test_plan_conics_returns_one_conic_per_node():
     assert len(conics) == 2
     for points, _bound in conics:
         assert len(points) > 8
+
+
+def test_plan_conics_chains_each_node_from_the_previous_post_burn_state():
+    """The docstring's central promise: node k's conic is propagated from
+    node k-1's POST-burn state, not its pre-burn one. A real two-burn Hohmann
+    transfer makes this checkable exactly -- the second conic must be
+    circular at the target radius, because that circularisation is the whole
+    point of the arrival burn. A mutant that chains from the pre-burn state
+    instead gives a lopsided conic ranging ~1.0 to ~1.4385 AU rather than a
+    circle at 1.5 AU, which a 1e-3 tolerance catches easily."""
+    world = _sun_and_craft(radius=1.0)
+    mu = units.G * (1.0 + world.mass[1])
+    r1, r2 = 1.0, 1.5
+    h = maneuver.hohmann(mu, r1, r2, 0.0, 0.0)
+    depart_time = 0.0
+    arrive_time = depart_time + h["transfer_days"]
+    plan = (maneuver.Maneuver(due_time=depart_time, prograde=h["depart_dv"]),
+            maneuver.Maneuver(due_time=arrive_time, prograde=h["arrive_dv"]))
+
+    _attractor, conics = maneuver.plan_conics(world, 1, plan, samples=200)
+    points, _bound = conics[1]
+    radii = np.hypot(points[:, 0], points[:, 1])
+    assert abs(radii.min() - r2) < 1e-3
+    assert abs(radii.max() - r2) < 1e-3
 
 
 def test_two_circular_orbits_come_closest_at_the_difference_of_their_radii():
@@ -128,6 +187,33 @@ def test_closest_approach_reports_where_both_bodies_were():
     assert abs(gap - result["distance"]) < 1e-9
 
 
+def test_the_refinement_pass_actually_tightens_a_phased_intercept():
+    """A real Earth->Mars Hohmann transfer, phased so the craft and Mars
+    actually meet: the coarse 240-sample sweep alone lands ~7.6e-04 AU away
+    at best, and the refinement pass narrows that to ~2.0e-05 AU -- 38x
+    tighter. A tolerance loose enough to pass on the coarse sweep alone
+    would never notice the refinement pass being skipped."""
+    mu = units.G
+    r1, r2 = 1.0, 1.524
+    v1 = math.sqrt(mu / r1)
+    v2 = math.sqrt(mu / r2)
+    h = maneuver.hohmann(mu, r1, r2, 0.0, 0.0)
+    n2 = math.sqrt(mu / r2 ** 3)
+    required = math.pi - n2 * h["transfer_days"]
+
+    craft_pos = np.array([r1, 0.0])
+    craft_vel = np.array([0.0, v1 + h["depart_dv"]])
+
+    target_theta = required % (2.0 * math.pi)
+    target_pos = np.array([r2 * math.cos(target_theta), r2 * math.sin(target_theta)])
+    target_vel = v2 * np.array([-math.sin(target_theta), math.cos(target_theta)])
+
+    result = maneuver.closest_approach(mu, craft_pos, craft_vel,
+                                       target_pos, target_vel,
+                                       horizon_days=400.0, samples=240)
+    assert result["distance"] < 1e-4
+
+
 def test_earth_to_mars_matches_the_textbook():
     """The acceptance test for the whole solver.  Every number here is one
     an eight-year-old can look up and check."""
@@ -143,10 +229,18 @@ def test_going_inward_costs_a_retrograde_burn():
     assert result["arrive_dv"] < 0.0
 
 
-def test_the_wait_puts_the_target_where_the_craft_will_arrive():
-    """The part a naive Hohmann omits: you cannot leave whenever you like."""
+@pytest.mark.parametrize("r2", [1.524, 0.72])
+def test_the_wait_puts_the_target_where_the_craft_will_arrive(r2):
+    """The part a naive Hohmann omits: you cannot leave whenever you like.
+
+    Parameterised over an outward (r2=1.524) and an inward (r2=0.72) transfer:
+    the phase-closure check below is the only thing in the suite that can
+    catch a sign error confined to the inward branch, because
+    ``test_the_wait_is_never_negative`` is defeated by its own ``max(0.0, ...)``
+    clamp -- a wrong sign there just reads as zero, not wrong.
+    """
     mu = units.G
-    r1, r2 = 1.0, 1.524
+    r1 = 1.0
     theta_craft, theta_target = 0.0, 1.0
     result = maneuver.hohmann(mu, r1, r2, theta_craft, theta_target)
 
@@ -185,6 +279,30 @@ def test_a_flyby_never_changes_the_speed_the_planet_sees():
     assert abs(np.hypot(*result["v_out"]) - np.hypot(*v_in)) < 1e-15
 
 
+def test_a_flyby_actually_rotates_v_inf_by_the_closed_form_angle():
+    """Pins the rotation itself, not just that speed is preserved -- a bare
+    |v_out| == |v_in| check is satisfied by the identity rotation too.
+
+    mu_planet = periapsis = 1.0 and |v_inf| = 1.0 make the eccentricity term
+    ``periapsis * |v_inf|^2 / mu_planet`` exactly 1.0, so ``e == 2.0`` and
+    ``turn == 2*asin(0.5) == pi/3`` are exact, not approximate-by-luck.
+    """
+    mu_planet = 1.0
+    periapsis = 1.0
+    v_in = np.array([1.0, 0.0])
+    result = maneuver.flyby(mu_planet, v_in, periapsis=periapsis)
+
+    assert result["e"] == pytest.approx(2.0)
+    assert result["turn"] == pytest.approx(2.0 * math.asin(0.5))
+
+    v_out = result["v_out"]
+    swept = math.atan2(v_out[1], v_out[0]) - math.atan2(v_in[1], v_in[0])
+    swept = (swept + math.pi) % (2.0 * math.pi) - math.pi
+    if swept <= -math.pi:
+        swept += 2.0 * math.pi
+    assert swept == pytest.approx(result["turn"])
+
+
 def test_a_close_slow_pass_turns_harder_than_a_distant_fast_one():
     mu_planet = units.G * units.JUPITER_MASS
     slow_close = maneuver.flyby(mu_planet, np.array([0.002, 0.0]),
@@ -205,3 +323,23 @@ def test_a_flyby_with_no_approach_speed_does_nothing():
     result = maneuver.flyby(units.G * units.JUPITER_MASS, np.array([0.0, 0.0]),
                             periapsis=units.JUPITER_RADIUS)
     assert result["turn"] == 0.0
+
+
+def test_side_minus_one_rotates_the_opposite_way_but_still_conserves_speed():
+    """``side`` picks which side of the planet the craft passes, which is
+    what decides whether an assist boosts or brakes it -- so flipping it
+    must flip the sense of rotation, not just scale something."""
+    mu_planet = units.G * units.JUPITER_MASS
+    v_in = np.array([0.005, 0.0])
+    periapsis = units.JUPITER_RADIUS * 3.0
+
+    positive = maneuver.flyby(mu_planet, v_in, periapsis=periapsis, side=1.0)
+    negative = maneuver.flyby(mu_planet, v_in, periapsis=periapsis, side=-1.0)
+
+    assert abs(np.hypot(*negative["v_out"]) - np.hypot(*v_in)) < 1e-15
+    assert negative["turn"] == pytest.approx(positive["turn"])
+    # A rotation by +turn and one by -turn are mirror images across v_in's
+    # axis: the y-component flips sign, the x-component does not.
+    assert negative["v_out"][1] == pytest.approx(-positive["v_out"][1])
+    assert negative["v_out"][0] == pytest.approx(positive["v_out"][0])
+    assert not np.allclose(negative["v_out"], positive["v_out"])

@@ -1,7 +1,7 @@
 """A craft is a one-way kind, like a black hole."""
 
 from src import edits, materials, units
-from src.body import KIND_CRAFT, KIND_STAR
+from src.body import KIND_CRAFT
 from src.world import World
 
 
@@ -20,6 +20,9 @@ def test_a_craft_never_ignites_however_heavy_it_gets():
 
 def test_metres_per_second_round_trips():
     assert abs(units.to_ms(units.from_ms(7800.0)) - 7800.0) < 1e-6
+    # A round trip through x*k/k passes for any nonzero k, even a wrong one;
+    # this pins the conversion factor itself.
+    assert abs(units.from_ms(units.AUD_TO_MS) - 1.0) < 1e-12
 
 
 def test_earth_orbital_speed_is_about_30_km_per_second():
@@ -32,7 +35,7 @@ def test_the_spacecraft_material_is_not_reachable_by_cycling():
     assert materials.get("spacecraft") is materials.SPACECRAFT
 
 
-def test_a_craft_starts_with_an_empty_plan_and_a_full_tank():
+def test_a_craft_starts_with_an_empty_plan_and_an_empty_tank():
     world = World()
     body = _craft(world)
     assert body.plan == ()
