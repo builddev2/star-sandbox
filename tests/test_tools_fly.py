@@ -310,3 +310,20 @@ def test_the_transfer_aims_at_the_targets_mean_radius_not_where_it_happens_to_be
 
     # The craft should end on an orbit the size of Mars's, within a few percent.
     assert abs(a_final - mars_a) / mars_a < 0.05
+
+
+def test_planning_a_transfer_from_a_degenerate_orbit_does_nothing_quietly(state):
+    """hohmann returns None for a degenerate orbit; the tool must not then
+    unpack it and take the frame down."""
+    import numpy as _np
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    craft = state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    # Park the craft exactly on the Sun: r1 becomes zero.
+    world = state.sim.world
+    index = world.index_of(craft.id)
+    world.pos[index] = world.pos[0]
+    world.vel[index] = world.vel[0]
+    state.sim.refresh()
+    state.tool._plan_transfer(state)              # must not raise
+    assert craft.plan == ()

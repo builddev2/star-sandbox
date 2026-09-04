@@ -6,7 +6,13 @@ it hit its monthly spend limit partway through, which killed four agents mid-fli
 cut the review process short. This is the honest list of what that cost, so none of it is
 mistaken for finished.
 
-Suite at merge: **1020 passing**, from 896 at the branch point.
+Suite at merge: **1020 passing**, from 896 at the branch point. After the 2026-09-04
+defect pass: **1032**.
+
+> **Update, 2026-09-04.** Everything under "Live mutants" and most of the smaller
+> deferred items are now fixed, each verified by re-applying the mutant and confirming it
+> fails. What genuinely remains is the unreviewed commits, the deliberate limitations,
+> and three cosmetic items. Struck-through entries are done.
 
 ## Unreviewed commits
 
@@ -22,7 +28,16 @@ nobody read them with fresh eyes:
 The fix round on the craft rendering (`80aad32`) also has no re-review, and no
 whole-branch review was ever run.
 
-## Live mutants: three rendering behaviours are untested
+## Live mutants: three rendering behaviours are untested  -- FIXED 2026-09-04
+
+**All three are closed.** Each mutant below was re-applied and confirmed to fail the
+suite. The third needed a second attempt: deleting the craft branch does *not* stop a
+craft being drawn -- it falls through to the ordinary material-sphere path -- so counting
+pixels proved nothing. The thermal-tile colour is the discriminator, since only the
+shuttle sprite paints it. Kept below for the record of what was wrong.
+
+<details><summary>original finding</summary>
+
 
 These were found by a reviewer that deliberately broke the code and checked whether the
 suite noticed. It did not. Each of these edits still leaves the suite green:
@@ -47,6 +62,8 @@ suite noticed. It did not. Each of these edits still leaves the suite green:
    *Kill it with:* a headless `WorldRenderer.draw` test with a craft at two buffer
    heights, asserting the drawn size scales.
 
+</details>
+
 ## Known limitations, deliberate rather than accidental
 
 - **A transfer reaches the target's orbit, not a rendezvous.** The plan is two-body; the
@@ -64,27 +81,31 @@ suite noticed. It did not. Each of these edits still leaves the suite green:
   reach, because craft are launched heliocentric by design. If planetary capture is ever
   added, a craft in orbit around a planet will point along the planet's heliocentric
   track instead of along its own orbit.
-- **`flyby` returns `e = inf`** for a stationary craft where the limit is `e = 1`.
-- **`hohmann` has no zero guard** on `r1`/`r2`; a craft exactly on the attractor's centre
-  would divide by zero.
+- ~~**`flyby` returns `e = inf`** for a stationary craft where the limit is `e = 1`.~~
+  **Fixed 2026-09-04**: returns `e = 1.0`.
+- ~~**`hohmann` has no zero guard** on `r1`/`r2`.~~ **Fixed 2026-09-04**: returns `None`,
+  and `_plan_transfer` leaves the plan alone. The crash actually fired earlier, in
+  `_mean_radius`, which is guarded too. `orbits.dominant_attractor` had the same
+  zero-separation division and is fixed alongside.
 
 ## Smaller deferred items
 
-- `tests/test_craft.py`: the units round-trip assertion `from_ms(AUD_TO_MS) == 1.0` is a
-  **tautology** -- it holds for any nonzero conversion factor, which is the very failure
-  its comment claims to catch. Either delete it and its comment, or replace it with one
-  that pins the factor directly. (The factor is in fact already covered by the Earth
-  orbital-speed and Earth-to-Mars tests.)
-- `maneuver.closest_approach`: the refinement pass's *resolution* is unpinned -- shrinking
-  the fine sweep from 32 samples to 4 still passes. Only its existence is tested.
-- `maneuver.closest_approach`: the `samples` argument is silently floored to 8 and never
-  varied in a test.
-- `maneuver.flyby`: `side=-0.0` rotates clockwise, because `copysign` reads the sign bit,
-  and `-0.0` can come out of a degenerate cross product. Neither zero case has a test.
+- ~~`tests/test_craft.py`: the units round-trip assertion is a **tautology**.~~
+  **Fixed 2026-09-04**: replaced with one that pins `AUD_TO_MS` against `AU_M /
+  SEC_PER_DAY` and against a literal. Verified by setting the factor to `AU_KM /
+  SEC_PER_DAY` -- the plausible slip -- which the test now catches.
+- ~~`maneuver.closest_approach`: the refinement pass's resolution is unpinned.~~
+  **Checked 2026-09-04**: did not reproduce -- the reported minimum is exact and really is
+  a minimum. Pinned by a regression test rather than fixed.
+- ~~`maneuver.closest_approach`: the `samples` argument is silently floored to 8.~~
+  **Checked 2026-09-04**: did not reproduce -- a larger `samples` does find a closer
+  approach. Pinned by a regression test.
+- ~~`maneuver.flyby`: `side=-0.0` rotates clockwise.~~ **Fixed 2026-09-04**: the sign test
+  is now `side >= 0.0` rather than `copysign`, which reads the sign bit.
 - `maneuver.hohmann`: `max(0.0, wait)` is unreachable defensive code -- the sign branch
   already guarantees a non-negative wait.
-- `maneuver.plan_conics` assumes the plan is sorted by `due_time` and mis-handles an
-  unsorted one silently. Worth one docstring sentence.
+- ~~`maneuver.plan_conics` assumes the plan is sorted by `due_time`.~~
+  **Fixed 2026-09-04**: it sorts, so a caller may hand one over in any order.
 - `units.craft_apparent_radius()` is a zero-logic wrapper around its own constant. If it
   never becomes kind- or zoom-dependent, delete it and use the constant.
 - At the exact instant a launch window opens, an outward transfer reports a full synodic

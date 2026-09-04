@@ -212,3 +212,46 @@ def test_a_tiny_craft_still_produces_a_visible_sprite():
     cache = SpriteCache()
     sprite = cache.get_craft(2, 0.0)
     assert sprite.get_bounding_rect().width >= 1
+
+
+def test_a_craft_sprite_is_a_shuttle_and_not_a_plain_dot():
+    """The silhouette used to be untested: forcing the plain-dot branch --
+    never drawing a single polygon -- passed the whole suite, because the
+    other tests assert only that the surface is bigger than a few pixels,
+    which a circle satisfies.  The thermal tile is the giveaway: the dot
+    branch draws hull colour and nothing else."""
+    from src.render.sprites import SpriteCache, _CRAFT_HULL, _CRAFT_TILE
+    sprite = SpriteCache().get_craft(20, 0.0)
+    seen = set()
+    for x in range(sprite.get_width()):
+        for y in range(sprite.get_height()):
+            r, g, b, a = sprite.get_at((x, y))
+            if a:
+                seen.add((r, g, b))
+    assert _CRAFT_HULL in seen, "no hull colour: nothing was drawn"
+    assert _CRAFT_TILE in seen, "no thermal tile: this is a dot, not a shuttle"
+
+
+def test_a_craft_sprite_really_is_rotated_to_its_heading():
+    """Never rotating used to pass, because the cache test only compared
+    object identity -- and the cache *key* differs by heading regardless of
+    what the pixels do."""
+    import math
+    import pygame
+    from src.render.sprites import SpriteCache
+    cache = SpriteCache()
+    nose_right = cache.get_craft(20, 0.0)
+    nose_up = cache.get_craft(20, math.pi / 2.0)
+    assert (pygame.image.tostring(nose_right, "RGBA")
+            != pygame.image.tostring(nose_up, "RGBA"))
+
+
+def test_the_heading_bucket_is_rounded_not_truncated():
+    """int(x) instead of int(round(x)) shifts every craft half a bucket."""
+    import math
+    from src.render.sprites import SpriteCache, LIT_BUCKETS
+    cache = SpriteCache()
+    step = 2.0 * math.pi / LIT_BUCKETS
+    # Just under half a step rounds back to bucket 0; just over rounds to 1.
+    assert cache.get_craft(14, step * 0.49) is cache.get_craft(14, 0.0)
+    assert cache.get_craft(14, step * 0.51) is not cache.get_craft(14, 0.0)

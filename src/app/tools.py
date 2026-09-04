@@ -1067,6 +1067,11 @@ class FlyTool(Tool):
             mu, r1, r2,
             math.atan2(float(rel_pos[1]), float(rel_pos[0])),
             math.atan2(float(target_rel[1]), float(target_rel[0])))
+        if solved is None:
+            # A degenerate orbit -- a craft sitting on its attractor's centre.
+            # There is no transfer to describe, so leave the plan alone rather
+            # than writing burns derived from a division that did not happen.
+            return
 
         # The circular-orbit window is the first guess; this slides it until
         # the target really is at the arrival point, which matters because
@@ -1386,13 +1391,18 @@ def _mean_radius(mu, rel_pos, rel_vel):
     """The radius a body's orbit stands in for, in AU: its semi-major axis.
 
     Falls back to the present distance for an unbound path, which has no
-    semi-major axis worth the name.
+    semi-major axis worth the name, and to 0.0 for a body sitting exactly on
+    its attractor -- ``elements_from_state`` divides by the separation, so it
+    cannot be asked about a body that has none.
     """
+    distance = float(np.hypot(rel_pos[0], rel_pos[1]))
+    if distance <= 0.0:
+        return 0.0
     el = orbits.elements_from_state(mu, rel_pos, rel_vel)
     a = el["a"]
     if el["bound"] and math.isfinite(a) and a > 0.0:
         return float(a)
-    return float(np.hypot(rel_pos[0], rel_pos[1]))
+    return distance
 
 
 def _temperature_label(kelvin):

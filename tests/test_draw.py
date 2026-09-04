@@ -212,3 +212,84 @@ def test_a_body_larger_than_the_screen_still_draws(parts):
     edits.set_density(world, 3, units.from_gcm3(0.05))
     parts["renderer"].draw(parts["surface"], parts["sim"], parts["camera"],
                            parts["view"])
+
+
+def _craft_world():
+    from src import materials, units
+    from src.body import KIND_CRAFT
+    from src.world import World
+    world = World()
+    world.add("Sun", materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+              np.zeros(2), np.zeros(2), kind="star")
+    world.add("Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
+              units.CRAFT_RADIUS, np.array([1.0, 0.0]),
+              np.array([0.0, 0.017]), kind=KIND_CRAFT)
+    return world
+
+
+def _craft_ink(height):
+    """Opaque pixels a craft paints, rendered into a buffer `height` tall."""
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings, WorldRenderer
+    from src.render.pixelfont import PixelFont
+    from src.render.sprites import SpriteCache
+    from src.sim import Simulation
+
+    world = _craft_world()
+    width = int(height * 16 / 9)
+    camera = Camera(width, height, au_across=4.0)
+    surface = pygame.Surface((width, height))
+    surface.fill((0, 0, 0))
+    renderer = WorldRenderer(SpriteCache(), PixelFont(12))
+    view = ViewSettings(show_trails=False, show_labels=False)
+    renderer.draw(surface, Simulation(world=world), camera, view)
+    # Count only the craft's half of the frame, so the Sun is not included.
+    craft_x, craft_y = camera.world_to_screen(world.pos[1])
+    box = pygame.Rect(int(craft_x) - 60, int(craft_y) - 60, 120, 120)
+    box = box.clip(surface.get_rect())
+    return sum(1 for x in range(box.left, box.right)
+               for y in range(box.top, box.bottom)
+               if surface.get_at((x, y))[:3] != (0, 0, 0))
+
+
+def _craft_colours(height):
+    """Every exact colour painted where the craft is, at buffer `height`."""
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings, WorldRenderer
+    from src.render.pixelfont import PixelFont
+    from src.render.sprites import SpriteCache
+    from src.sim import Simulation
+
+    world = _craft_world()
+    width = int(height * 16 / 9)
+    camera = Camera(width, height, au_across=4.0)
+    surface = pygame.Surface((width, height))
+    surface.fill((0, 0, 0))
+    renderer = WorldRenderer(SpriteCache(), PixelFont(12))
+    view = ViewSettings(show_trails=False, show_labels=False)
+    renderer.draw(surface, Simulation(world=world), camera, view)
+    craft_x, craft_y = camera.world_to_screen(world.pos[1])
+    box = pygame.Rect(int(craft_x) - 60, int(craft_y) - 60, 120, 120)
+    box = box.clip(surface.get_rect())
+    return {surface.get_at((x, y))[:3]
+            for x in range(box.left, box.right)
+            for y in range(box.top, box.bottom)}
+
+
+def test_a_craft_is_drawn_as_a_shuttle_not_as_a_generic_sphere():
+    """Deleting the craft branch in draw.py does not stop a craft being
+    drawn -- it falls through to the ordinary material-sphere path, so
+    counting pixels proves nothing.  The thermal tile does: it is a colour
+    only the shuttle sprite paints."""
+    from src.render.sprites import _CRAFT_TILE
+    assert _craft_ink(360) > 0
+    assert _CRAFT_TILE in _craft_colours(720)
+
+
+def test_the_craft_render_floor_scales_with_the_buffer():
+    """CRAFT_MIN_PX is a pixel constant, and every pixel constant in this
+    project scales by internal_height / REF_HEIGHT.  A bare unscaled count
+    used to pass, because nothing rendered a craft in a test at all."""
+    small = _craft_ink(360)
+    large = _craft_ink(1080)
+    assert large > small * 2, "craft did not grow with the buffer (%d -> %d)" % (small, large)
