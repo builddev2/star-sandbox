@@ -222,3 +222,32 @@ def hohmann(mu, r1, r2, theta_craft, theta_target):
     return {"depart_dv": depart, "arrive_dv": arrive,
             "transfer_days": transfer, "wait_days": max(0.0, wait),
             "a_transfer": a_transfer}
+
+
+def flyby(mu_planet, v_inf, periapsis):
+    """How much a planet bends a passing craft, and where it leaves.
+
+    A flyby is a hyperbola about the planet.  The speed the *planet* sees --
+    ``v_inf`` -- is exactly the same going out as coming in; all the planet
+    does is rotate it, by
+
+        e = 1 + r_p |v_inf|^2 / mu,     delta = 2 asin(1/e)
+
+    and that rotation is the whole gravity assist.  The craft gains nothing
+    relative to the planet and everything relative to the star, because the
+    rotated ``v_inf`` adds to the planet's own orbital motion differently
+    than the original did.  That is why the drawing is a triangle: nothing
+    about it is a fudge.
+    """
+    v = np.asarray(v_inf, dtype=float)
+    speed2 = float(v[0] * v[0] + v[1] * v[1])
+    if speed2 <= 0.0 or periapsis <= 0.0 or mu_planet <= 0.0:
+        return {"e": math.inf, "turn": 0.0, "v_out": v.copy()}
+
+    e = 1.0 + float(periapsis) * speed2 / float(mu_planet)
+    turn = 2.0 * math.asin(min(1.0, 1.0 / e))
+
+    cos_t, sin_t = math.cos(turn), math.sin(turn)
+    return {"e": e, "turn": turn,
+            "v_out": np.array([cos_t * v[0] - sin_t * v[1],
+                               sin_t * v[0] + cos_t * v[1]])}

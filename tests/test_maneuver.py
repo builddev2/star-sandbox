@@ -174,3 +174,34 @@ def test_equal_radii_need_no_burn_at_all():
     result = maneuver.hohmann(units.G, 1.0, 1.0, 0.0, 0.0)
     assert abs(result["depart_dv"]) < 1e-12
     assert abs(result["arrive_dv"]) < 1e-12
+
+
+def test_a_flyby_never_changes_the_speed_the_planet_sees():
+    """The whole trick: |v_inf| out equals |v_inf| in.  Only the direction
+    changes, and the sum with the planet's own motion is what gains you speed."""
+    mu_planet = units.G * units.JUPITER_MASS
+    v_in = np.array([0.005, 0.0])
+    result = maneuver.flyby(mu_planet, v_in, periapsis=units.JUPITER_RADIUS * 3.0)
+    assert abs(np.hypot(*result["v_out"]) - np.hypot(*v_in)) < 1e-15
+
+
+def test_a_close_slow_pass_turns_harder_than_a_distant_fast_one():
+    mu_planet = units.G * units.JUPITER_MASS
+    slow_close = maneuver.flyby(mu_planet, np.array([0.002, 0.0]),
+                                periapsis=units.JUPITER_RADIUS * 1.5)
+    fast_far = maneuver.flyby(mu_planet, np.array([0.02, 0.0]),
+                              periapsis=units.JUPITER_RADIUS * 40.0)
+    assert slow_close["turn"] > fast_far["turn"]
+
+
+def test_the_trajectory_is_always_a_hyperbola():
+    mu_planet = units.G * units.JUPITER_MASS
+    result = maneuver.flyby(mu_planet, np.array([0.005, 0.0]),
+                            periapsis=units.JUPITER_RADIUS * 2.0)
+    assert result["e"] > 1.0
+
+
+def test_a_flyby_with_no_approach_speed_does_nothing():
+    result = maneuver.flyby(units.G * units.JUPITER_MASS, np.array([0.0, 0.0]),
+                            periapsis=units.JUPITER_RADIUS)
+    assert result["turn"] == 0.0
