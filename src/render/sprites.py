@@ -221,10 +221,9 @@ def _make_black_hole(px, spin, disk, seed):
 
 #: Below this many pixels there is no room for a wing; draw a bright dot.
 CRAFT_DETAIL_PX = 7
-#: However far out the camera is, a craft is drawn at least this big, so the
-#: silhouette stays readable.  A render-only floor: it never reaches
-#: ``contact_radius``, so enlarging the picture does not enlarge the target.
-CRAFT_MIN_PX = 9
+#: The render/pick floor that keeps a distant craft's silhouette readable
+#: lives in ``render.scale.craft_floor_px`` -- shared with picking, which is
+#: why it is not duplicated here.
 
 #: White upper surface, black thermal tile below, grey trim.
 _CRAFT_HULL = (0xF2, 0xF5, 0xFA)
@@ -246,10 +245,15 @@ def _make_craft(px, heading):
     reasoning the black hole path follows, not the star's.
     """
     px = max(1, int(px))
-    length = px * 2
-    half = length
-    size = half * 2 + 1
-    centre = half
+    # The surface only has to hold the un-rotated outline below --
+    # pygame.transform.rotate enlarges its own returned surface to fit
+    # whatever it is given, so nothing here needs to allow for rotation.
+    # The farthest vertex point() ever places (the aft wing corner, at
+    # along=-0.95, across=1.05) sits 1.42 body-lengths from centre; the
+    # margin below rounds that up and adds a pixel for int()'s truncation.
+    margin = int(math.ceil(px * 1.45)) + 1
+    size = margin * 2 + 1
+    centre = margin
     surface = pygame.Surface((size, size), pygame.SRCALPHA)
 
     if px < CRAFT_DETAIL_PX:
@@ -258,7 +262,7 @@ def _make_craft(px, heading):
         return surface
 
     def point(along, across):
-        """Body coordinates in fractions of the half-length, to pixels."""
+        """Body coordinates in fractions of the body length, to pixels."""
         return (int(centre + along * px), int(centre - across * px))
 
     # Delta wing first, so the fuselage sits on top of it.

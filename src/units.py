@@ -397,13 +397,15 @@ def surface_gravity_g(mass, radius):
 CRAFT_LENGTH_M = 37.0
 CRAFT_RADIUS = 0.5 * CRAFT_LENGTH_M / AU_M
 
-#: The radius a craft is *drawn and picked* at, in AU -- **not** a physical
-#: radius, and physics must never read it.  The true hull is 1.2e-10 AU,
-#: which has the black hole's problem in miniature: it would draw as a
-#: single pixel and ``contact_radii_au`` would cap its pick radius at a
-#: target far under one pixel across, making it unselectable.  Deliberately
-#: modest rather than large: this also caps the craft's *contact* radius,
-#: and a shuttle should be hard to hit, not easy.
+#: The radius a craft is *drawn and aimed at* through, in AU -- **not** a
+#: physical radius, and physics must never read it.  The true hull is
+#: 1.2e-10 AU, which has the black hole's problem in miniature: it would
+#: draw as a single pixel and, worse, ``contact_radii_au`` would cap its aim
+#: radius at a target far under one pixel across, making it impossible to
+#: hit.  (Clicking is a separate mechanism, ``render.scale.craft_floor_px``,
+#: and is unaffected by this value either way.)  Deliberately modest rather
+#: than large: this also caps the craft's *contact* radius, and a shuttle
+#: should be hard to hit, not easy.
 CRAFT_APPARENT_RADIUS = 0.15 * EARTH_RADIUS
 
 #: What a fresh craft's tank holds, m/s.  Earth to Mars and back is about

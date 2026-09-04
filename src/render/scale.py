@@ -79,12 +79,33 @@ def visual_radii(world):
         elif kind == KIND_CRAFT:
             # A 37 m hull is 1.2e-10 AU: the black hole's problem in
             # miniature.  It would draw as one pixel and, worse,
-            # contact_radii_au would cap its pick radius far below a pixel,
-            # making it impossible to click.  Modest on purpose -- this also
+            # contact_radii_au would cap its aim radius far below a pixel,
+            # making it impossible to hit.  Modest on purpose -- this also
             # caps the craft's contact radius, and a shuttle should be hard
-            # to hit rather than easy.
+            # to hit rather than easy.  (Clicking is unaffected either way --
+            # PICK_MARGIN already covers a sub-pixel target; see
+            # ``craft_floor_px`` for what actually keeps a craft clickable.)
             out[i] = units.craft_apparent_radius()
     return out
+
+
+#: However far out the camera is, a craft is drawn at least this big, so its
+#: silhouette stays readable.  Shared by ``render.draw`` (drawing) and
+#: ``app.state.pick_body_at`` (picking) through ``craft_floor_px`` below --
+#: they used to disagree, because only the draw side scaled with the window:
+#: at h=360 that was a rounding error (drawn 9px, picked ~10px), but at
+#: h=1440 the drawn floor had grown to 36px against a pick radius still
+#: pinned near 12px, leaving two-thirds of the visible shuttle unclickable.
+#: A render-only floor regardless: it must never reach ``contact_radius``,
+#: so a bigger picture must not buy a bigger target to *hit*.
+CRAFT_MIN_PX = 9
+
+
+def craft_floor_px(internal_height):
+    """The craft render/pick floor, in pixels, scaled like every other pixel
+    constant by ``internal_height / REF_HEIGHT`` -- see the module docstring.
+    """
+    return CRAFT_MIN_PX * internal_height / REF_HEIGHT
 
 
 def display_radius_px(r_true, zoom, internal_height, real_size=False):

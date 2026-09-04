@@ -19,7 +19,7 @@ import pygame
 
 from ..body import KIND_BLACK_HOLE, KIND_CRAFT, KIND_STAR
 from . import palette, scale
-from .sprites import CRAFT_MIN_PX, ring_surface
+from .sprites import ring_surface
 
 #: Trail fade steps.  See the module docstring for why this is not per-segment.
 TRAIL_CHUNKS = 8
@@ -101,12 +101,15 @@ class WorldRenderer:
             is_star = body.kind == KIND_STAR
             is_hole = body.kind == KIND_BLACK_HOLE
             is_craft = body.kind == KIND_CRAFT
-            if is_craft:
+            if is_craft and not view.real_size:
                 # A render-only floor, so the silhouette stays readable at any
                 # zoom.  Deliberately not routed through scale.visual_radii:
                 # that array also sets the contact radius, and making the
-                # picture bigger must not make the target bigger.
-                px = max(px, CRAFT_MIN_PX * height / scale.REF_HEIGHT)
+                # picture bigger must not make the target bigger.  Gated on
+                # real_size, or the shuttle is the one object on screen that
+                # refuses to collapse to a dot -- real-size mode exists
+                # precisely so everything does that at once.
+                px = max(px, scale.craft_floor_px(height))
 
             if px < 2.0:
                 if 0 <= int(x) < width and 0 <= int(y) < height:

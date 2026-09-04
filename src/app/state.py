@@ -10,6 +10,7 @@ import math
 import pygame
 
 from .. import units
+from ..body import KIND_CRAFT
 from ..render import scale
 from ..render.effects import EffectField
 
@@ -150,10 +151,16 @@ class AppState:
                                        real_size=self.view.real_size,
                                        floor_radii=scale.visual_radii(world))
         screen = self.camera.world_to_screen_array(world.positions)
+        craft_floor = scale.craft_floor_px(height)
         best = None
         best_score = float("inf")
         for i in range(world.n):
             radius = max(float(radii[i]), 2.0)
+            if world.bodies[i].kind == KIND_CRAFT and not self.view.real_size:
+                # Picking must agree with drawing (render/draw.py), or the
+                # click target and the visible shuttle disagree, and the gap
+                # widens with the window -- see scale.craft_floor_px.
+                radius = max(radius, craft_floor)
             distance = math.hypot(screen[i][0] - sx, screen[i][1] - sy)
             if distance > radius + PICK_MARGIN:
                 continue
