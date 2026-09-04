@@ -17,10 +17,10 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from .. import edits, materials, orbits, units
+from .. import edits, maneuver, materials, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
-                    KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR)
-from ..render import palette
+                    KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
+from ..render import hud, palette, widgets
 from ..render.widgets import Control
 
 #: A press-and-release within this many pixels counts as a click, not a drag.
@@ -506,7 +506,10 @@ class EditTool(Tool):
         index = state.selected_index
         if index is None:
             return 1
-        return len(self._fields(state.sim.world, index))
+        # max(1, ...): a craft's fields tuple is empty (edits.edit_fields), and
+        # the Up/Down modulo below divides by this -- an empty selection must
+        # not mean a crash.
+        return max(1, len(self._fields(state.sim.world, index)))
 
     def _pick_row(self, state, field):
         """Point ``field_index`` at ``field``'s row.  False if there is no such row.
@@ -774,6 +777,624 @@ class EditTool(Tool):
     # copies of the same number is one of them eventually being wrong.
 
 
+#: How far ahead of the body it launches from a craft is placed, as a
+#: fraction of that body's own orbital radius.  Far enough that the two are
+#: visibly separate at system zoom, near enough that a transfer from here is
+#: the same transfer the body itself would fly.
+LAUNCH_OFFSET = 0.02
+
+
+class FlyTool(Tool):
+    name = "Fly"
+    hint = ("Pick a body and press Launch  -  then set a burn and watch the new "
+            "orbit appear before you commit to it  -  X locks a target, "
+            "M works out the transfer for you")
+    context_title = "Fly"
+
+    #: The rows the panel scrubs, in order.  Up/Down picks one.
+    FIELDS = ("when", "prograde", "radial")
+    #: Notches one press of a stepper applies.  All three move three at a
+    #: time: a single 10 m/s notch is invisible against a 3,000 m/s burn.
+    CLICK_NOTCHES = {"when": 3, "prograde": 3, "radial": 3}
+
+    def __init__(self):
+        self.field_index = 0
+        self.target_id = None
+        self.picking_target = False
+        self._drag_x = None
+        #: Populated (Task 10) by whatever finds the closest approach to the
+        #: locked target, so the overlay can draw it without recomputing it.
+        #: Established here, not left to spring into existence on first read,
+        #: because a constructor should own every attribute its class reads.
+        self._encounter_cache = None
+
+    # --- what we are flying -----------------------------------------------------
+
+    def _craft(self, state):
+        """The selected body if it is a craft, otherwise None.
+
+        Deliberately not "the last craft launched": the selection is already
+        how everything else in the interface says what it acts on, and a tool
+        that silently acts on something other than what is selected is the
+        kind of thing that makes a sandbox feel haunted.
+        """
+        body = state.selected_body
+        return body if body is not None and body.kind == KIND_CRAFT else None
+
+    def _node(self, state):
+        craft = self._craft(state)
+        if craft is None or not craft.plan:
+            return None
+        return craft.plan[0]
+
+    def _target_index(self, world):
+        """Row of the locked target, clearing the lock if it is gone."""
+        if self.target_id is None:
+            return None
+        index = world.index_of(self.target_id)
+        if index is None:
+            self.target_id = None
+        return index
+
+    # --- launching --------------------------------------------------------------
+
+    def _launch(self, state):
+        """Put a craft in orbit beside the selected body.
+
+        **Around whatever that body orbits, not around the body itself.**  A
+        parking orbit 300 km above Earth has a ninety-minute period, and
+        ``Integrator.dynamical_time`` takes the tightest pair in the *entire*
+        system: one craft in low orbit would drive the block level to its
+        ceiling and step the whole solar system in units of seconds.  The six
+        existing moons already cost a factor of 64 in step size; this would be
+        far worse.  Starting co-orbital costs nothing and is the right frame
+        for an interplanetary transfer anyway.
+        """
+        world = state.sim.world
+        index = state.selected_index
+        if index is None or world.n >= world.capacity:
+            return None
+
+        attractor = orbits.dominant_attractor(world, index)
+        if attractor is None:
+            return None
+
+        rel = world.pos[index] - world.pos[attractor]
+        radius = float(np.hypot(rel[0], rel[1]))
+        if radius <= 0.0:
+            return None
+
+        # A small rotation ahead of the parent, on the same circle.
+        angle = LAUNCH_OFFSET
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        offset = np.array([cos_a * rel[0] - sin_a * rel[1],
+                           sin_a * rel[0] + cos_a * rel[1]])
+
+        mu = units.G * float(world.mass[attractor])
+        speed = math.sqrt(mu / radius)
+        tangent = np.array([-offset[1], offset[0]]) / radius
+        # Match the parent's own sense of rotation.
+        parent_vel = world.vel[index] - world.vel[attractor]
+        if float(np.dot(tangent, parent_vel)) < 0.0:
+            tangent = -tangent
+
+        body = world.add("Shuttle", materials.SPACECRAFT,
+                         units.EARTH_MASS * 1e-18, units.CRAFT_RADIUS,
+                         world.pos[attractor] + offset,
+                         world.vel[attractor] + tangent * speed,
+                         kind=KIND_CRAFT,
+                         temperature=float(world.temperature[index]))
+        if body is None:
+            return None
+        body.fuel_dv = units.from_ms(units.DEFAULT_FUEL_MS)
+        state.select(body.id)
+        state.sim.refresh()
+        return body
+
+    # --- buttons ----------------------------------------------------------------
+
+    def _default_lead(self, state):
+        """Where a fresh node lands: a quarter of the way round the orbit.
+
+        Far enough ahead to be worth planning, near enough to arrive while
+        anyone is still watching.
+        """
+        index = state.selected_index
+        if index is None:
+            return 30.0
+        attractor = orbits.dominant_attractor(state.sim.world, index)
+        if attractor is None:
+            return 30.0
+        world = state.sim.world
+        mu = units.G * (float(world.mass[attractor]) + float(world.mass[index]))
+        el = orbits.elements_from_state(
+            mu, world.pos[index] - world.pos[attractor],
+            world.vel[index] - world.vel[attractor])
+        period = el["period"]
+        return 30.0 if period is None else max(0.5, period * 0.25)
+
+    def _ensure_node(self, state):
+        """The head node, created at a sensible time if there is none."""
+        craft = self._craft(state)
+        if craft is None:
+            return None
+        if not craft.plan:
+            due = state.sim.world.time + self._default_lead(state)
+            craft.plan = (maneuver.Maneuver(due_time=due),)
+            state.sim.refresh()
+        return craft.plan[0]
+
+    def _replace_node(self, state, node):
+        craft = self._craft(state)
+        if craft is None:
+            return
+        craft.plan = (node,) + tuple(craft.plan[1:])
+        state.sim.refresh()
+
+    def _target_label(self, state):
+        if self.picking_target:
+            return "Click a body..."
+        index = self._target_index(state.sim.world)
+        if index is not None:
+            return "Target: %s" % state.sim.world.bodies[index].name
+        return "Target lock"
+
+    def controls(self, state, metrics):
+        craft = self._craft(state)
+        has_craft = craft is not None
+        node = self._node(state)
+        world = state.sim.world
+        target = self._target_index(world)
+
+        when = ("--" if node is None
+                else _lead_label(node.due_time - world.time))
+        prograde = ("0 m/s" if node is None
+                    else "{:+,.0f} m/s".format(units.to_ms(node.prograde)))
+        radial = ("0 m/s" if node is None
+                  else "{:+,.0f} m/s".format(units.to_ms(node.radial)))
+
+        def stepper(cid, label, row):
+            return [
+                Control(cid, icon="minus", payload=-1, compact=True, repeat=True,
+                        enabled=has_craft, active=self.field_index == row,
+                        tooltip="Less"),
+                Control(cid + ".readout", label=label, readout=True),
+                Control(cid, icon="plus", payload=1, compact=True, repeat=True,
+                        enabled=has_craft, active=self.field_index == row,
+                        tooltip="More"),
+            ]
+
+        return [
+            [Control("fly.launch", label="Launch craft", icon="fly",
+                     enabled=state.selected_index is not None,
+                     tooltip="Put a shuttle in orbit beside what you picked"),
+             Control("fly.refuel", label="Refuel", icon="reset",
+                     enabled=has_craft, tooltip="Fill the tank back up")],
+            [Control("fly.target", label=self._target_label(state), icon="target",
+                     hotkey="X", active=self.picking_target or target is not None,
+                     tooltip="Click a body to measure your approach to it")],
+            stepper("fly.when", "When  %s" % when, 0),
+            stepper("fly.prograde", "Along  %s" % prograde, 1),
+            stepper("fly.radial", "Out    %s" % radial, 2),
+            [Control("fly.hohmann", label="Work out the transfer", icon="flyto",
+                     hotkey="M", enabled=has_craft and target is not None,
+                     tooltip="Plan the two burns that get you there"),
+             Control("fly.clear", icon="close", hotkey="N", compact=True,
+                     enabled=has_craft and node is not None,
+                     tooltip="Throw the plan away")],
+        ]
+
+    def perform(self, control, state):
+        cid = control.id
+        if cid == "fly.launch":
+            self._launch(state)
+            return True
+        if cid == "fly.refuel":
+            craft = self._craft(state)
+            if craft is not None:
+                craft.fuel_dv = units.from_ms(units.DEFAULT_FUEL_MS)
+            return True
+        if cid == "fly.target":
+            self.picking_target = not self.picking_target
+            return True
+        if cid == "fly.clear":
+            craft = self._craft(state)
+            if craft is not None:
+                craft.plan = ()
+                state.sim.refresh()
+            return True
+        if cid == "fly.hohmann":
+            self._plan_transfer(state)
+            return True
+        if cid in ("fly.when", "fly.prograde", "fly.radial"):
+            field = cid.split(".", 1)[1]
+            self.field_index = self.FIELDS.index(field)
+            self._scrub(state, field,
+                        int(control.payload) * self.CLICK_NOTCHES[field])
+            return True
+        return False
+
+    def _scrub(self, state, field, notches):
+        node = self._ensure_node(state)
+        if node is None:
+            return
+        world = state.sim.world
+        if field == "when":
+            lead = maneuver.scrub_lead(node.due_time - world.time, notches)
+            node = maneuver.Maneuver(world.time + lead, node.prograde, node.radial)
+        elif field == "prograde":
+            node = maneuver.Maneuver(node.due_time,
+                                     maneuver.scrub_dv(node.prograde, notches),
+                                     node.radial)
+        else:
+            node = maneuver.Maneuver(node.due_time, node.prograde,
+                                     maneuver.scrub_dv(node.radial, notches))
+        self._replace_node(state, node)
+
+    def _plan_transfer(self, state):
+        """Fill the plan with the two burns of a Hohmann transfer."""
+        craft = self._craft(state)
+        world = state.sim.world
+        index = state.selected_index
+        target = self._target_index(world)
+        if craft is None or index is None or target is None:
+            return
+
+        state_now = maneuver.craft_state(world, index)
+        if state_now is None:
+            return
+        attractor, mu, rel_pos, rel_vel = state_now
+        if target == attractor:
+            return
+
+        target_rel = world.pos[target] - world.pos[attractor]
+        target_vel = world.vel[target] - world.vel[attractor]
+
+        # **Semi-major axes, not present distances.**  A Hohmann transfer is
+        # derived for two circular orbits, and the one radius that stands in
+        # for a real elliptical one is its semi-major axis.  Mars swings
+        # between 1.38 and 1.67 AU: aiming at wherever it is standing today
+        # sends the craft to a radius Mars has already left by the time it
+        # arrives, and the phase-angle wait -- which assumes a circular mean
+        # motion -- would be computed from a period that does not exist.
+        # Measured, aiming at the instantaneous radius missed Mars by 1.9 AU.
+        r1 = _mean_radius(mu, rel_pos, rel_vel)
+        r2 = _mean_radius(mu, target_rel, target_vel)
+        if r1 <= 0.0 or r2 <= 0.0:
+            return
+
+        solved = maneuver.hohmann(
+            mu, r1, r2,
+            math.atan2(float(rel_pos[1]), float(rel_pos[0])),
+            math.atan2(float(target_rel[1]), float(target_rel[0])))
+
+        # The circular-orbit window is the first guess; this slides it until
+        # the target really is at the arrival point, which matters because
+        # Mars's true anomaly does not advance at its mean motion.
+        wait = maneuver.refine_window(mu, rel_pos, rel_vel,
+                                      target_rel, target_vel,
+                                      solved["wait_days"],
+                                      solved["transfer_days"])
+        depart = world.time + wait
+        craft.plan = (
+            maneuver.Maneuver(depart, solved["depart_dv"], 0.0),
+            maneuver.Maneuver(depart + solved["transfer_days"],
+                              solved["arrive_dv"], 0.0),
+        )
+        state.sim.refresh()
+
+    # --- events -----------------------------------------------------------------
+
+    def on_event(self, event, state):
+        """Keys.  Every one re-checks its own precondition, because a key
+        never passes through ``UiLayer.perform``'s ``clickable`` gate -- a
+        greyed-out button's hotkey would otherwise still work.
+        """
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_x:
+                self.picking_target = not self.picking_target
+                return True
+            if event.key == pygame.K_n:
+                craft = self._craft(state)
+                if craft is not None and craft.plan:
+                    craft.plan = ()
+                    state.sim.refresh()
+                return True
+            if event.key == pygame.K_m:
+                if (self._craft(state) is not None
+                        and self._target_index(state.sim.world) is not None):
+                    self._plan_transfer(state)
+                return True
+            if event.key in (pygame.K_UP, pygame.K_DOWN):
+                step = -1 if event.key == pygame.K_UP else 1
+                self.field_index = (self.field_index + step) % len(self.FIELDS)
+                return True
+            if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                if self._craft(state) is None:
+                    return True
+                field = self.FIELDS[self.field_index]
+                step = -1 if event.key == pygame.K_LEFT else 1
+                self._scrub(state, field, step * self.CLICK_NOTCHES[field])
+                return True
+
+        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                and self.picking_target):
+            index = state.pick_body_at(event.pos[0], event.pos[1])
+            self.target_id = (state.sim.world.bodies[index].id
+                              if index is not None else None)
+            self.picking_target = False
+            return True
+
+        return False
+
+    # --- overlay ----------------------------------------------------------------
+
+    #: How long an encounter result stays good, milliseconds.  The search is a
+    #: few hundred Kepler propagations; recomputing it for every frame would be
+    #: felt.  Any change to the plan, the craft or the target invalidates it
+    #: immediately -- this only bounds how stale a result can get while the
+    #: world moves underneath an unchanged plan.
+    ENCOUNTER_TTL_MS = 200
+
+    def _encounter_key(self, state):
+        craft = self._craft(state)
+        if craft is None:
+            return None
+        return (craft.id, self.target_id, craft.plan)
+
+    def _encounter(self, state):
+        """Closest approach to the locked target under the current plan, cached.
+
+        The craft is flown forward through its whole plan first -- propagate to
+        each node, apply that burn, carry on -- so what is measured is where
+        the plan actually puts it, not where it is drifting now.
+        """
+        key = self._encounter_key(state)
+        if key is None or self.target_id is None:
+            self._encounter_cache = None
+            return None
+
+        now = pygame.time.get_ticks()
+        cached = self._encounter_cache
+        if (cached is not None and cached[0] == key
+                and now - cached[1] < self.ENCOUNTER_TTL_MS):
+            return cached[2]
+
+        world = state.sim.world
+        index = state.selected_index
+        target = self._target_index(world)
+        found = maneuver.craft_state(world, index) if index is not None else None
+        if found is None or target is None:
+            self._encounter_cache = (key, now, None)
+            return None
+
+        attractor, mu, rel_pos, rel_vel = found
+        if target == attractor:
+            self._encounter_cache = (key, now, None)
+            return None
+
+        clock = float(world.time)
+        for node in self._craft(state).plan:
+            dt = float(node.due_time) - clock
+            if dt > 0.0:
+                rel_pos, rel_vel = orbits.propagate(mu, rel_pos, rel_vel, dt)
+                clock = float(node.due_time)
+            rel_vel = maneuver.burn_velocity(rel_pos, rel_vel, node)
+
+        target_pos = world.pos[target] - world.pos[attractor]
+        target_vel = world.vel[target] - world.vel[attractor]
+        lead = max(0.0, clock - float(world.time))
+        if lead > 0.0:
+            target_pos, target_vel = orbits.propagate(mu, target_pos,
+                                                      target_vel, lead)
+
+        el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+        horizon = el["period"] if el["period"] is not None else 2000.0
+        result = maneuver.closest_approach(mu, rel_pos, rel_vel,
+                                           target_pos, target_vel,
+                                           horizon_days=min(horizon, 4000.0),
+                                           samples=200)
+        result["attractor"] = attractor
+        result["mu"] = mu
+        self._encounter_cache = (key, now, result)
+        return result
+
+    def draw_overlay(self, surface, state, font):
+        world = state.sim.world
+        camera = state.camera
+
+        target = self._target_index(world)
+        if target is not None:
+            tx, ty = camera.world_to_screen(world.pos[target])
+            pygame.draw.circle(surface, palette.SELECT, (int(tx), int(ty)), 6, 1)
+
+        craft = self._craft(state)
+        if craft is None:
+            return
+
+        index = state.selected_index
+        attractor = self._draw_paths(surface, state, craft, index)
+        self._draw_node(surface, state, craft, index, attractor)
+        self._draw_readout(surface, state, font, craft)
+        self._draw_assist(surface, state, font)
+
+    def _draw_paths(self, surface, state, craft, index):
+        """The orbit the craft is on now, and the one each burn puts it on."""
+        world = state.sim.world
+        camera = state.camera
+        attractor, conics = maneuver.plan_conics(world, index, craft.plan,
+                                                 samples=160)
+        if attractor is None:
+            return None
+        origin = world.pos[attractor]
+
+        current = maneuver.craft_state(world, index)
+        if current is not None:
+            points, bound = orbits.conic_points(current[1], current[2],
+                                                current[3], samples=160)
+            self._stroke(surface, camera, points, origin, bound,
+                         palette.TRAIL_BASE)
+
+        for k, (points, bound) in enumerate(conics):
+            # The first burn's result is the one being aimed; anything after it
+            # is context, so it is drawn a tier back.
+            colour = palette.ACCENT if k == 0 else palette.AIM_GOOD
+            self._stroke(surface, camera, points, origin, bound, colour)
+        return attractor
+
+    @staticmethod
+    def _stroke(surface, camera, points, origin, bound, colour):
+        if len(points) < 2:
+            return
+        projected = camera.world_to_screen_array(points + origin)
+        # Clamp before casting: a near-parabolic arc can reach 1e12 px, which
+        # overflows the C int pygame.draw.lines wants.
+        np.clip(projected, -32000, 32000, out=projected)
+        pygame.draw.lines(surface, colour, bool(bound),
+                          projected.astype(int).tolist(), 1)
+
+    def _draw_node(self, surface, state, craft, index, attractor):
+        """A handle where the burn happens, on the orbit it happens from."""
+        node = self._node(state)
+        if node is None or attractor is None:
+            return
+        found = maneuver.node_state(state.sim.world, index, node)
+        if found is None:
+            return
+        _mu, node_pos, _node_vel = found
+        nx, ny = state.camera.world_to_screen(
+            node_pos + state.sim.world.pos[attractor])
+        nx, ny = int(np.clip(nx, -32000, 32000)), int(np.clip(ny, -32000, 32000))
+        pygame.draw.circle(surface, palette.SELECT, (nx, ny), 4, 1)
+        pygame.draw.line(surface, palette.SELECT, (nx - 7, ny), (nx + 7, ny), 1)
+        pygame.draw.line(surface, palette.SELECT, (nx, ny - 7), (nx, ny + 7), 1)
+
+    def _draw_readout(self, surface, state, font, craft):
+        """Fuel, the countdown, and where the plan puts you.
+
+        In the overlay rather than in the panel because the panel is full: six
+        rows is the floor-size limit ``tests/test_layout.py`` enforces.
+        """
+        world = state.sim.world
+        x = 8
+        y = 34
+        line = font.height + 2
+
+        fuel_ms = units.to_ms(craft.fuel_dv)
+        font.draw(surface, x, y, "Fuel   %s m/s" % "{:,.0f}".format(fuel_ms),
+                  palette.WARN if fuel_ms < 500.0 else palette.TEXT)
+        bar = pygame.Rect(x, y + line, font.width("X") * 16, 3)
+        widgets.draw_bar(surface, bar,
+                         fuel_ms / max(units.DEFAULT_FUEL_MS, 1.0),
+                         palette.ACCENT)
+        y += line * 2
+
+        node = self._node(state)
+        if node is not None:
+            font.draw(surface, x, y, "Burn in %s"
+                      % _lead_label(node.due_time - world.time), palette.TEXT)
+            y += line
+            found = maneuver.node_state(world, state.selected_index, node)
+            if found is not None:
+                mu, pos, vel = found
+                el = orbits.elements_from_state(
+                    mu, pos, maneuver.burn_velocity(pos, vel, node))
+                font.draw(surface, x, y, "Closest  %s"
+                          % hud.format_length(el["periapsis"]), palette.TEXT_DIM)
+                y += line
+                farthest = ("never returns" if el["apoapsis"] is None
+                            else hud.format_length(el["apoapsis"]))
+                font.draw(surface, x, y, "Farthest %s" % farthest,
+                          palette.TEXT_DIM)
+                y += line
+
+        encounter = self._encounter(state)
+        target = self._target_index(world)
+        if encounter is not None and target is not None:
+            font.draw(surface, x, y, "Passes %s at %s"
+                      % (world.bodies[target].name,
+                         hud.format_length(encounter["distance"])),
+                      palette.AIM_GOOD)
+
+    def _draw_assist(self, surface, state, font):
+        """The velocity triangle at a flyby.
+
+        |v_inf| is the same going out as coming in; all the planet does is
+        rotate it.  Drawing the craft's velocity, the planet's, and their
+        difference is what makes that visible, and the two speeds beside them
+        are what make it a lesson rather than a decoration.
+        """
+        encounter = self._encounter(state)
+        if encounter is None:
+            return
+        world = state.sim.world
+        target = self._target_index(world)
+        if target is None or encounter["distance"] <= 0.0:
+            return
+
+        primary = float(world.mass[encounter["attractor"]])
+        distance = float(np.hypot(*encounter["target_pos"]))
+        hill = units.hill_radius(float(world.mass[target]), primary, distance)
+        if encounter["distance"] > hill:
+            return
+
+        v_craft = encounter["craft_vel"]
+        v_planet = encounter["target_vel"]
+        v_inf = v_craft - v_planet
+
+        # Which way the planet bends it is set by which side the craft passes,
+        # and that is exactly what decides boost from brake: the sense is the
+        # sign of the flyby's own angular momentum.
+        offset = encounter["craft_pos"] - encounter["target_pos"]
+        side = math.copysign(
+            1.0, float(offset[0] * v_inf[1] - offset[1] * v_inf[0]) or 1.0)
+        turned = maneuver.flyby(units.G * float(world.mass[target]), v_inf,
+                                encounter["distance"], side=side)
+        v_out = v_planet + turned["v_out"]
+
+        origin = state.camera.world_to_screen(
+            encounter["craft_pos"] + world.pos[encounter["attractor"]])
+        if not (-32000 < origin[0] < 32000 and -32000 < origin[1] < 32000):
+            return
+
+        # One pixel scale for all three arrows, so the triangle actually closes.
+        span = max(float(np.hypot(*v_craft)), 1e-12)
+        pixels = 46.0 / span
+
+        def arrow(vec, colour):
+            end = (origin[0] + float(vec[0]) * pixels,
+                   origin[1] - float(vec[1]) * pixels)
+            pygame.draw.line(surface, colour,
+                             (int(origin[0]), int(origin[1])),
+                             (int(np.clip(end[0], -32000, 32000)),
+                              int(np.clip(end[1], -32000, 32000))), 1)
+            return end
+
+        arrow(v_planet, palette.TEXT_DIM)
+        tip = arrow(v_craft, palette.ACCENT)
+        arrow(v_out, palette.AIM_GOOD)
+
+        font.draw(surface, int(tip[0]) + 4, int(tip[1]),
+                  "in  %s" % hud.format_speed(float(np.hypot(*v_craft))),
+                  palette.ACCENT)
+        font.draw(surface, int(tip[0]) + 4, int(tip[1]) + font.height + 1,
+                  "out %s" % hud.format_speed(float(np.hypot(*v_out))),
+                  palette.AIM_GOOD)
+
+
+def _mean_radius(mu, rel_pos, rel_vel):
+    """The radius a body's orbit stands in for, in AU: its semi-major axis.
+
+    Falls back to the present distance for an unbound path, which has no
+    semi-major axis worth the name.
+    """
+    el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+    a = el["a"]
+    if el["bound"] and math.isfinite(a) and a > 0.0:
+        return float(a)
+    return float(np.hypot(rel_pos[0], rel_pos[1]))
+
+
 def _temperature_label(kelvin):
     """Kelvin, grouped rather than in exponent notation -- "1e+04 K" is not a
     number this audience reads."""
@@ -788,13 +1409,25 @@ def _mass_label(mass):
     return "%.3g Earths" % units.to_earth_masses(mass)
 
 
+def _lead_label(days):
+    """A countdown in whatever unit keeps the number readable."""
+    if days < 0.0:
+        return "now"
+    if days < 1.0:
+        return "%.1f hr" % (days * 24.0)
+    if days < 2.0 * units.DAYS_PER_YEAR:
+        return "{:,.0f} d".format(days)
+    return "%.1f yr" % units.to_years(days)
+
+
 TOOLS = {
     pygame.K_1: SelectTool,
     pygame.K_2: LaunchTool,
     pygame.K_3: EditTool,
+    pygame.K_4: FlyTool,
 }
 
-#: The same three tools addressed by name, for the buttons.  Keyed off the tool
+#: The same four tools addressed by name, for the buttons.  Keyed off the tool
 #: rather than duplicated, so the two routes cannot disagree about what "Throw"
 #: means.
 TOOL_BY_NAME = {cls.name.lower(): cls for cls in TOOLS.values()}

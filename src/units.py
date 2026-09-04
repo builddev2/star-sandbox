@@ -56,6 +56,9 @@ GCM3_TO_SIM = 1000.0 * KGM3_TO_SIM           # 1.68366e6
 
 #: 1 AU/day expressed in km/s.
 AUD_TO_KMS = AU_KM / SEC_PER_DAY             # 1731.46
+#: 1 AU/day expressed in m/s.  Delta-v is quoted in m/s in every mission
+#: profile ever written, and in AU/day in here.
+AUD_TO_MS = AU_M / SEC_PER_DAY               # 1.731e6
 #: 1 AU/day^2 expressed in m/s^2.
 AUD2_TO_MS2 = AU_M / SEC_PER_DAY ** 2        # 20.04
 
@@ -356,6 +359,16 @@ def to_kms(speed):
     return speed * AUD_TO_KMS
 
 
+def to_ms(speed):
+    """Speed in AU/day to metres per second -- the unit delta-v is quoted in."""
+    return speed * AUD_TO_MS
+
+
+def from_ms(metres_per_second):
+    """Metres per second back to AU/day."""
+    return metres_per_second / AUD_TO_MS
+
+
 def to_gcm3(density):
     return density / GCM3_TO_SIM
 
@@ -372,3 +385,34 @@ def to_g(accel):
 def surface_gravity_g(mass, radius):
     """Surface gravity directly in Earth g's -- the number the inspector shows."""
     return to_g(surface_gravity(mass, radius))
+
+
+# --- Spacecraft ---------------------------------------------------------------------
+
+#: Length of a shuttle orbiter, metres.  The true hull size, used by the
+#: physics: a craft this small is enormously strong against a tide (see
+#: ``strength_acceleration``) and is a negligible-mass projectile in a
+#: collision, both of which are correct and neither of which needs a
+#: special case anywhere.
+CRAFT_LENGTH_M = 37.0
+CRAFT_RADIUS = 0.5 * CRAFT_LENGTH_M / AU_M
+
+#: The radius a craft is *drawn and aimed at* through, in AU -- **not** a
+#: physical radius, and physics must never read it.  The true hull is
+#: 1.2e-10 AU, which has the black hole's problem in miniature: it would
+#: draw as a single pixel and, worse, ``contact_radii_au`` would cap its aim
+#: radius at a target far under one pixel across, making it impossible to
+#: hit.  (Clicking is a separate mechanism, ``render.scale.craft_floor_px``,
+#: and is unaffected by this value either way.)  Deliberately modest rather
+#: than large: this also caps the craft's *contact* radius, and a shuttle
+#: should be hard to hit, not easy.
+CRAFT_APPARENT_RADIUS = 0.15 * EARTH_RADIUS
+
+#: What a fresh craft's tank holds, m/s.  Earth to Mars and back is about
+#: 5,600 of them, so this is generous without being unlimited.
+DEFAULT_FUEL_MS = 9300.0
+
+
+def craft_apparent_radius():
+    """The stand-in radius a craft is drawn and aimed at.  See CRAFT_APPARENT_RADIUS."""
+    return CRAFT_APPARENT_RADIUS

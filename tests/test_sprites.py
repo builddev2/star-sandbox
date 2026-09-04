@@ -186,3 +186,29 @@ def test_a_cold_body_renders_exactly_as_it_did_before_temperature_existed(cache)
     b = cache.get(rock, seed=4, px=12, lit_angle=0.0, is_star=False,
                   temperature=units.CMB_TEMPERATURE_K)
     assert a is b
+
+
+def test_a_craft_sprite_is_drawn_and_is_not_blank():
+    from src.render.sprites import SpriteCache
+    cache = SpriteCache()
+    sprite = cache.get_craft(14, 0.0)
+    assert sprite.get_width() > 8
+    assert sprite.get_bounding_rect().width > 2
+
+
+def test_craft_sprites_are_cached_within_a_heading_bucket():
+    import math
+    from src.render.sprites import SpriteCache
+    cache = SpriteCache()
+    first = cache.get_craft(14, 0.0)
+    again = cache.get_craft(14, 0.001)      # same bucket
+    assert again is first
+    turned = cache.get_craft(14, math.pi)   # opposite bucket
+    assert turned is not first
+
+
+def test_a_tiny_craft_still_produces_a_visible_sprite():
+    from src.render.sprites import SpriteCache
+    cache = SpriteCache()
+    sprite = cache.get_craft(2, 0.0)
+    assert sprite.get_bounding_rect().width >= 1

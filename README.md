@@ -41,7 +41,8 @@ buttons.
 | `Tab` | cycle through bodies |
 | `B` | the list of bodies |
 | `F` | follow the selected body |
-| `1` `2` `3` | Look / Throw / Edit |
+| `1` `2` `3` `4` | Look / Throw / Edit / Fly |
+| `X` `M` `N` | lock a target / work out the transfer / clear the plan (Fly) |
 | `0` | stop the selected body dead |
 | `T` `R` `L` | trails / real sizes / labels |
 | `G` | pixel grid size |
@@ -58,6 +59,10 @@ sits next to buttons a small hand is reaching for anyway.
 ## Things worth trying
 
 - Pick Earth out of the list, hit **Stop**, and watch it fall into the Sun.
+- Switch to **Fly**, pick Earth, and press **Launch craft**. Lock **Mars** as the target
+  with `X`, then press **Work out the transfer**: it writes the two burns and the date to
+  leave, which is a real launch window and is why missions to Mars go every 26 months. Watch
+  the new orbit appear before either burn fires. Then try beating its answer by hand.
 - Turn on **real sizes**. Everything in the solar system becomes a single dot at
   once. That is what the real scale looks like; the rest of the time the sizes
   are exaggerated so you can see anything at all.

@@ -23,7 +23,7 @@ collapses to dots at once, which is the lesson, and it costs one branch.
 import numpy as np
 
 from .. import units
-from ..body import KIND_BLACK_HOLE
+from ..body import KIND_BLACK_HOLE, KIND_CRAFT
 
 #: The resolution the constants below were tuned at.  Everything scales from it.
 REF_HEIGHT = 360.0
@@ -65,14 +65,51 @@ def visual_radii(world):
     only drawing, picking and the yes/no contact test see this array, which is
     exactly the split ``radius`` and ``contact_radius`` already make.
 
+    A craft shares this branch for the same reason, at the opposite end of the
+    scale: see the comment inline below.
+
     Recomputed per frame from at most 200 bodies -- nothing may cache a size
     across frames, and this is negligible beside the O(n^2) force kernel.
     """
     out = np.array(world.radii, dtype=np.float64)
     for i in range(world.n):
-        if world.bodies[i].kind == KIND_BLACK_HOLE:
+        kind = world.bodies[i].kind
+        if kind == KIND_BLACK_HOLE:
             out[i] = units.apparent_radius(float(world.mass[i]))
+        elif kind == KIND_CRAFT:
+            # A 37 m hull is 1.2e-10 AU: the black hole's problem in
+            # miniature.  It would draw as one pixel and, worse,
+            # contact_radii_au would cap its aim radius far below a pixel,
+            # making it impossible to hit.  Modest on purpose -- this also
+            # caps the craft's contact radius, and a shuttle should be hard
+            # to hit rather than easy.  (Clicking is unaffected either way --
+            # PICK_MARGIN already covers a sub-pixel target; see
+            # ``craft_floor_px`` for what actually keeps a craft clickable.)
+            out[i] = units.craft_apparent_radius()
     return out
+
+
+#: However far out the camera is, a craft is drawn at least this big, so it
+#: stays findable.  Deliberately **below** ``FLOOR_MAX``: a craft is the
+#: smallest object in the sandbox and has to read that way.  An earlier 9 drew
+#: a delta wider than the Sun's own disc, swallowing the Earth it launched from.
+#:
+#: Shared by ``render.draw`` (drawing) and ``app.state.pick_body_at`` (picking)
+#: through ``craft_floor_px`` below, because only the draw side used to scale
+#: with the window: at h=360 the disagreement was a rounding error, but by
+#: h=1440 the drawn floor had outgrown the pick radius threefold and left most
+#: of the visible shuttle unclickable.
+#:
+#: A render-only floor either way -- it must never reach ``contact_radius``, so
+#: a bigger picture never buys a bigger target to *hit*.
+CRAFT_MIN_PX = 5
+
+
+def craft_floor_px(internal_height):
+    """The craft render/pick floor, in pixels, scaled like every other pixel
+    constant by ``internal_height / REF_HEIGHT`` -- see the module docstring.
+    """
+    return CRAFT_MIN_PX * internal_height / REF_HEIGHT
 
 
 def display_radius_px(r_true, zoom, internal_height, real_size=False):

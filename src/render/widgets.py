@@ -557,6 +557,14 @@ def draw_icon(surface, name, rect, colour):
         pygame.draw.circle(surface, colour, (cx, cy), r, 1)
         pygame.draw.circle(surface, colour, (cx, cy), max(1, r - 2), 1)
         surface.set_at((cx, cy), colour)
+    elif name == "fly":
+        # A shuttle in profile: nose right, delta wing back-left, tail fin up.
+        pygame.draw.polygon(surface, colour, [
+            (rect.right - 2, cy), (cx, cy - h // 4), (x, cy - h // 4),
+            (x + w // 6, cy), (x, cy + h // 4), (cx, cy + h // 4),
+        ])
+        pygame.draw.line(surface, colour, (x + w // 5, cy),
+                         (x + w // 5, cy - h // 3), 1)
     elif name == "power":
         # The gap sits at the top, where the stem goes through it: pygame's
         # angles run counterclockwise from three o'clock, so the top is pi/2.

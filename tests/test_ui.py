@@ -752,9 +752,9 @@ def documented_shortcuts():
 
 
 def test_every_shortcut_is_also_a_button(state, ui):
-    from src.app.tools import EditTool, LaunchTool, SelectTool
+    from src.app.tools import EditTool, FlyTool, LaunchTool, SelectTool
     keys = set()
-    for tool in (SelectTool, LaunchTool, EditTool):
+    for tool in (SelectTool, LaunchTool, EditTool, FlyTool):
         state.set_tool(tool)
         state.select(state.sim.world.bodies[3].id)
         ui.build(state, SIZE)

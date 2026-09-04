@@ -2,8 +2,9 @@ import numpy as np
 import pytest
 
 from src import edits, materials, units
-from src.body import KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR
+from src.body import KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR
 from src.sim import Simulation
+from src.world import World
 
 
 @pytest.fixture
@@ -227,6 +228,19 @@ def test_a_planet_is_offered_four_fields_and_a_star_only_three(sim):
     assert edits.edit_fields(earth) == ("mass", "density", "temp", "material")
     assert edits.edit_fields(sun) == ("mass", "density", "material")
     assert "temp" not in edits.edit_fields(sun)
+
+
+def test_a_craft_is_offered_no_edit_fields():
+    """A 37 m hull at any realistic craft mass derives a density of a few
+    thousandths of a g/cm3, nothing like SPACECRAFT's 2.70 -- so the mass,
+    density and material edits would misbehave (an inspector readout that
+    lies, set_mass inflating the hull, set_density relabelling it "Rock" and
+    losing the SPACECRAFT material entirely). A craft's real editable state is
+    fuel and flight plan, both in the Fly panel, not here."""
+    world = World()
+    craft = world.add("Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
+                      units.CRAFT_RADIUS, [1.0, 0.0], [0.0, 0.0], kind=KIND_CRAFT)
+    assert edits.edit_fields(craft) == ()
 
 
 # --- locking ----------------------------------------------------------------------

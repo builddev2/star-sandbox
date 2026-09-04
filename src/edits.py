@@ -19,7 +19,7 @@ Imports numpy and nothing from pygame -- ``tests/test_layering.py`` asserts it.
 
 from . import materials, units
 from .body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
-                   KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR)
+                   KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 
 #: A body may not be lighter than a small asteroid, nor heavier than the point
 #: where a star stops being possible -- past units.COLLAPSE_MASS_THRESHOLD the
@@ -53,7 +53,19 @@ EDIT_FIELDS = PLANET_EDIT_FIELDS
 def edit_fields(body):
     """The editable fields for this body -- a black hole has no density or
     composition to speak of, so it is offered spin and accretion instead, and
-    a star has no temperature of its own to set."""
+    a star has no temperature of its own to set.
+
+    A craft gets none at all.  ``SPACECRAFT.density_gcm3`` is 2.70, but a 37 m
+    hull at any realistic craft mass derives 0.003-0.2 g/cm3 -- three edit
+    paths misbehave on that mismatch: the inspector's density readout is
+    nonsense, ``set_mass`` holds the derived density constant and re-derives
+    radius (silently inflating the hull past 37 m), and ``set_density`` calls
+    ``nearest_by_density``, which relabels the craft "Rock" and loses
+    SPACECRAFT entirely.  A craft's real editable properties are fuel and
+    flight plan, and both live in the Fly panel instead.
+    """
+    if body.kind == KIND_CRAFT:
+        return ()
     if body.kind == KIND_BLACK_HOLE:
         return BLACK_HOLE_EDIT_FIELDS
     if body.kind == KIND_STAR:
@@ -124,10 +136,11 @@ def ignition_ratio(world, index):
 # --- writing ----------------------------------------------------------------------
 
 def _refresh_kind(world, index):
-    """Kind follows mass -- except that collapse is one-way."""
+    """Kind follows mass -- except that collapse is one-way, and so is a craft."""
     body = world.bodies[index]
-    if body.kind == KIND_BLACK_HOLE:
-        # Nothing un-collapses.  A hole that loses mass is a smaller hole.
+    if body.kind in (KIND_BLACK_HOLE, KIND_CRAFT):
+        # Nothing un-collapses, and no amount of mass turns a shuttle into a
+        # star.  A craft is what it is.
         return
     mass = float(world.mass[index])
     if mass >= units.COLLAPSE_MASS_THRESHOLD:

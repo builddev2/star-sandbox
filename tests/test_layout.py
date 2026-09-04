@@ -20,7 +20,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from src.app import config
 from src.app.state import AppState
-from src.app.tools import EditTool, LaunchTool, SelectTool
+from src.app.tools import EditTool, FlyTool, LaunchTool, SelectTool
 from src.app.ui import UiLayer
 from src.render.camera import Camera
 from src.render.draw import ViewSettings
@@ -35,7 +35,7 @@ WINDOWS = [config.MIN_WINDOW] \
     + [config.preset_size(LAPTOP, fraction) for fraction, _ in config.WINDOW_FRACTIONS] \
     + [(1728, 1080)]
 
-TOOLS = (SelectTool, LaunchTool, EditTool)
+TOOLS = (SelectTool, LaunchTool, EditTool, FlyTool)
 
 
 @pytest.fixture(scope="module", autouse=True)
