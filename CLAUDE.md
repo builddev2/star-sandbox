@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (812 tests, ~3:35)
+python selftest.py                      # whole suite (1020 tests, ~3:35)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -26,7 +26,9 @@ Three layers, enforced by `tests/test_layering.py`:
 
 | | |
 |---|---|
-| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`, and `thermal.py` (every body's temperature). |
+| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`, `thermal.py` (every body's temperature), and
+`maneuver.py` (a craft's flight plan: nodes, burns, closest approach, the Hohmann
+transfer and its launch window, and the gravity assist). |
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
 
@@ -95,6 +97,37 @@ or fast time scales.
   `C`) — otherwise a greyed-out button's hotkey still works.
 - **Events go interface → tool → global keys** (`src/app/input.py`). The throw tool reads
   any press as an aim, so tool-first ordering would fire a comet through the Delete button.
+- **A maneuver node fires per substep, never per frame** (`sim.py`). At one year a second
+  a frame is six days of simulated time and at ten years a second it is sixty, so a node
+  checked at frame boundaries fires up to sixty days late -- millions of kilometres of
+  miss at transfer speeds. `Simulation._next_burn_time` caches the soonest `due_time` in
+  the world so the substep loop is one float comparison, and only scans bodies when one is
+  actually due; a per-substep Python loop over 200 bodies would eat the wall-clock budget
+  many times over. **`refresh()` recomputes it**, which is why every path that edits a
+  plan calls through there.
+- **A craft is a one-way kind, like a black hole** (`edits._refresh_kind`). No amount of
+  mass scrubbing ignites a spacecraft. It also offers **no Edit rows at all**
+  (`edits.edit_fields` returns `()`): `SPACECRAFT` is 2.7 g/cm3 but a 37 m hull at any
+  real craft mass derives 0.003..0.2, so the density readout would be nonsense, `set_mass`
+  would hold that derived density and silently inflate the hull, and `set_density` would
+  relabel the craft "Rock". A craft's editable properties are fuel and flight plan, and
+  both live in the Fly panel.
+- **A craft is launched heliocentric, never into a parking orbit** (`tools.FlyTool._launch`).
+  `Integrator.dynamical_time` takes the tightest pair in the *entire* system: a craft 300 km
+  above Earth has a ninety-minute period and would drive the block level to its ceiling and
+  step the whole solar system in seconds. The six existing moons already cost a factor of 64.
+- **The craft's render floor is `scale.craft_floor_px`, shared by drawing and picking, and
+  it never reaches `contact_radius`.** Making the picture bigger must not make the craft
+  easier to *hit*; making it easier to *click* is the whole point, and only the draw side
+  used to scale with the window. Real-size mode drops it, or the shuttle would be the one
+  object that refuses to collapse to a dot.
+- **A Hohmann transfer is planned from semi-major axes, not present distances**
+  (`tools._mean_radius`). Mars swings 1.38..1.67 AU; aiming at where it stands today sends
+  the craft to a radius it has already left -- measured, a 1.9 AU miss. The window is then
+  refined against exact propagation (`maneuver.refine_window`), because a true anomaly does
+  not advance at its mean motion. What remains is n-body drift over the transfer, which no
+  closed form fixes: the craft reaches the target's *orbit* with textbook delta-v, not a
+  rendezvous.
 - `World.MAX_BODIES` is 200 and must not be raised; the O(n²) force kernel is budgeted for it.
 - **Temperature is state, not a derived quantity.** It lives in `World.temperature`
   because it changes every step and must survive being edited; `Body.spin` and
