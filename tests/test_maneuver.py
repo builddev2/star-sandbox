@@ -343,3 +343,82 @@ def test_side_minus_one_rotates_the_opposite_way_but_still_conserves_speed():
     assert negative["v_out"][1] == pytest.approx(-positive["v_out"][1])
     assert negative["v_out"][0] == pytest.approx(positive["v_out"][0])
     assert not np.allclose(negative["v_out"], positive["v_out"])
+
+
+# --- firing a planned burn ----------------------------------------------------------
+
+
+def test_a_burn_changes_the_world_velocity_by_exactly_its_delta_v():
+    world = _sun_and_craft()
+    world.bodies[1].fuel_dv = units.from_ms(9300.0)
+    before = np.array(world.vel[1])
+    node = maneuver.Maneuver(due_time=0.0, prograde=units.from_ms(1000.0))
+    assert maneuver.apply_burn(world, 1, node)
+    change = float(np.hypot(*(world.vel[1] - before)))
+    assert abs(units.to_ms(change) - 1000.0) < 1.0
+
+
+def test_a_burn_spends_fuel():
+    world = _sun_and_craft()
+    world.bodies[1].fuel_dv = units.from_ms(9300.0)
+    maneuver.apply_burn(world, 1, maneuver.Maneuver(0.0, units.from_ms(1000.0)))
+    assert abs(units.to_ms(world.bodies[1].fuel_dv) - 8300.0) < 1.0
+
+
+def test_a_burn_bigger_than_the_tank_is_scaled_down_to_what_is_left():
+    """Running dry mid-burn is a real thing that happens to real missions,
+    and it is a better lesson than a button that silently does nothing."""
+    world = _sun_and_craft()
+    world.bodies[1].fuel_dv = units.from_ms(500.0)
+    before = np.array(world.vel[1])
+    maneuver.apply_burn(world, 1, maneuver.Maneuver(0.0, units.from_ms(4000.0)))
+    change = float(np.hypot(*(world.vel[1] - before)))
+    assert abs(units.to_ms(change) - 500.0) < 1.0
+    assert world.bodies[1].fuel_dv == 0.0
+
+
+def test_an_empty_tank_fires_nothing_at_all():
+    world = _sun_and_craft()
+    world.bodies[1].fuel_dv = 0.0
+    before = np.array(world.vel[1])
+    assert not maneuver.apply_burn(world, 1, maneuver.Maneuver(0.0, units.from_ms(100.0)))
+    assert float(np.hypot(*(world.vel[1] - before))) == 0.0
+
+
+def test_execute_due_fires_only_what_is_due():
+    world = _sun_and_craft()
+    world.bodies[1].fuel_dv = units.from_ms(9300.0)
+    world.bodies[1].plan = (maneuver.Maneuver(5.0, units.from_ms(100.0)),
+                            maneuver.Maneuver(50.0, units.from_ms(100.0)))
+    world.time = 10.0
+    assert maneuver.execute_due(world) == 1
+    assert len(world.bodies[1].plan) == 1
+    assert world.bodies[1].plan[0].due_time == 50.0
+
+
+def test_execute_due_leaves_a_plan_whose_time_has_not_come():
+    world = _sun_and_craft()
+    world.bodies[1].fuel_dv = units.from_ms(9300.0)
+    world.bodies[1].plan = (maneuver.Maneuver(50.0, units.from_ms(100.0)),)
+    world.time = 10.0
+    assert maneuver.execute_due(world) == 0
+    assert len(world.bodies[1].plan) == 1
+
+
+def test_next_burn_time_is_infinite_with_nothing_planned():
+    world = _sun_and_craft()
+    assert maneuver.next_burn_time(world) == math.inf
+    world.bodies[1].plan = (maneuver.Maneuver(42.0),)
+    assert maneuver.next_burn_time(world) == 42.0
+
+
+def test_a_craft_that_lost_its_attractor_cannot_jam_the_queue():
+    """The node is popped whether or not the burn could be applied."""
+    world = World()
+    lone = world.add("Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
+                     units.CRAFT_RADIUS, np.array([1.0, 0.0]), np.zeros(2),
+                     kind=KIND_CRAFT)
+    lone.fuel_dv = units.from_ms(9300.0)
+    lone.plan = (maneuver.Maneuver(0.0, units.from_ms(100.0)),)
+    assert maneuver.execute_due(world) == 1
+    assert lone.plan == ()

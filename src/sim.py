@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from . import destruction, orbits, scenarios, thermal
+from . import destruction, maneuver, orbits, scenarios, thermal
 from .collisions import CollisionResolver
 from .integrator import Integrator
 
@@ -37,6 +37,10 @@ class Simulation:
         #: layer to draw.  Cleared at the top of every advance() call.
         self.impacts = []
         self._seed = seed
+        #: The soonest maneuver node anywhere in the world, cached so the
+        #: substep loop below is one float comparison rather than a scan.
+        #: Kept current by refresh(), reset(), and every burn that fires.
+        self._next_burn_time = maneuver.next_burn_time(self.world)
 
     # --- lifecycle --------------------------------------------------------------
 
@@ -49,10 +53,17 @@ class Simulation:
         self.last_ratio = 1.0
         self.events = 0
         self.impacts = []
+        self._next_burn_time = maneuver.next_burn_time(self.world)
 
     def refresh(self):
-        """Recompute cached accelerations.  Call after any edit to mass or membership."""
+        """Recompute cached accelerations.  Call after any edit to mass or membership.
+
+        Also re-reads the soonest maneuver node: adding a craft, removing one,
+        or re-planning a burn is exactly the kind of edit that invalidates the
+        cached time, and every one of those already calls through here.
+        """
         self.integrator.refresh(self.world)
+        self._next_burn_time = maneuver.next_burn_time(self.world)
 
     # --- stepping ---------------------------------------------------------------
 
@@ -76,6 +87,15 @@ class Simulation:
             dt = min(self.integrator.dt, days - done)
             self._prev[:world.n] = world.pos[:world.n]
             self.integrator.step(world, dt)
+            # Per substep, never per frame.  At one year a second a frame
+            # is six days of simulated time, and a node checked only at
+            # frame boundaries would fire up to six days late -- millions
+            # of kilometres of miss at transfer speeds.  The cost is one
+            # float comparison; the scan happens only when one is due.
+            if world.time >= self._next_burn_time:
+                if maneuver.execute_due(world):
+                    self.integrator.refresh(world)
+                self._next_burn_time = maneuver.next_burn_time(world)
             count, event = self.resolver.resolve(world, self.integrator, self._prev)
             self.events += count
             if event is not None:

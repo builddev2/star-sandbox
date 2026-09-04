@@ -284,3 +284,76 @@ def scrub_lead(days, notches):
     """Move a countdown by ``notches``, multiplicatively.  Never past zero."""
     days = max(float(days), MIN_LEAD_DAYS)
     return max(MIN_LEAD_DAYS, days * TIME_NOTCH_RATIO ** notches)
+
+
+# --- firing a planned burn ----------------------------------------------------------
+
+
+def apply_burn(world, index, node):
+    """Fire ``node`` on the body at ``index`` now.  True if anything happened.
+
+    A burn that costs more than the tank holds is **scaled down to what is
+    left** rather than refused.  Running out mid-burn is what really happens
+    to a real mission, and it teaches more than a control that silently does
+    nothing.
+
+    The impulse is added in the **world** frame.  The attractor's own velocity
+    appears in both the before and after relative velocities, so it cancels,
+    and a craft orbiting a moving planet gets the right answer for free.
+    """
+    state = craft_state(world, index)
+    if state is None:
+        return False
+    _attractor, _mu, rel_pos, rel_vel = state
+
+    body = world.bodies[index]
+    wanted = node.magnitude
+    if wanted <= 0.0:
+        return False
+
+    budget = float(body.fuel_dv)
+    if budget <= 0.0:
+        return False
+    fraction = 1.0 if wanted <= budget else budget / wanted
+    spent = Maneuver(node.due_time, node.prograde * fraction,
+                     node.radial * fraction)
+
+    world.vel[index] += burn_velocity(rel_pos, rel_vel, spent) - rel_vel
+    body.fuel_dv = max(0.0, budget - spent.magnitude)
+    return True
+
+
+def next_burn_time(world):
+    """The soonest ``due_time`` anywhere in the world, or infinity.
+
+    ``Simulation`` caches this so its substep loop is one float comparison
+    rather than a scan over every body: at ten years a second the integrator
+    takes thousands of substeps per frame, and a Python loop over 200 bodies
+    inside that loop would eat the wall-clock budget many times over -- the
+    same reasoning that keeps ``thermal.advance`` at once a frame.
+    """
+    soonest = math.inf
+    for i in range(world.n):
+        plan = world.bodies[i].plan
+        if plan:
+            soonest = min(soonest, float(plan[0].due_time))
+    return soonest
+
+
+def execute_due(world, now=None):
+    """Fire every node whose time has come.  Returns how many were popped.
+
+    A node is popped whether or not the burn could be applied, so a craft that
+    has lost its attractor -- or run dry -- cannot jam the queue forever and
+    strand every later burn behind it.
+    """
+    when = float(world.time) if now is None else float(now)
+    fired = 0
+    for i in range(world.n):
+        body = world.bodies[i]
+        while body.plan and float(body.plan[0].due_time) <= when:
+            node = body.plan[0]
+            body.plan = body.plan[1:]
+            apply_burn(world, i, node)
+            fired += 1
+    return fired
