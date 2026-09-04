@@ -23,7 +23,7 @@ collapses to dots at once, which is the lesson, and it costs one branch.
 import numpy as np
 
 from .. import units
-from ..body import KIND_BLACK_HOLE
+from ..body import KIND_BLACK_HOLE, KIND_CRAFT
 
 #: The resolution the constants below were tuned at.  Everything scales from it.
 REF_HEIGHT = 360.0
@@ -65,13 +65,25 @@ def visual_radii(world):
     only drawing, picking and the yes/no contact test see this array, which is
     exactly the split ``radius`` and ``contact_radius`` already make.
 
+    A craft shares this branch for the same reason, at the opposite end of the
+    scale: see the comment inline below.
+
     Recomputed per frame from at most 200 bodies -- nothing may cache a size
     across frames, and this is negligible beside the O(n^2) force kernel.
     """
     out = np.array(world.radii, dtype=np.float64)
     for i in range(world.n):
-        if world.bodies[i].kind == KIND_BLACK_HOLE:
+        kind = world.bodies[i].kind
+        if kind == KIND_BLACK_HOLE:
             out[i] = units.apparent_radius(float(world.mass[i]))
+        elif kind == KIND_CRAFT:
+            # A 37 m hull is 1.2e-10 AU: the black hole's problem in
+            # miniature.  It would draw as one pixel and, worse,
+            # contact_radii_au would cap its pick radius far below a pixel,
+            # making it impossible to click.  Modest on purpose -- this also
+            # caps the craft's contact radius, and a shuttle should be hard
+            # to hit rather than easy.
+            out[i] = units.craft_apparent_radius()
     return out
 
 

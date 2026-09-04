@@ -213,6 +213,84 @@ def _make_black_hole(px, spin, disk, seed):
     return surface
 
 
+# --- spacecraft ---------------------------------------------------------------
+#
+# Not authored art and not a glyph: the same rule render/widgets.py follows for
+# its icons.  There is no font with a shuttle in it, and a missing glyph would
+# render as a box.
+
+#: Below this many pixels there is no room for a wing; draw a bright dot.
+CRAFT_DETAIL_PX = 7
+#: However far out the camera is, a craft is drawn at least this big, so the
+#: silhouette stays readable.  A render-only floor: it never reaches
+#: ``contact_radius``, so enlarging the picture does not enlarge the target.
+CRAFT_MIN_PX = 9
+
+#: White upper surface, black thermal tile below, grey trim.
+_CRAFT_HULL = (0xF2, 0xF5, 0xFA)
+_CRAFT_TILE = (0x22, 0x26, 0x30)
+_CRAFT_TRIM = (0xB8, 0xBE, 0xC8)
+_CRAFT_GLASS = (0x6C, 0xC4, 0xE8)
+
+
+def _make_craft(px, heading):
+    """A shuttle orbiter, nose along ``heading``.
+
+    Drawn nose-along-+x from polygons and then rotated, which is both cheaper
+    and steadier than re-deriving every vertex per angle: the outline is
+    authored once in units of the body length and scaled.
+
+    Blitted **normally, never with BLEND_ADD**.  Additive blending cannot draw
+    the black underside, and the tile pattern is most of what makes the
+    silhouette read as a shuttle rather than as a paper dart -- the same
+    reasoning the black hole path follows, not the star's.
+    """
+    px = max(1, int(px))
+    length = px * 2
+    half = length
+    size = half * 2 + 1
+    centre = half
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+
+    if px < CRAFT_DETAIL_PX:
+        pygame.draw.circle(surface, _CRAFT_HULL, (centre, centre),
+                           max(1, px // 2))
+        return surface
+
+    def point(along, across):
+        """Body coordinates in fractions of the half-length, to pixels."""
+        return (int(centre + along * px), int(centre - across * px))
+
+    # Delta wing first, so the fuselage sits on top of it.
+    pygame.draw.polygon(surface, _CRAFT_TRIM, [
+        point(0.30, 0.0), point(-0.70, 1.05), point(-0.95, 1.05),
+        point(-0.95, -1.05), point(-0.70, -1.05),
+    ])
+    # Vertical stabiliser, seen from the side the flat model gives us.
+    pygame.draw.polygon(surface, _CRAFT_TRIM, [
+        point(-0.62, 0.0), point(-0.95, 0.62), point(-1.00, 0.60),
+        point(-0.86, 0.0),
+    ])
+    # Fuselage: blunt nose, straight body.
+    pygame.draw.polygon(surface, _CRAFT_HULL, [
+        point(1.00, 0.10), point(0.86, 0.26), point(-0.86, 0.30),
+        point(-0.95, 0.0), point(-0.86, -0.30), point(0.86, -0.26),
+        point(1.00, -0.10),
+    ])
+    # Thermal tile along the underside, and the flight deck windows.
+    pygame.draw.polygon(surface, _CRAFT_TILE, [
+        point(1.00, -0.10), point(0.86, -0.26), point(-0.86, -0.30),
+        point(-0.95, 0.0), point(-0.90, -0.02), point(0.90, -0.02),
+    ])
+    if px >= CRAFT_DETAIL_PX + 4:
+        pygame.draw.line(surface, _CRAFT_GLASS,
+                         point(0.80, 0.16), point(0.62, 0.20), 1)
+
+    if heading:
+        surface = pygame.transform.rotate(surface, math.degrees(heading))
+    return surface
+
+
 def _shade(tone, factor):
     return tuple(max(0, min(255, int(c * factor))) for c in tone)
 
@@ -414,6 +492,27 @@ class SpriteCache:
             return hit
         surface = _make_black_hole(px, spin_bucket / 8.0 * units.MAX_SPIN,
                                    disk_bucket / 8.0, seed)
+        self._entries[key] = surface
+        if len(self._entries) > self.limit:
+            self._entries.popitem(last=False)
+        return surface
+
+    def get_craft(self, px, heading):
+        """A shuttle sprite, cached like any other.
+
+        Heading is bucketed into the same 16 compass points the lighting angle
+        uses, and for exactly the same reason: a craft turning continuously
+        along its orbit would miss the cache on every single frame, which is
+        precisely what the cache exists to prevent.
+        """
+        px = max(1, int(px))
+        bucket = int(round(heading / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
+        key = ("craft", px, bucket)
+        hit = self._entries.get(key)
+        if hit is not None:
+            self._entries.move_to_end(key)
+            return hit
+        surface = _make_craft(px, bucket * 2 * math.pi / LIT_BUCKETS)
         self._entries[key] = surface
         if len(self._entries) > self.limit:
             self._entries.popitem(last=False)

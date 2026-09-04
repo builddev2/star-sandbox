@@ -17,9 +17,9 @@ from dataclasses import dataclass
 
 import pygame
 
-from ..body import KIND_BLACK_HOLE, KIND_STAR
+from ..body import KIND_BLACK_HOLE, KIND_CRAFT, KIND_STAR
 from . import palette, scale
-from .sprites import ring_surface
+from .sprites import CRAFT_MIN_PX, ring_surface
 
 #: Trail fade steps.  See the module docstring for why this is not per-segment.
 TRAIL_CHUNKS = 8
@@ -100,6 +100,13 @@ class WorldRenderer:
             body = world.bodies[i]
             is_star = body.kind == KIND_STAR
             is_hole = body.kind == KIND_BLACK_HOLE
+            is_craft = body.kind == KIND_CRAFT
+            if is_craft:
+                # A render-only floor, so the silhouette stays readable at any
+                # zoom.  Deliberately not routed through scale.visual_radii:
+                # that array also sets the contact radius, and making the
+                # picture bigger must not make the target bigger.
+                px = max(px, CRAFT_MIN_PX * height / scale.REF_HEIGHT)
 
             if px < 2.0:
                 if 0 <= int(x) < width and 0 <= int(y) < height:
@@ -118,6 +125,11 @@ class WorldRenderer:
                 # the shadow is the whole point.
                 sprite = self.cache.get_black_hole(body.seed, int(px),
                                                    body.spin, body.disk)
+                surface.blit(sprite, sprite.get_rect(center=(int(x), int(y))))
+            elif is_craft:
+                velocity = world.vel[i]
+                heading = math.atan2(float(velocity[1]), float(velocity[0]))
+                sprite = self.cache.get_craft(int(px), heading)
                 surface.blit(sprite, sprite.get_rect(center=(int(x), int(y))))
             else:
                 if body.rings and px >= 4:

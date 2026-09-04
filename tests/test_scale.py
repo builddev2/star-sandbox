@@ -106,3 +106,20 @@ def test_the_moon_separates_from_earth_when_you_zoom_in():
     earth = scale.display_radius_px(units.EARTH_RADIUS, zoom, H)
     separation = 0.00256955 * zoom
     assert separation > earth * 2, "Moon still buried inside Earth's disc"
+
+
+def test_a_craft_is_drawn_from_a_stand_in_radius_not_its_true_hull():
+    import numpy as np
+    from src import materials, units
+    from src.body import KIND_CRAFT
+    from src.render import scale
+    from src.world import World
+
+    world = World()
+    world.add("Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
+              units.CRAFT_RADIUS, np.array([1.0, 0.0]), np.zeros(2),
+              kind=KIND_CRAFT)
+    visual = scale.visual_radii(world)
+    assert abs(float(visual[0]) - units.craft_apparent_radius()) < 1e-18
+    # The physics array is untouched.
+    assert abs(float(world.radius[0]) - units.CRAFT_RADIUS) < 1e-18
