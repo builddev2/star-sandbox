@@ -11,6 +11,7 @@ KIND_PLANET = "planet"
 KIND_STAR = "star"
 KIND_DEBRIS = "debris"
 KIND_BLACK_HOLE = "black hole"
+KIND_CRAFT = "craft"
 
 #: How many past positions a trail remembers.  Sampling is by angle swept (see Trail),
 #: so this is about 1.7 orbits' worth for any body at any scale.
@@ -71,7 +72,7 @@ class Body:
 
     __slots__ = ("id", "name", "kind", "material", "trail", "born_day",
                  "event_id", "no_collide_until", "seed", "rings", "spin", "disk",
-                 "locked_fields")
+                 "locked_fields", "plan", "fuel_dv")
 
     def __init__(self, body_id, name, material, kind=KIND_PLANET, born_day=0.0, seed=0):
         self.id = body_id
@@ -102,6 +103,15 @@ class Body:
         #: inherits it: a fresh body, a collision fragment and a tidal fragment
         #: all arrive with nothing locked.
         self.locked_fields = frozenset()
+        #: Maneuvers this craft will execute, soonest first.  A tuple for the
+        #: same reason ``locked_fields`` is a frozenset: rebinding is then the
+        #: only way to change it, so two bodies can never share one mutable
+        #: list.  On the Body rather than in World's arrays because the O(n^2)
+        #: force kernel never reads it.
+        self.plan = ()
+        #: Remaining delta-v budget, AU/day.  Zero for everything that is not
+        #: a craft, and for a craft nobody has fuelled.
+        self.fuel_dv = 0.0
 
     @property
     def is_star(self):
@@ -110,6 +120,10 @@ class Body:
     @property
     def is_black_hole(self):
         return self.kind == KIND_BLACK_HOLE
+
+    @property
+    def is_craft(self):
+        return self.kind == KIND_CRAFT
 
     def __repr__(self):
         return "<Body %d %r %s>" % (self.id, self.name, self.kind)

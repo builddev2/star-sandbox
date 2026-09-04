@@ -19,7 +19,7 @@ Imports numpy and nothing from pygame -- ``tests/test_layering.py`` asserts it.
 
 from . import materials, units
 from .body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
-                   KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR)
+                   KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 
 #: A body may not be lighter than a small asteroid, nor heavier than the point
 #: where a star stops being possible -- past units.COLLAPSE_MASS_THRESHOLD the
@@ -124,10 +124,11 @@ def ignition_ratio(world, index):
 # --- writing ----------------------------------------------------------------------
 
 def _refresh_kind(world, index):
-    """Kind follows mass -- except that collapse is one-way."""
+    """Kind follows mass -- except that collapse is one-way, and so is a craft."""
     body = world.bodies[index]
-    if body.kind == KIND_BLACK_HOLE:
-        # Nothing un-collapses.  A hole that loses mass is a smaller hole.
+    if body.kind in (KIND_BLACK_HOLE, KIND_CRAFT):
+        # Nothing un-collapses, and no amount of mass turns a shuttle into a
+        # star.  A craft is what it is.
         return
     mass = float(world.mass[index])
     if mass >= units.COLLAPSE_MASS_THRESHOLD:

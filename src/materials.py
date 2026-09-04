@@ -122,11 +122,28 @@ SINGULARITY = Material(
     albedo=0.0, heat_capacity_j_kgk=float("inf"),
 )
 
+#: A spacecraft is not a world, but every path that draws, labels or trails a
+#: body wants a Material.  Aluminium and thermal tile: white upper surface,
+#: black underside, and tough for its size.
+#:
+#: Deliberately **not** in MATERIALS, for the same reason SINGULARITY is not:
+#: the Edit tool cycles that tuple and ``nearest_by_density`` searches it, and
+#: neither may ever land here.
+SPACECRAFT = Material(
+    "spacecraft", "Spacecraft", 2.70,
+    ((0x1A, 0x1D, 0x24), (0xB8, 0xBE, 0xC8), (0xF2, 0xF5, 0xFA)),
+    "cratered",
+    "Aluminium and thermal tile. Small, tough, and going somewhere.",
+    toughness=3.0, vapour_temperature_k=2000.0,
+    albedo=0.30, heat_capacity_j_kgk=900.0,
+)
+
 BY_KEY = {m.key: m for m in MATERIALS}
 
 # Reachable by key -- the Throw preset and collapse both ask for it by name --
 # without being reachable by cycling or by density search.
 BY_KEY[SINGULARITY.key] = SINGULARITY
+BY_KEY[SPACECRAFT.key] = SPACECRAFT
 
 #: Density is clamped to this range when the child drags the slider.  The floor is about
 #: as puffy as a real planet gets; the ceiling is approaching degenerate matter.
