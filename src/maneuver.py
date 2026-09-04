@@ -125,3 +125,54 @@ def plan_conics(world, index, plan, samples=160):
         rel_vel = burn_velocity(rel_pos, rel_vel, node)
         conics.append(orbits.conic_points(mu, rel_pos, rel_vel, samples=samples))
     return attractor, conics
+
+
+def closest_approach(mu, craft_pos, craft_vel, target_pos, target_vel,
+                     horizon_days, samples=240):
+    """How near the craft and the target ever get, within ``horizon_days``.
+
+    Both are propagated on their own two-body orbits about the same attractor
+    and sampled at the **same instants**.  Time is the only parameterisation
+    that lets two different orbits be compared: sampling each by true anomaly
+    would compare a point on one orbit against a point on the other that the
+    bodies never occupy together.
+
+    A coarse sweep finds the best sample, then one refinement pass looks
+    inside the neighbouring interval, which is enough because separation is
+    smooth in time and the coarse grid already brackets the minimum.
+    """
+    craft_pos = np.asarray(craft_pos, dtype=float)
+    craft_vel = np.asarray(craft_vel, dtype=float)
+    target_pos = np.asarray(target_pos, dtype=float)
+    target_vel = np.asarray(target_vel, dtype=float)
+
+    def separation(dt):
+        c_pos, c_vel = orbits.propagate(mu, craft_pos, craft_vel, dt)
+        t_pos, t_vel = orbits.propagate(mu, target_pos, target_vel, dt)
+        gap = float(np.hypot(c_pos[0] - t_pos[0], c_pos[1] - t_pos[1]))
+        return gap, c_pos, c_vel, t_pos, t_vel
+
+    samples = max(8, int(samples))
+    horizon = max(0.0, float(horizon_days))
+    times = np.linspace(0.0, horizon, samples)
+    best_t = 0.0
+    best = None
+    for t in times:
+        found = separation(float(t))
+        if best is None or found[0] < best[0]:
+            best, best_t = found, float(t)
+
+    step = horizon / (samples - 1) if samples > 1 else 0.0
+    if step > 0.0:
+        fine = np.linspace(max(0.0, best_t - step), min(horizon, best_t + step), 32)
+        for t in fine:
+            found = separation(float(t))
+            if found[0] < best[0]:
+                best, best_t = found, float(t)
+
+    gap, c_pos, c_vel, t_pos, t_vel = best
+    return {"time": best_t, "distance": gap,
+            "craft_pos": np.asarray(c_pos, dtype=float),
+            "craft_vel": np.asarray(c_vel, dtype=float),
+            "target_pos": np.asarray(t_pos, dtype=float),
+            "target_vel": np.asarray(t_vel, dtype=float)}

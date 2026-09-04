@@ -88,3 +88,41 @@ def test_plan_conics_returns_one_conic_per_node():
     assert len(conics) == 2
     for points, _bound in conics:
         assert len(points) > 8
+
+
+def test_two_circular_orbits_come_closest_at_the_difference_of_their_radii():
+    """A craft at 1 AU and a target at 1.5 AU, both circular and coplanar:
+    the closest they ever get is 0.5 AU, when they line up."""
+    mu = units.G
+    craft_pos = np.array([1.0, 0.0])
+    craft_vel = np.array([0.0, math.sqrt(mu / 1.0)])
+    target_pos = np.array([-1.5, 0.0])          # starts on the far side
+    target_vel = np.array([0.0, -math.sqrt(mu / 1.5)])
+
+    result = maneuver.closest_approach(mu, craft_pos, craft_vel,
+                                       target_pos, target_vel,
+                                       horizon_days=1200.0, samples=400)
+    assert abs(result["distance"] - 0.5) < 0.02
+    assert result["time"] > 0.0
+
+
+def test_a_craft_that_never_leaves_its_target_reports_a_tiny_separation():
+    mu = units.G
+    pos = np.array([1.0, 0.0])
+    vel = np.array([0.0, math.sqrt(mu)])
+    result = maneuver.closest_approach(mu, pos, vel, pos, vel,
+                                       horizon_days=365.0, samples=120)
+    assert result["distance"] < 1e-9
+
+
+def test_closest_approach_reports_where_both_bodies_were():
+    mu = units.G
+    craft_pos = np.array([1.0, 0.0])
+    craft_vel = np.array([0.0, math.sqrt(mu)])
+    target_pos = np.array([0.0, 1.5])
+    target_vel = np.array([-math.sqrt(mu / 1.5), 0.0])
+    result = maneuver.closest_approach(mu, craft_pos, craft_vel,
+                                       target_pos, target_vel,
+                                       horizon_days=800.0, samples=300)
+    gap = np.hypot(*(result["craft_pos"] - result["target_pos"]))
+    assert abs(gap - result["distance"]) < 1e-9
