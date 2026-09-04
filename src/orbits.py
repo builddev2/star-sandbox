@@ -401,6 +401,10 @@ def dominant_attractor(world, index):
     d = pos - pos[index]
     r = np.sqrt(np.einsum("ij,ij->i", d, d))
     r[index] = np.inf
+    # A body sitting exactly on another divides by zero below.  Infinity is
+    # the honest answer -- a separation of nothing is not a sphere of
+    # influence anyone is inside -- and it keeps the warning out of the log.
+    r[r <= 0.0] = np.inf
 
     dv = vel - vel[index]
     v2 = np.einsum("ij,ij->i", dv, dv)

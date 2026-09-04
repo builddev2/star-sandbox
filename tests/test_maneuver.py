@@ -452,3 +452,89 @@ def test_refining_the_window_puts_the_target_where_the_craft_arrives():
     assert gap_for(refined) < gap_for(guess["wait_days"])
     assert gap_for(refined) < 0.02          # radians
     assert refined >= 0.0
+
+
+# --- defects found by review, fixed 2026-09-04 --------------------------------------
+
+
+def test_a_flyby_with_no_approach_speed_is_a_straight_line_not_an_infinite_conic():
+    """e = inf is not the limit.  A craft with no speed relative to the planet
+    is on a parabolic path, e = 1, and an inspector reading e should say so
+    rather than printing infinity."""
+    result = maneuver.flyby(units.G * units.JUPITER_MASS, np.array([0.0, 0.0]),
+                            periapsis=units.JUPITER_RADIUS)
+    assert result["e"] == 1.0
+    assert result["turn"] == 0.0
+
+
+def test_a_degenerate_side_still_rotates_one_definite_way():
+    """A cross product of two near-parallel vectors can come out as -0.0, and
+    copysign reads the sign bit -- so -0.0 used to flip the assist over."""
+    mu_planet = units.G * units.JUPITER_MASS
+    v_in = np.array([0.005, 0.0])
+    p = units.JUPITER_RADIUS * 3.0
+    positive = maneuver.flyby(mu_planet, v_in, p, side=0.0)
+    negative_zero = maneuver.flyby(mu_planet, v_in, p, side=-0.0)
+    assert np.allclose(positive["v_out"], negative_zero["v_out"])
+
+
+def test_hohmann_refuses_a_radius_of_zero_rather_than_dividing_by_it():
+    """The panel feeds this radii taken from world state, and a craft sitting
+    on the attractor's centre is degenerate but reachable."""
+    assert maneuver.hohmann(units.G, 0.0, 1.5, 0.0, 0.0) is None
+    assert maneuver.hohmann(units.G, 1.0, 0.0, 0.0, 0.0) is None
+    assert maneuver.hohmann(0.0, 1.0, 1.5, 0.0, 0.0) is None
+    assert maneuver.hohmann(units.G, 1.0, 1.5, 0.0, 0.0) is not None
+
+
+def test_plan_conics_sorts_a_plan_given_out_of_order():
+    """Nothing stops a caller building a plan out of order; applying a later
+    node's burn at an earlier node's position is silently wrong."""
+    world = _sun_and_craft()
+    late = maneuver.Maneuver(due_time=200.0, prograde=units.from_ms(600.0))
+    early = maneuver.Maneuver(due_time=10.0, prograde=units.from_ms(800.0))
+    _a, out_of_order = maneuver.plan_conics(world, 1, (late, early), samples=64)
+    _b, in_order = maneuver.plan_conics(world, 1, (early, late), samples=64)
+    assert len(out_of_order) == len(in_order) == 2
+    for got, want in zip(out_of_order, in_order):
+        assert np.allclose(got[0], want[0])
+
+
+def test_closest_approach_actually_uses_the_sample_count_it_is_given():
+    """`samples` was silently floored to 8 and never varied in a test, so an
+    implementation ignoring the argument entirely passed."""
+    mu = units.G
+    craft_pos = np.array([1.0, 0.0])
+    craft_vel = np.array([0.0, math.sqrt(mu)])
+    target_pos, target_vel = orbits.state_from_elements(mu, 1.9, 0.0, 0.0, 2.2)
+    coarse = maneuver.closest_approach(mu, craft_pos, craft_vel,
+                                       target_pos, target_vel,
+                                       horizon_days=900.0, samples=8)
+    fine = maneuver.closest_approach(mu, craft_pos, craft_vel,
+                                     target_pos, target_vel,
+                                     horizon_days=900.0, samples=600)
+    assert fine["distance"] <= coarse["distance"]
+    assert fine["distance"] < coarse["distance"] - 1e-9 or coarse["distance"] < 1e-6
+
+
+def test_the_refinement_pass_is_fine_enough_to_be_worth_having():
+    """Only the existence of the refinement was pinned, not its resolution:
+    shrinking the fine sweep from 32 samples to 4 still passed."""
+    mu = units.G
+    craft_pos = np.array([1.0, 0.0])
+    craft_vel = np.array([0.0, math.sqrt(mu / 1.0)])
+    target_pos, target_vel = orbits.state_from_elements(mu, 1.524, 0.0, 0.0, 1.3)
+    found = maneuver.closest_approach(mu, craft_pos, craft_vel,
+                                      target_pos, target_vel,
+                                      horizon_days=700.0, samples=240)
+    # Re-measure at the reported instant: a coarse refinement lands off the
+    # true minimum, and the separation there is worse than what it claims.
+    c_pos, _ = orbits.propagate(mu, craft_pos, craft_vel, found["time"])
+    t_pos, _ = orbits.propagate(mu, target_pos, target_vel, found["time"])
+    exact = float(np.hypot(c_pos[0] - t_pos[0], c_pos[1] - t_pos[1]))
+    assert abs(exact - found["distance"]) < 1e-12
+    # And the minimum really is a minimum: a step either side is no closer.
+    for step in (-0.5, 0.5):
+        c2, _ = orbits.propagate(mu, craft_pos, craft_vel, found["time"] + step)
+        t2, _ = orbits.propagate(mu, target_pos, target_vel, found["time"] + step)
+        assert float(np.hypot(c2[0] - t2[0], c2[1] - t2[1])) >= found["distance"] - 1e-9

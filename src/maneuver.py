@@ -103,8 +103,9 @@ def burn_velocity(rel_pos, rel_vel, node):
 def plan_conics(world, index, plan, samples=160):
     """``(attractor, [(points, bound), ...])`` -- the orbit after each node.
 
-    Each conic is relative to the attractor, so a caller adds the attractor's
-    position before projecting.  Node *k*'s conic is propagated from node
+    The plan is sorted by ``due_time`` before it is walked, so a caller may
+    hand one over in any order.  Each conic is relative to the attractor, so a
+    caller adds the attractor's position before projecting.  Node *k*'s conic is propagated from node
     *k-1*'s post-burn state, which is what makes a two-burn transfer draw as
     the two arcs it really is.
     """
@@ -115,7 +116,10 @@ def plan_conics(world, index, plan, samples=160):
 
     conics = []
     clock = float(world.time)
-    for node in plan:
+    # Sorted here rather than assumed: a plan built out of order would
+    # otherwise apply a later-listed, earlier-due burn at the *previous*
+    # node's position and return a conic that is silently wrong.
+    for node in sorted(plan, key=lambda n: float(n.due_time)):
         dt = float(node.due_time) - clock
         if dt > 0.0:
             rel_pos, rel_vel = orbits.propagate(mu, rel_pos, rel_vel, dt)
@@ -190,9 +194,17 @@ def hohmann(mu, r1, r2, theta_craft, theta_target):
 
     Angles are radians measured about the attractor, in the direction of
     motion.  Returns speeds in AU/day, signed: negative is a retrograde burn,
-    which is what going *inward* costs.
+    which is what going *inward* costs -- or **None** when either orbit is
+    degenerate, which is the one case with no transfer to describe.
     """
-    r1, r2 = float(r1), float(r2)
+    r1, r2, mu = float(r1), float(r2), float(mu)
+    if r1 <= 0.0 or r2 <= 0.0 or mu <= 0.0:
+        # The panel feeds this radii taken from world state, and a craft
+        # sitting on its attractor's centre is degenerate but reachable.
+        # None says "there is no transfer here", which the caller can show;
+        # a ZeroDivisionError says nothing and takes the frame with it.
+        return None
+
     a_transfer = 0.5 * (r1 + r2)
 
     v1 = math.sqrt(mu / r1)
@@ -252,11 +264,17 @@ def flyby(mu_planet, v_inf, periapsis, side=1.0):
     v = np.asarray(v_inf, dtype=float)
     speed2 = float(v[0] * v[0] + v[1] * v[1])
     if speed2 <= 0.0 or periapsis <= 0.0 or mu_planet <= 0.0:
-        return {"e": math.inf, "turn": 0.0, "v_out": v.copy()}
+        # e = 1, not infinity: with no speed relative to the planet the
+        # formula's own limit is the parabolic case, and an inspector reading
+        # this back should say "1" rather than print an infinity.
+        return {"e": 1.0, "turn": 0.0, "v_out": v.copy()}
 
     e = 1.0 + float(periapsis) * speed2 / float(mu_planet)
     turn = 2.0 * math.asin(min(1.0, 1.0 / e))
-    signed_turn = math.copysign(turn, side)
+    # Not copysign: it reads the sign *bit*, so a -0.0 -- which a cross
+    # product of two near-parallel vectors really does produce -- would flip
+    # the assist over. Only a genuinely negative side rotates clockwise.
+    signed_turn = turn if float(side) >= 0.0 else -turn
 
     cos_t, sin_t = math.cos(signed_turn), math.sin(signed_turn)
     return {"e": e, "turn": turn,
