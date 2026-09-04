@@ -176,3 +176,49 @@ def closest_approach(mu, craft_pos, craft_vel, target_pos, target_vel,
             "craft_vel": np.asarray(c_vel, dtype=float),
             "target_pos": np.asarray(t_pos, dtype=float),
             "target_vel": np.asarray(t_vel, dtype=float)}
+
+
+def hohmann(mu, r1, r2, theta_craft, theta_target):
+    """The two burns of a Hohmann transfer, **and when to start it**.
+
+    The two delta-v figures are the easy half and every textbook has them.
+    The half that actually matters when you try to fly one is ``wait_days``:
+    a transfer only arrives somewhere useful if the target is where the craft
+    is going when it gets there, so the departure has to wait for the phase
+    angle to come round.  That is a launch window, and it is why missions to
+    Mars leave every twenty-six months rather than whenever they are ready.
+
+    Angles are radians measured about the attractor, in the direction of
+    motion.  Returns speeds in AU/day, signed: negative is a retrograde burn,
+    which is what going *inward* costs.
+    """
+    r1, r2 = float(r1), float(r2)
+    a_transfer = 0.5 * (r1 + r2)
+
+    v1 = math.sqrt(mu / r1)
+    v2 = math.sqrt(mu / r2)
+    depart = v1 * (math.sqrt(2.0 * r2 / (r1 + r2)) - 1.0)
+    arrive = v2 * (1.0 - math.sqrt(2.0 * r1 / (r1 + r2)))
+    transfer = math.pi * math.sqrt(a_transfer ** 3 / mu)
+
+    # The target must lead the craft by this much at departure, so that half
+    # an orbit of the transfer ellipse later the two arrive together.
+    n1 = math.sqrt(mu / r1 ** 3)
+    n2 = math.sqrt(mu / r2 ** 3)
+    required = math.pi - n2 * transfer
+    current = float(theta_target) - float(theta_craft)
+
+    rate = n2 - n1
+    if abs(rate) < 1e-15:
+        wait = 0.0
+    else:
+        delta = (required - current) % (2.0 * math.pi)
+        if rate < 0.0:
+            # The target is falling behind, so the gap has to close the other
+            # way round; shifting into (-2pi, 0] keeps the wait positive.
+            delta -= 2.0 * math.pi
+        wait = delta / rate
+
+    return {"depart_dv": depart, "arrive_dv": arrive,
+            "transfer_days": transfer, "wait_days": max(0.0, wait),
+            "a_transfer": a_transfer}

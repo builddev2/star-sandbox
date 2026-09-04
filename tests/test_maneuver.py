@@ -126,3 +126,51 @@ def test_closest_approach_reports_where_both_bodies_were():
                                        horizon_days=800.0, samples=300)
     gap = np.hypot(*(result["craft_pos"] - result["target_pos"]))
     assert abs(gap - result["distance"]) < 1e-9
+
+
+def test_earth_to_mars_matches_the_textbook():
+    """The acceptance test for the whole solver.  Every number here is one
+    an eight-year-old can look up and check."""
+    result = maneuver.hohmann(units.G, 1.0, 1.524, 0.0, 0.0)
+    assert 2900.0 < units.to_ms(result["depart_dv"]) < 3000.0
+    assert 2600.0 < units.to_ms(result["arrive_dv"]) < 2700.0
+    assert 250.0 < result["transfer_days"] < 270.0
+
+
+def test_going_inward_costs_a_retrograde_burn():
+    result = maneuver.hohmann(units.G, 1.0, 0.72, 0.0, 0.0)
+    assert result["depart_dv"] < 0.0
+    assert result["arrive_dv"] < 0.0
+
+
+def test_the_wait_puts_the_target_where_the_craft_will_arrive():
+    """The part a naive Hohmann omits: you cannot leave whenever you like."""
+    mu = units.G
+    r1, r2 = 1.0, 1.524
+    theta_craft, theta_target = 0.0, 1.0
+    result = maneuver.hohmann(mu, r1, r2, theta_craft, theta_target)
+
+    n1 = math.sqrt(mu / r1 ** 3)
+    n2 = math.sqrt(mu / r2 ** 3)
+    wait, transfer = result["wait_days"], result["transfer_days"]
+
+    # Where each body is when the craft arrives at the far side.
+    craft_arrival_angle = theta_craft + n1 * wait + math.pi
+    target_arrival_angle = theta_target + n2 * (wait + transfer)
+    gap = (craft_arrival_angle - target_arrival_angle) % (2.0 * math.pi)
+    gap = min(gap, 2.0 * math.pi - gap)
+    assert gap < 1e-6
+
+
+def test_the_wait_is_never_negative():
+    for target_angle in (0.0, 1.0, 3.0, 5.5, 6.2):
+        result = maneuver.hohmann(units.G, 1.0, 1.524, 0.0, target_angle)
+        assert result["wait_days"] >= 0.0
+        inward = maneuver.hohmann(units.G, 1.0, 0.72, 0.0, target_angle)
+        assert inward["wait_days"] >= 0.0
+
+
+def test_equal_radii_need_no_burn_at_all():
+    result = maneuver.hohmann(units.G, 1.0, 1.0, 0.0, 0.0)
+    assert abs(result["depart_dv"]) < 1e-12
+    assert abs(result["arrive_dv"]) < 1e-12
