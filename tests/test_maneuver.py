@@ -1,0 +1,90 @@
+"""The arithmetic of a burn.  Headless -- no pygame anywhere in this file."""
+
+import math
+
+import numpy as np
+
+from src import maneuver, materials, orbits, units
+from src.body import KIND_CRAFT, KIND_STAR
+from src.world import World
+
+
+def _sun_and_craft(radius=1.0):
+    """A one-solar-mass star with a craft on a circular orbit at ``radius``."""
+    world = World()
+    world.add("Sun", materials.get("hydrogen"), 1.0, units.SUN_RADIUS,
+              np.zeros(2), np.zeros(2), kind=KIND_STAR)
+    speed = math.sqrt(units.G / radius)
+    world.add("Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
+              units.CRAFT_RADIUS, np.array([radius, 0.0]),
+              np.array([0.0, speed]), kind=KIND_CRAFT)
+    return world
+
+
+def _elements(world, index, rel_pos, rel_vel):
+    mu = units.G * world.mass[0]
+    return orbits.elements_from_state(mu, rel_pos, rel_vel)
+
+
+def test_a_prograde_burn_raises_the_far_side_and_leaves_the_near_side_alone():
+    world = _sun_and_craft()
+    node = maneuver.Maneuver(due_time=0.0, prograde=units.from_ms(1000.0))
+    mu, pos, vel = maneuver.node_state(world, 1, node)
+    after = maneuver.burn_velocity(pos, vel, node)
+    el = orbits.elements_from_state(mu, pos, after)
+    assert el["apoapsis"] > 1.05
+    assert abs(el["periapsis"] - 1.0) < 1e-6
+
+
+def test_a_retrograde_burn_lowers_the_far_side():
+    world = _sun_and_craft()
+    node = maneuver.Maneuver(due_time=0.0, prograde=-units.from_ms(1000.0))
+    mu, pos, vel = maneuver.node_state(world, 1, node)
+    after = maneuver.burn_velocity(pos, vel, node)
+    el = orbits.elements_from_state(mu, pos, after)
+    assert el["periapsis"] < 0.95
+    assert abs(el["apoapsis"] - 1.0) < 1e-6
+
+
+def test_a_radial_burn_tilts_the_orbit_without_changing_its_size_much():
+    world = _sun_and_craft()
+    node = maneuver.Maneuver(due_time=0.0, radial=units.from_ms(500.0))
+    mu, pos, vel = maneuver.node_state(world, 1, node)
+    after = maneuver.burn_velocity(pos, vel, node)
+    el = orbits.elements_from_state(mu, pos, after)
+    assert el["e"] > 0.01
+    # Energy, and so the semi-major axis, barely moves: the burn is perpendicular.
+    assert abs(el["a"] - 1.0) < 0.1
+
+
+def test_magnitude_combines_both_components():
+    node = maneuver.Maneuver(due_time=0.0, prograde=3.0, radial=4.0)
+    assert abs(node.magnitude - 5.0) < 1e-12
+
+
+def test_a_node_in_the_future_is_evaluated_where_the_craft_will_be():
+    world = _sun_and_craft()
+    period = 2.0 * math.pi / math.sqrt(units.G)
+    node = maneuver.Maneuver(due_time=period * 0.5, prograde=0.0)
+    _mu, pos, _vel = maneuver.node_state(world, 1, node)
+    # Half an orbit on: the far side of the circle.
+    assert pos[0] < -0.99
+
+
+def test_craft_state_finds_the_star_as_the_attractor():
+    world = _sun_and_craft()
+    attractor, mu, rel_pos, _rel_vel = maneuver.craft_state(world, 1)
+    assert attractor == 0
+    assert abs(mu - units.G * (1.0 + world.mass[1])) < 1e-18
+    assert abs(float(np.hypot(*rel_pos)) - 1.0) < 1e-12
+
+
+def test_plan_conics_returns_one_conic_per_node():
+    world = _sun_and_craft()
+    plan = (maneuver.Maneuver(due_time=10.0, prograde=units.from_ms(800.0)),
+            maneuver.Maneuver(due_time=200.0, prograde=units.from_ms(600.0)))
+    attractor, conics = maneuver.plan_conics(world, 1, plan, samples=64)
+    assert attractor == 0
+    assert len(conics) == 2
+    for points, _bound in conics:
+        assert len(points) > 8
