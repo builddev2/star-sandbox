@@ -169,3 +169,144 @@ def test_the_hohmann_button_plans_two_burns_to_the_target(state, ui):
     assert len(craft.plan) == 2
     assert craft.plan[0].due_time < craft.plan[1].due_time
     assert units.to_ms(craft.plan[0].prograde) > 2000.0
+
+
+# --- the overlay --------------------------------------------------------------------
+
+
+def _font():
+    from src.render.pixelfont import PixelFont
+    return PixelFont(18)
+
+
+def _mars_id(state):
+    names = [b.name for b in state.sim.world.bodies]
+    return state.sim.world.bodies[names.index("Mars")].id
+
+
+def _painted(surface):
+    return pygame.image.tostring(surface, "RGB")
+
+
+def test_the_overlay_draws_nothing_and_raises_nothing_without_a_craft(state):
+    surface = pygame.Surface(SIZE)
+    state.tool.draw_overlay(surface, state, _font())          # must not raise
+
+
+def test_the_overlay_draws_the_predicted_orbit_of_a_planned_burn(state):
+    from src import maneuver
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    craft = state.tool._launch(state)
+    surface = pygame.Surface(SIZE)
+    before = _painted(surface)
+    craft.plan = (maneuver.Maneuver(state.sim.world.time + 40.0,
+                                    units.from_ms(2900.0)),)
+    state.tool.draw_overlay(surface, state, _font())
+    assert _painted(surface) != before
+
+
+def test_the_overlay_draws_a_craft_with_no_plan_at_all(state):
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    state.tool._launch(state)
+    surface = pygame.Surface(SIZE)
+    before = _painted(surface)
+    state.tool.draw_overlay(surface, state, _font())
+    # The current orbit and the fuel readout are drawn even with no node.
+    assert _painted(surface) != before
+
+
+def test_the_encounter_is_cached_between_identical_frames(state):
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    first = state.tool._encounter(state)
+    again = state.tool._encounter(state)
+    assert first is again
+
+
+def test_the_encounter_cache_is_dropped_when_the_plan_changes(state):
+    from src import maneuver
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    craft = state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    first = state.tool._encounter(state)
+    craft.plan = (maneuver.Maneuver(state.sim.world.time + 10.0,
+                                    units.from_ms(2900.0)),)
+    assert state.tool._encounter(state) is not first
+
+
+def test_there_is_no_encounter_without_a_target(state):
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    state.tool._launch(state)
+    state.tool.target_id = None
+    assert state.tool._encounter(state) is None
+
+
+def test_the_encounter_finds_mars_within_a_sensible_distance(state):
+    """A craft co-orbital with Earth and a locked Mars: the search must return
+    a real closest approach, not None and not nonsense."""
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    found = state.tool._encounter(state)
+    assert found is not None
+    assert 0.0 < found["distance"] < 3.0
+    assert found["time"] >= 0.0
+
+
+def test_the_overlay_survives_the_target_being_deleted(state):
+    state.select(state.sim.world.bodies[_earth_index(state)].id)
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    state.tool._encounter(state)
+    world = state.sim.world
+    world.remove(world.index_of(state.tool.target_id))
+    state.sim.refresh()
+    surface = pygame.Surface(SIZE)
+    state.tool.draw_overlay(surface, state, _font())          # must not raise
+    assert state.tool.target_id is None                        # lock cleared
+
+
+def test_the_transfer_aims_at_the_targets_mean_radius_not_where_it_happens_to_be():
+    """Mars's orbit is eccentric (e = 0.093), so its distance from the Sun
+    swings between 1.38 and 1.67 AU.  A transfer aimed at wherever it is
+    standing today arrives at a radius Mars has already left -- so the
+    solver must use the target's semi-major axis, which is the mean radius
+    the circular-orbit Hohmann arithmetic assumes anyway.
+    """
+    import pygame as _pg
+    from src import maneuver, orbits, scenarios as _sc
+    from src.app.state import AppState as _AS
+    from src.app.tools import FlyTool as _FT
+    from src.render.camera import Camera as _Cam
+    from src.render.draw import ViewSettings as _VS
+    from src.sim import Simulation as _Sim
+
+    _pg.init()
+    sim = _Sim(world=_sc.solar_system(moons=False))
+    app = _AS(sim, _Cam(640, 360), _VS())
+    app.set_tool(_FT)
+    names = [b.name for b in sim.world.bodies]
+
+    app.select(sim.world.bodies[names.index("Earth")].id)
+    craft = app.tool._launch(app)
+    app.tool.target_id = sim.world.bodies[names.index("Mars")].id
+    app.tool._plan_transfer(app)
+    assert len(craft.plan) == 2
+
+    # Fly the whole plan.
+    while craft.plan and sim.world.time < 2000.0:
+        sim.advance(5.0, budget_s=2.0)
+    assert craft.plan == ()
+
+    index = sim.world.index_of(craft.id)
+    _att, mu, rel_pos, rel_vel = maneuver.craft_state(sim.world, index)
+    a_final = orbits.elements_from_state(mu, rel_pos, rel_vel)["a"]
+
+    mars = sim.world.index_of(sim.world.bodies[names.index("Mars")].id)
+    mars_a = orbits.elements_from_state(
+        mu, sim.world.pos[mars] - sim.world.pos[0],
+        sim.world.vel[mars] - sim.world.vel[0])["a"]
+
+    # The craft should end on an orbit the size of Mars's, within a few percent.
+    assert abs(a_final - mars_a) / mars_a < 0.05

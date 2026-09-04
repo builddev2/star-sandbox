@@ -422,3 +422,33 @@ def test_a_craft_that_lost_its_attractor_cannot_jam_the_queue():
     lone.plan = (maneuver.Maneuver(0.0, units.from_ms(100.0)),)
     assert maneuver.execute_due(world) == 1
     assert lone.plan == ()
+
+
+def test_refining_the_window_puts_the_target_where_the_craft_arrives():
+    """The circular-orbit phase angle is only a first guess when the target's
+    orbit is eccentric.  Refining it against exact propagation should leave
+    the target essentially on top of the arrival point."""
+    mu = units.G
+    craft_pos = np.array([1.0, 0.0])
+    craft_vel = np.array([0.0, math.sqrt(mu / 1.0)])
+    # An eccentric target, the way Mars really is.
+    tp, tv = orbits.state_from_elements(mu, 1.524, 0.093, 0.4, 1.1)
+
+    guess = maneuver.hohmann(mu, 1.0, 1.524,
+                             math.atan2(craft_pos[1], craft_pos[0]),
+                             math.atan2(tp[1], tp[0]))
+    refined = maneuver.refine_window(mu, craft_pos, craft_vel, tp, tv,
+                                     guess["wait_days"], guess["transfer_days"])
+
+    def gap_for(wait):
+        arrive = wait + guess["transfer_days"]
+        cp, _cv = orbits.propagate(mu, craft_pos, craft_vel, wait)
+        # The craft leaves on the transfer ellipse and arrives half a turn on.
+        angle = math.atan2(cp[1], cp[0]) + math.pi
+        target_at, _ = orbits.propagate(mu, tp, tv, arrive)
+        return abs((angle - math.atan2(target_at[1], target_at[0])
+                    + math.pi) % (2.0 * math.pi) - math.pi)
+
+    assert gap_for(refined) < gap_for(guess["wait_days"])
+    assert gap_for(refined) < 0.02          # radians
+    assert refined >= 0.0

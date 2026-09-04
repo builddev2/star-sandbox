@@ -20,7 +20,7 @@ import pygame
 from .. import edits, maneuver, materials, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
                     KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
-from ..render import palette
+from ..render import hud, palette, widgets
 from ..render.widgets import Control
 
 #: A press-and-release within this many pixels counts as a click, not a drag.
@@ -1043,13 +1043,23 @@ class FlyTool(Tool):
         state_now = maneuver.craft_state(world, index)
         if state_now is None:
             return
-        attractor, mu, rel_pos, _rel_vel = state_now
+        attractor, mu, rel_pos, rel_vel = state_now
         if target == attractor:
             return
 
         target_rel = world.pos[target] - world.pos[attractor]
-        r1 = float(np.hypot(rel_pos[0], rel_pos[1]))
-        r2 = float(np.hypot(target_rel[0], target_rel[1]))
+        target_vel = world.vel[target] - world.vel[attractor]
+
+        # **Semi-major axes, not present distances.**  A Hohmann transfer is
+        # derived for two circular orbits, and the one radius that stands in
+        # for a real elliptical one is its semi-major axis.  Mars swings
+        # between 1.38 and 1.67 AU: aiming at wherever it is standing today
+        # sends the craft to a radius Mars has already left by the time it
+        # arrives, and the phase-angle wait -- which assumes a circular mean
+        # motion -- would be computed from a period that does not exist.
+        # Measured, aiming at the instantaneous radius missed Mars by 1.9 AU.
+        r1 = _mean_radius(mu, rel_pos, rel_vel)
+        r2 = _mean_radius(mu, target_rel, target_vel)
         if r1 <= 0.0 or r2 <= 0.0:
             return
 
@@ -1058,7 +1068,14 @@ class FlyTool(Tool):
             math.atan2(float(rel_pos[1]), float(rel_pos[0])),
             math.atan2(float(target_rel[1]), float(target_rel[0])))
 
-        depart = world.time + solved["wait_days"]
+        # The circular-orbit window is the first guess; this slides it until
+        # the target really is at the arrival point, which matters because
+        # Mars's true anomaly does not advance at its mean motion.
+        wait = maneuver.refine_window(mu, rel_pos, rel_vel,
+                                      target_rel, target_vel,
+                                      solved["wait_days"],
+                                      solved["transfer_days"])
+        depart = world.time + wait
         craft.plan = (
             maneuver.Maneuver(depart, solved["depart_dv"], 0.0),
             maneuver.Maneuver(depart + solved["transfer_days"],
@@ -1109,6 +1126,273 @@ class FlyTool(Tool):
             return True
 
         return False
+
+    # --- overlay ----------------------------------------------------------------
+
+    #: How long an encounter result stays good, milliseconds.  The search is a
+    #: few hundred Kepler propagations; recomputing it for every frame would be
+    #: felt.  Any change to the plan, the craft or the target invalidates it
+    #: immediately -- this only bounds how stale a result can get while the
+    #: world moves underneath an unchanged plan.
+    ENCOUNTER_TTL_MS = 200
+
+    def _encounter_key(self, state):
+        craft = self._craft(state)
+        if craft is None:
+            return None
+        return (craft.id, self.target_id, craft.plan)
+
+    def _encounter(self, state):
+        """Closest approach to the locked target under the current plan, cached.
+
+        The craft is flown forward through its whole plan first -- propagate to
+        each node, apply that burn, carry on -- so what is measured is where
+        the plan actually puts it, not where it is drifting now.
+        """
+        key = self._encounter_key(state)
+        if key is None or self.target_id is None:
+            self._encounter_cache = None
+            return None
+
+        now = pygame.time.get_ticks()
+        cached = self._encounter_cache
+        if (cached is not None and cached[0] == key
+                and now - cached[1] < self.ENCOUNTER_TTL_MS):
+            return cached[2]
+
+        world = state.sim.world
+        index = state.selected_index
+        target = self._target_index(world)
+        found = maneuver.craft_state(world, index) if index is not None else None
+        if found is None or target is None:
+            self._encounter_cache = (key, now, None)
+            return None
+
+        attractor, mu, rel_pos, rel_vel = found
+        if target == attractor:
+            self._encounter_cache = (key, now, None)
+            return None
+
+        clock = float(world.time)
+        for node in self._craft(state).plan:
+            dt = float(node.due_time) - clock
+            if dt > 0.0:
+                rel_pos, rel_vel = orbits.propagate(mu, rel_pos, rel_vel, dt)
+                clock = float(node.due_time)
+            rel_vel = maneuver.burn_velocity(rel_pos, rel_vel, node)
+
+        target_pos = world.pos[target] - world.pos[attractor]
+        target_vel = world.vel[target] - world.vel[attractor]
+        lead = max(0.0, clock - float(world.time))
+        if lead > 0.0:
+            target_pos, target_vel = orbits.propagate(mu, target_pos,
+                                                      target_vel, lead)
+
+        el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+        horizon = el["period"] if el["period"] is not None else 2000.0
+        result = maneuver.closest_approach(mu, rel_pos, rel_vel,
+                                           target_pos, target_vel,
+                                           horizon_days=min(horizon, 4000.0),
+                                           samples=200)
+        result["attractor"] = attractor
+        result["mu"] = mu
+        self._encounter_cache = (key, now, result)
+        return result
+
+    def draw_overlay(self, surface, state, font):
+        world = state.sim.world
+        camera = state.camera
+
+        target = self._target_index(world)
+        if target is not None:
+            tx, ty = camera.world_to_screen(world.pos[target])
+            pygame.draw.circle(surface, palette.SELECT, (int(tx), int(ty)), 6, 1)
+
+        craft = self._craft(state)
+        if craft is None:
+            return
+
+        index = state.selected_index
+        attractor = self._draw_paths(surface, state, craft, index)
+        self._draw_node(surface, state, craft, index, attractor)
+        self._draw_readout(surface, state, font, craft)
+        self._draw_assist(surface, state, font)
+
+    def _draw_paths(self, surface, state, craft, index):
+        """The orbit the craft is on now, and the one each burn puts it on."""
+        world = state.sim.world
+        camera = state.camera
+        attractor, conics = maneuver.plan_conics(world, index, craft.plan,
+                                                 samples=160)
+        if attractor is None:
+            return None
+        origin = world.pos[attractor]
+
+        current = maneuver.craft_state(world, index)
+        if current is not None:
+            points, bound = orbits.conic_points(current[1], current[2],
+                                                current[3], samples=160)
+            self._stroke(surface, camera, points, origin, bound,
+                         palette.TRAIL_BASE)
+
+        for k, (points, bound) in enumerate(conics):
+            # The first burn's result is the one being aimed; anything after it
+            # is context, so it is drawn a tier back.
+            colour = palette.ACCENT if k == 0 else palette.AIM_GOOD
+            self._stroke(surface, camera, points, origin, bound, colour)
+        return attractor
+
+    @staticmethod
+    def _stroke(surface, camera, points, origin, bound, colour):
+        if len(points) < 2:
+            return
+        projected = camera.world_to_screen_array(points + origin)
+        # Clamp before casting: a near-parabolic arc can reach 1e12 px, which
+        # overflows the C int pygame.draw.lines wants.
+        np.clip(projected, -32000, 32000, out=projected)
+        pygame.draw.lines(surface, colour, bool(bound),
+                          projected.astype(int).tolist(), 1)
+
+    def _draw_node(self, surface, state, craft, index, attractor):
+        """A handle where the burn happens, on the orbit it happens from."""
+        node = self._node(state)
+        if node is None or attractor is None:
+            return
+        found = maneuver.node_state(state.sim.world, index, node)
+        if found is None:
+            return
+        _mu, node_pos, _node_vel = found
+        nx, ny = state.camera.world_to_screen(
+            node_pos + state.sim.world.pos[attractor])
+        nx, ny = int(np.clip(nx, -32000, 32000)), int(np.clip(ny, -32000, 32000))
+        pygame.draw.circle(surface, palette.SELECT, (nx, ny), 4, 1)
+        pygame.draw.line(surface, palette.SELECT, (nx - 7, ny), (nx + 7, ny), 1)
+        pygame.draw.line(surface, palette.SELECT, (nx, ny - 7), (nx, ny + 7), 1)
+
+    def _draw_readout(self, surface, state, font, craft):
+        """Fuel, the countdown, and where the plan puts you.
+
+        In the overlay rather than in the panel because the panel is full: six
+        rows is the floor-size limit ``tests/test_layout.py`` enforces.
+        """
+        world = state.sim.world
+        x = 8
+        y = 34
+        line = font.height + 2
+
+        fuel_ms = units.to_ms(craft.fuel_dv)
+        font.draw(surface, x, y, "Fuel   %s m/s" % "{:,.0f}".format(fuel_ms),
+                  palette.WARN if fuel_ms < 500.0 else palette.TEXT)
+        bar = pygame.Rect(x, y + line, font.width("X") * 16, 3)
+        widgets.draw_bar(surface, bar,
+                         fuel_ms / max(units.DEFAULT_FUEL_MS, 1.0),
+                         palette.ACCENT)
+        y += line * 2
+
+        node = self._node(state)
+        if node is not None:
+            font.draw(surface, x, y, "Burn in %s"
+                      % _lead_label(node.due_time - world.time), palette.TEXT)
+            y += line
+            found = maneuver.node_state(world, state.selected_index, node)
+            if found is not None:
+                mu, pos, vel = found
+                el = orbits.elements_from_state(
+                    mu, pos, maneuver.burn_velocity(pos, vel, node))
+                font.draw(surface, x, y, "Closest  %s"
+                          % hud.format_length(el["periapsis"]), palette.TEXT_DIM)
+                y += line
+                farthest = ("never returns" if el["apoapsis"] is None
+                            else hud.format_length(el["apoapsis"]))
+                font.draw(surface, x, y, "Farthest %s" % farthest,
+                          palette.TEXT_DIM)
+                y += line
+
+        encounter = self._encounter(state)
+        target = self._target_index(world)
+        if encounter is not None and target is not None:
+            font.draw(surface, x, y, "Passes %s at %s"
+                      % (world.bodies[target].name,
+                         hud.format_length(encounter["distance"])),
+                      palette.AIM_GOOD)
+
+    def _draw_assist(self, surface, state, font):
+        """The velocity triangle at a flyby.
+
+        |v_inf| is the same going out as coming in; all the planet does is
+        rotate it.  Drawing the craft's velocity, the planet's, and their
+        difference is what makes that visible, and the two speeds beside them
+        are what make it a lesson rather than a decoration.
+        """
+        encounter = self._encounter(state)
+        if encounter is None:
+            return
+        world = state.sim.world
+        target = self._target_index(world)
+        if target is None or encounter["distance"] <= 0.0:
+            return
+
+        primary = float(world.mass[encounter["attractor"]])
+        distance = float(np.hypot(*encounter["target_pos"]))
+        hill = units.hill_radius(float(world.mass[target]), primary, distance)
+        if encounter["distance"] > hill:
+            return
+
+        v_craft = encounter["craft_vel"]
+        v_planet = encounter["target_vel"]
+        v_inf = v_craft - v_planet
+
+        # Which way the planet bends it is set by which side the craft passes,
+        # and that is exactly what decides boost from brake: the sense is the
+        # sign of the flyby's own angular momentum.
+        offset = encounter["craft_pos"] - encounter["target_pos"]
+        side = math.copysign(
+            1.0, float(offset[0] * v_inf[1] - offset[1] * v_inf[0]) or 1.0)
+        turned = maneuver.flyby(units.G * float(world.mass[target]), v_inf,
+                                encounter["distance"], side=side)
+        v_out = v_planet + turned["v_out"]
+
+        origin = state.camera.world_to_screen(
+            encounter["craft_pos"] + world.pos[encounter["attractor"]])
+        if not (-32000 < origin[0] < 32000 and -32000 < origin[1] < 32000):
+            return
+
+        # One pixel scale for all three arrows, so the triangle actually closes.
+        span = max(float(np.hypot(*v_craft)), 1e-12)
+        pixels = 46.0 / span
+
+        def arrow(vec, colour):
+            end = (origin[0] + float(vec[0]) * pixels,
+                   origin[1] - float(vec[1]) * pixels)
+            pygame.draw.line(surface, colour,
+                             (int(origin[0]), int(origin[1])),
+                             (int(np.clip(end[0], -32000, 32000)),
+                              int(np.clip(end[1], -32000, 32000))), 1)
+            return end
+
+        arrow(v_planet, palette.TEXT_DIM)
+        tip = arrow(v_craft, palette.ACCENT)
+        arrow(v_out, palette.AIM_GOOD)
+
+        font.draw(surface, int(tip[0]) + 4, int(tip[1]),
+                  "in  %s" % hud.format_speed(float(np.hypot(*v_craft))),
+                  palette.ACCENT)
+        font.draw(surface, int(tip[0]) + 4, int(tip[1]) + font.height + 1,
+                  "out %s" % hud.format_speed(float(np.hypot(*v_out))),
+                  palette.AIM_GOOD)
+
+
+def _mean_radius(mu, rel_pos, rel_vel):
+    """The radius a body's orbit stands in for, in AU: its semi-major axis.
+
+    Falls back to the present distance for an unbound path, which has no
+    semi-major axis worth the name.
+    """
+    el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+    a = el["a"]
+    if el["bound"] and math.isfinite(a) and a > 0.0:
+        return float(a)
+    return float(np.hypot(rel_pos[0], rel_pos[1]))
 
 
 def _temperature_label(kelvin):

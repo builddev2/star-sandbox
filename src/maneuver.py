@@ -357,3 +357,58 @@ def execute_due(world, now=None):
             apply_burn(world, i, node)
             fired += 1
     return fired
+
+
+def refine_window(mu, craft_pos, craft_vel, target_pos, target_vel,
+                  wait_days, transfer_days, iterations=12):
+    """Sharpen a Hohmann departure time against exact propagation.
+
+    :func:`hohmann` works out the launch window from circular mean motions,
+    which is the textbook derivation and is what makes the answer explicable.
+    It is also only a first guess the moment either orbit is eccentric: Mars
+    swings 1.38 to 1.67 AU and its true anomaly runs fast at perihelion and
+    slow at aphelion, so the angle it has actually swept by arrival differs
+    from ``n * t`` by up to twice its eccentricity in radians.
+
+    So the guess is refined here the same way ``solve_intercept`` leads a
+    moving target: propagate both bodies exactly to the arrival instant, read
+    off how far ahead or behind the target is, and slide the departure by that
+    error over the relative angular rate.  A handful of passes converges,
+    because the residual shrinks by roughly the ratio of the rates each time.
+    """
+    craft_pos = np.asarray(craft_pos, dtype=float)
+    craft_vel = np.asarray(craft_vel, dtype=float)
+    target_pos = np.asarray(target_pos, dtype=float)
+    target_vel = np.asarray(target_vel, dtype=float)
+
+    r1 = float(np.hypot(craft_pos[0], craft_pos[1]))
+    r2 = float(np.hypot(target_pos[0], target_pos[1]))
+    if r1 <= 0.0 or r2 <= 0.0 or mu <= 0.0:
+        return max(0.0, float(wait_days))
+
+    # Relative angular rate, from the mean motions the guess itself used.
+    el_c = orbits.elements_from_state(mu, craft_pos, craft_vel)
+    el_t = orbits.elements_from_state(mu, target_pos, target_vel)
+    a_c = el_c["a"] if el_c["bound"] and el_c["a"] > 0.0 else r1
+    a_t = el_t["a"] if el_t["bound"] and el_t["a"] > 0.0 else r2
+    rate = math.sqrt(mu / a_t ** 3) - math.sqrt(mu / a_c ** 3)
+    if abs(rate) < 1e-15:
+        return max(0.0, float(wait_days))
+
+    wait = max(0.0, float(wait_days))
+    period = 2.0 * math.pi / abs(rate)          # the synodic period
+    for _ in range(iterations):
+        departure, _ = orbits.propagate(mu, craft_pos, craft_vel, wait)
+        # Half a turn of the transfer ellipse from where the craft departs.
+        arrival_angle = math.atan2(departure[1], departure[0]) + math.pi
+        there, _ = orbits.propagate(mu, target_pos, target_vel,
+                                    wait + transfer_days)
+        error = (arrival_angle - math.atan2(there[1], there[0])
+                 + math.pi) % (2.0 * math.pi) - math.pi
+        if abs(error) < 1e-12:
+            break
+        wait += error / rate
+        # A correction may push the window past a whole synodic period, or
+        # before now; both name the same geometry, so fold it back.
+        wait = wait % period if period > 0.0 else max(0.0, wait)
+    return max(0.0, wait)
