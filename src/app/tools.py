@@ -802,6 +802,11 @@ class FlyTool(Tool):
         self.target_id = None
         self.picking_target = False
         self._drag_x = None
+        #: Populated (Task 10) by whatever finds the closest approach to the
+        #: locked target, so the overlay can draw it without recomputing it.
+        #: Established here, not left to spring into existence on first read,
+        #: because a constructor should own every attribute its class reads.
+        self._encounter_cache = None
 
     # --- what we are flying -----------------------------------------------------
 
@@ -886,6 +891,225 @@ class FlyTool(Tool):
         state.sim.refresh()
         return body
 
+    # --- buttons ----------------------------------------------------------------
+
+    def _default_lead(self, state):
+        """Where a fresh node lands: a quarter of the way round the orbit.
+
+        Far enough ahead to be worth planning, near enough to arrive while
+        anyone is still watching.
+        """
+        index = state.selected_index
+        if index is None:
+            return 30.0
+        attractor = orbits.dominant_attractor(state.sim.world, index)
+        if attractor is None:
+            return 30.0
+        world = state.sim.world
+        mu = units.G * (float(world.mass[attractor]) + float(world.mass[index]))
+        el = orbits.elements_from_state(
+            mu, world.pos[index] - world.pos[attractor],
+            world.vel[index] - world.vel[attractor])
+        period = el["period"]
+        return 30.0 if period is None else max(0.5, period * 0.25)
+
+    def _ensure_node(self, state):
+        """The head node, created at a sensible time if there is none."""
+        craft = self._craft(state)
+        if craft is None:
+            return None
+        if not craft.plan:
+            due = state.sim.world.time + self._default_lead(state)
+            craft.plan = (maneuver.Maneuver(due_time=due),)
+            state.sim.refresh()
+        return craft.plan[0]
+
+    def _replace_node(self, state, node):
+        craft = self._craft(state)
+        if craft is None:
+            return
+        craft.plan = (node,) + tuple(craft.plan[1:])
+        state.sim.refresh()
+
+    def _target_label(self, state):
+        if self.picking_target:
+            return "Click a body..."
+        index = self._target_index(state.sim.world)
+        if index is not None:
+            return "Target: %s" % state.sim.world.bodies[index].name
+        return "Target lock"
+
+    def controls(self, state, metrics):
+        craft = self._craft(state)
+        has_craft = craft is not None
+        node = self._node(state)
+        world = state.sim.world
+        target = self._target_index(world)
+
+        when = ("--" if node is None
+                else _lead_label(node.due_time - world.time))
+        prograde = ("0 m/s" if node is None
+                    else "{:+,.0f} m/s".format(units.to_ms(node.prograde)))
+        radial = ("0 m/s" if node is None
+                  else "{:+,.0f} m/s".format(units.to_ms(node.radial)))
+
+        def stepper(cid, label, row):
+            return [
+                Control(cid, icon="minus", payload=-1, compact=True, repeat=True,
+                        enabled=has_craft, active=self.field_index == row,
+                        tooltip="Less"),
+                Control(cid + ".readout", label=label, readout=True),
+                Control(cid, icon="plus", payload=1, compact=True, repeat=True,
+                        enabled=has_craft, active=self.field_index == row,
+                        tooltip="More"),
+            ]
+
+        return [
+            [Control("fly.launch", label="Launch craft", icon="fly",
+                     enabled=state.selected_index is not None,
+                     tooltip="Put a shuttle in orbit beside what you picked"),
+             Control("fly.refuel", label="Refuel", icon="reset",
+                     enabled=has_craft, tooltip="Fill the tank back up")],
+            [Control("fly.target", label=self._target_label(state), icon="target",
+                     hotkey="X", active=self.picking_target or target is not None,
+                     tooltip="Click a body to measure your approach to it")],
+            stepper("fly.when", "When  %s" % when, 0),
+            stepper("fly.prograde", "Along  %s" % prograde, 1),
+            stepper("fly.radial", "Out    %s" % radial, 2),
+            [Control("fly.hohmann", label="Work out the transfer", icon="flyto",
+                     hotkey="M", enabled=has_craft and target is not None,
+                     tooltip="Plan the two burns that get you there"),
+             Control("fly.clear", icon="close", hotkey="N", compact=True,
+                     enabled=has_craft and node is not None,
+                     tooltip="Throw the plan away")],
+        ]
+
+    def perform(self, control, state):
+        cid = control.id
+        if cid == "fly.launch":
+            self._launch(state)
+            return True
+        if cid == "fly.refuel":
+            craft = self._craft(state)
+            if craft is not None:
+                craft.fuel_dv = units.from_ms(units.DEFAULT_FUEL_MS)
+            return True
+        if cid == "fly.target":
+            self.picking_target = not self.picking_target
+            return True
+        if cid == "fly.clear":
+            craft = self._craft(state)
+            if craft is not None:
+                craft.plan = ()
+                state.sim.refresh()
+            return True
+        if cid == "fly.hohmann":
+            self._plan_transfer(state)
+            return True
+        if cid in ("fly.when", "fly.prograde", "fly.radial"):
+            field = cid.split(".", 1)[1]
+            self.field_index = self.FIELDS.index(field)
+            self._scrub(state, field,
+                        int(control.payload) * self.CLICK_NOTCHES[field])
+            return True
+        return False
+
+    def _scrub(self, state, field, notches):
+        node = self._ensure_node(state)
+        if node is None:
+            return
+        world = state.sim.world
+        if field == "when":
+            lead = maneuver.scrub_lead(node.due_time - world.time, notches)
+            node = maneuver.Maneuver(world.time + lead, node.prograde, node.radial)
+        elif field == "prograde":
+            node = maneuver.Maneuver(node.due_time,
+                                     maneuver.scrub_dv(node.prograde, notches),
+                                     node.radial)
+        else:
+            node = maneuver.Maneuver(node.due_time, node.prograde,
+                                     maneuver.scrub_dv(node.radial, notches))
+        self._replace_node(state, node)
+
+    def _plan_transfer(self, state):
+        """Fill the plan with the two burns of a Hohmann transfer."""
+        craft = self._craft(state)
+        world = state.sim.world
+        index = state.selected_index
+        target = self._target_index(world)
+        if craft is None or index is None or target is None:
+            return
+
+        state_now = maneuver.craft_state(world, index)
+        if state_now is None:
+            return
+        attractor, mu, rel_pos, _rel_vel = state_now
+        if target == attractor:
+            return
+
+        target_rel = world.pos[target] - world.pos[attractor]
+        r1 = float(np.hypot(rel_pos[0], rel_pos[1]))
+        r2 = float(np.hypot(target_rel[0], target_rel[1]))
+        if r1 <= 0.0 or r2 <= 0.0:
+            return
+
+        solved = maneuver.hohmann(
+            mu, r1, r2,
+            math.atan2(float(rel_pos[1]), float(rel_pos[0])),
+            math.atan2(float(target_rel[1]), float(target_rel[0])))
+
+        depart = world.time + solved["wait_days"]
+        craft.plan = (
+            maneuver.Maneuver(depart, solved["depart_dv"], 0.0),
+            maneuver.Maneuver(depart + solved["transfer_days"],
+                              solved["arrive_dv"], 0.0),
+        )
+        state.sim.refresh()
+
+    # --- events -----------------------------------------------------------------
+
+    def on_event(self, event, state):
+        """Keys.  Every one re-checks its own precondition, because a key
+        never passes through ``UiLayer.perform``'s ``clickable`` gate -- a
+        greyed-out button's hotkey would otherwise still work.
+        """
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_x:
+                self.picking_target = not self.picking_target
+                return True
+            if event.key == pygame.K_n:
+                craft = self._craft(state)
+                if craft is not None and craft.plan:
+                    craft.plan = ()
+                    state.sim.refresh()
+                return True
+            if event.key == pygame.K_m:
+                if (self._craft(state) is not None
+                        and self._target_index(state.sim.world) is not None):
+                    self._plan_transfer(state)
+                return True
+            if event.key in (pygame.K_UP, pygame.K_DOWN):
+                step = -1 if event.key == pygame.K_UP else 1
+                self.field_index = (self.field_index + step) % len(self.FIELDS)
+                return True
+            if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                if self._craft(state) is None:
+                    return True
+                field = self.FIELDS[self.field_index]
+                step = -1 if event.key == pygame.K_LEFT else 1
+                self._scrub(state, field, step * self.CLICK_NOTCHES[field])
+                return True
+
+        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                and self.picking_target):
+            index = state.pick_body_at(event.pos[0], event.pos[1])
+            self.target_id = (state.sim.world.bodies[index].id
+                              if index is not None else None)
+            self.picking_target = False
+            return True
+
+        return False
+
 
 def _temperature_label(kelvin):
     """Kelvin, grouped rather than in exponent notation -- "1e+04 K" is not a
@@ -899,6 +1123,17 @@ def _mass_label(mass):
     if mass >= 0.3 * units.JUPITER_MASS:
         return "%.3g Jupiters" % units.to_jupiter_masses(mass)
     return "%.3g Earths" % units.to_earth_masses(mass)
+
+
+def _lead_label(days):
+    """A countdown in whatever unit keeps the number readable."""
+    if days < 0.0:
+        return "now"
+    if days < 1.0:
+        return "%.1f hr" % (days * 24.0)
+    if days < 2.0 * units.DAYS_PER_YEAR:
+        return "{:,.0f} d".format(days)
+    return "%.1f yr" % units.to_years(days)
 
 
 TOOLS = {

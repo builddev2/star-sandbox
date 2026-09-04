@@ -262,3 +262,25 @@ def flyby(mu_planet, v_inf, periapsis, side=1.0):
     return {"e": e, "turn": turn,
             "v_out": np.array([cos_t * v[0] - sin_t * v[1],
                                sin_t * v[0] + cos_t * v[1]])}
+
+
+#: One notch of the delta-v steppers, m/s.  Linear rather than a ratio: a
+#: burn runs from tens of m/s to a few thousand, which is two decades, not
+#: the eight that mass covers.
+DV_NOTCH_MS = 10.0
+#: One notch of the node-time stepper, as a ratio.  The countdown has to span
+#: minutes to years, so it scrubs the way mass does.
+TIME_NOTCH_RATIO = 1.06
+#: The shortest a node can be set to.
+MIN_LEAD_DAYS = 0.01
+
+
+def scrub_dv(speed, notches):
+    """Move a delta-v component by ``notches`` of DV_NOTCH_MS."""
+    return speed + units.from_ms(DV_NOTCH_MS * notches)
+
+
+def scrub_lead(days, notches):
+    """Move a countdown by ``notches``, multiplicatively.  Never past zero."""
+    days = max(float(days), MIN_LEAD_DAYS)
+    return max(MIN_LEAD_DAYS, days * TIME_NOTCH_RATIO ** notches)
