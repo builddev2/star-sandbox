@@ -17,9 +17,9 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from .. import edits, materials, orbits, units
+from .. import edits, maneuver, materials, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
-                    KIND_BLACK_HOLE, KIND_PLANET, KIND_STAR)
+                    KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 from ..render import palette
 from ..render.widgets import Control
 
@@ -506,7 +506,10 @@ class EditTool(Tool):
         index = state.selected_index
         if index is None:
             return 1
-        return len(self._fields(state.sim.world, index))
+        # max(1, ...): a craft's fields tuple is empty (edits.edit_fields), and
+        # the Up/Down modulo below divides by this -- an empty selection must
+        # not mean a crash.
+        return max(1, len(self._fields(state.sim.world, index)))
 
     def _pick_row(self, state, field):
         """Point ``field_index`` at ``field``'s row.  False if there is no such row.
@@ -774,6 +777,116 @@ class EditTool(Tool):
     # copies of the same number is one of them eventually being wrong.
 
 
+#: How far ahead of the body it launches from a craft is placed, as a
+#: fraction of that body's own orbital radius.  Far enough that the two are
+#: visibly separate at system zoom, near enough that a transfer from here is
+#: the same transfer the body itself would fly.
+LAUNCH_OFFSET = 0.02
+
+
+class FlyTool(Tool):
+    name = "Fly"
+    hint = ("Pick a body and press Launch  -  then set a burn and watch the new "
+            "orbit appear before you commit to it  -  X locks a target, "
+            "M works out the transfer for you")
+    context_title = "Fly"
+
+    #: The rows the panel scrubs, in order.  Up/Down picks one.
+    FIELDS = ("when", "prograde", "radial")
+    #: Notches one press of a stepper applies.  All three move three at a
+    #: time: a single 10 m/s notch is invisible against a 3,000 m/s burn.
+    CLICK_NOTCHES = {"when": 3, "prograde": 3, "radial": 3}
+
+    def __init__(self):
+        self.field_index = 0
+        self.target_id = None
+        self.picking_target = False
+        self._drag_x = None
+
+    # --- what we are flying -----------------------------------------------------
+
+    def _craft(self, state):
+        """The selected body if it is a craft, otherwise None.
+
+        Deliberately not "the last craft launched": the selection is already
+        how everything else in the interface says what it acts on, and a tool
+        that silently acts on something other than what is selected is the
+        kind of thing that makes a sandbox feel haunted.
+        """
+        body = state.selected_body
+        return body if body is not None and body.kind == KIND_CRAFT else None
+
+    def _node(self, state):
+        craft = self._craft(state)
+        if craft is None or not craft.plan:
+            return None
+        return craft.plan[0]
+
+    def _target_index(self, world):
+        """Row of the locked target, clearing the lock if it is gone."""
+        if self.target_id is None:
+            return None
+        index = world.index_of(self.target_id)
+        if index is None:
+            self.target_id = None
+        return index
+
+    # --- launching --------------------------------------------------------------
+
+    def _launch(self, state):
+        """Put a craft in orbit beside the selected body.
+
+        **Around whatever that body orbits, not around the body itself.**  A
+        parking orbit 300 km above Earth has a ninety-minute period, and
+        ``Integrator.dynamical_time`` takes the tightest pair in the *entire*
+        system: one craft in low orbit would drive the block level to its
+        ceiling and step the whole solar system in units of seconds.  The six
+        existing moons already cost a factor of 64 in step size; this would be
+        far worse.  Starting co-orbital costs nothing and is the right frame
+        for an interplanetary transfer anyway.
+        """
+        world = state.sim.world
+        index = state.selected_index
+        if index is None or world.n >= world.capacity:
+            return None
+
+        attractor = orbits.dominant_attractor(world, index)
+        if attractor is None:
+            return None
+
+        rel = world.pos[index] - world.pos[attractor]
+        radius = float(np.hypot(rel[0], rel[1]))
+        if radius <= 0.0:
+            return None
+
+        # A small rotation ahead of the parent, on the same circle.
+        angle = LAUNCH_OFFSET
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        offset = np.array([cos_a * rel[0] - sin_a * rel[1],
+                           sin_a * rel[0] + cos_a * rel[1]])
+
+        mu = units.G * float(world.mass[attractor])
+        speed = math.sqrt(mu / radius)
+        tangent = np.array([-offset[1], offset[0]]) / radius
+        # Match the parent's own sense of rotation.
+        parent_vel = world.vel[index] - world.vel[attractor]
+        if float(np.dot(tangent, parent_vel)) < 0.0:
+            tangent = -tangent
+
+        body = world.add("Shuttle", materials.SPACECRAFT,
+                         units.EARTH_MASS * 1e-18, units.CRAFT_RADIUS,
+                         world.pos[attractor] + offset,
+                         world.vel[attractor] + tangent * speed,
+                         kind=KIND_CRAFT,
+                         temperature=float(world.temperature[index]))
+        if body is None:
+            return None
+        body.fuel_dv = units.from_ms(units.DEFAULT_FUEL_MS)
+        state.select(body.id)
+        state.sim.refresh()
+        return body
+
+
 def _temperature_label(kelvin):
     """Kelvin, grouped rather than in exponent notation -- "1e+04 K" is not a
     number this audience reads."""
@@ -792,9 +905,10 @@ TOOLS = {
     pygame.K_1: SelectTool,
     pygame.K_2: LaunchTool,
     pygame.K_3: EditTool,
+    pygame.K_4: FlyTool,
 }
 
-#: The same three tools addressed by name, for the buttons.  Keyed off the tool
+#: The same four tools addressed by name, for the buttons.  Keyed off the tool
 #: rather than duplicated, so the two routes cannot disagree about what "Throw"
 #: means.
 TOOL_BY_NAME = {cls.name.lower(): cls for cls in TOOLS.values()}

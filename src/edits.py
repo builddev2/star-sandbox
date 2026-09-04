@@ -53,7 +53,19 @@ EDIT_FIELDS = PLANET_EDIT_FIELDS
 def edit_fields(body):
     """The editable fields for this body -- a black hole has no density or
     composition to speak of, so it is offered spin and accretion instead, and
-    a star has no temperature of its own to set."""
+    a star has no temperature of its own to set.
+
+    A craft gets none at all.  ``SPACECRAFT.density_gcm3`` is 2.70, but a 37 m
+    hull at any realistic craft mass derives 0.003-0.2 g/cm3 -- three edit
+    paths misbehave on that mismatch: the inspector's density readout is
+    nonsense, ``set_mass`` holds the derived density constant and re-derives
+    radius (silently inflating the hull past 37 m), and ``set_density`` calls
+    ``nearest_by_density``, which relabels the craft "Rock" and loses
+    SPACECRAFT entirely.  A craft's real editable properties are fuel and
+    flight plan, and both live in the Fly panel instead.
+    """
+    if body.kind == KIND_CRAFT:
+        return ()
     if body.kind == KIND_BLACK_HOLE:
         return BLACK_HOLE_EDIT_FIELDS
     if body.kind == KIND_STAR:

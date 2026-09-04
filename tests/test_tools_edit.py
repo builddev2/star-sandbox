@@ -59,6 +59,23 @@ def test_down_stops_at_the_last_field_of_the_selected_body(state):
     assert state.tool.field_index == expected
 
 
+def test_a_craft_offers_no_edit_fields_and_up_down_does_not_crash(state):
+    """A craft's mass/density/material would misbehave under these edits (see
+    edits.edit_fields), so it gets an empty tuple -- and _field_count must
+    floor at 1 or the Up/Down modulo divides by zero with nothing selected
+    but a craft."""
+    from src import materials, units
+    from src.body import KIND_CRAFT
+    craft = state.sim.world.add(
+        "Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
+        units.CRAFT_RADIUS, [2.0, 0.0], [0.0, 0.0], kind=KIND_CRAFT)
+    state.select(craft.id)
+    assert state.tool._field_count(state) >= 1
+    state.tool.on_event(_key(pygame.K_DOWN), state)
+    state.tool.on_event(_key(pygame.K_UP), state)
+    assert state.tool.controls(state, None) is not None
+
+
 def test_the_edit_panel_offers_a_temp_row_for_a_planet(state):
     values = state.tool.field_values(state.sim.world, state.selected_index)
     assert "temp" in values
