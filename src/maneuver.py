@@ -47,9 +47,20 @@ class Maneuver:
 
 
 def craft_state(world, index):
-    """``(attractor, mu, rel_pos, rel_vel)`` for a body, or None if it has no
-    attractor -- which happens only when it is the most massive thing present.
+    """``(attractor, mu, rel_pos, rel_vel)`` for a body, or None.
+
+    None when the body has no attractor -- it is the most massive thing
+    present -- and also when ``index`` is None, meaning the row is simply
+    gone: a craft destroyed, or a caller that resolved a selection nothing
+    was under.
+
+    That second guard is not belt-and-braces.  ``pos[None]`` does not raise;
+    numpy reads it as "add an axis", so a None row propagates silently and
+    surfaces frames later inside an einsum, with a message that names neither
+    the caller nor the craft.  Every caller here already handles None.
     """
+    if index is None:
+        return None
     attractor = orbits.dominant_attractor(world, index)
     if attractor is None:
         return None

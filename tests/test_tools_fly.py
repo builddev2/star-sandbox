@@ -439,3 +439,64 @@ def test_every_disabled_fly_button_says_what_is_missing(state, ui):
         text = "%s %s" % (control.label or "", control.tooltip or "")
         assert any(w in text.lower() for w in ("pick", "first", "launch", "target")), \
             "%s is disabled and explains nothing: %r" % (control.id, control.label)
+
+
+# --- the craft's row is resolved from the craft, never from the selection ------------
+
+
+def test_clicking_empty_space_after_launching_does_not_crash(state):
+    """The reported crash.  Clicking empty space deselects, and the overlay
+    was still resolving the craft's row from the selection -- which is then
+    None, and `pos[None]` quietly adds a numpy axis instead of failing."""
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    empty = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(5, 5), button=1,
+                               buttons=(1, 0, 0))
+    state.tool.on_event(empty, state)
+    state.tool.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(5, 5),
+                                           button=1), state)
+    assert state.selected_id is None
+    surface = pygame.Surface(SIZE)
+    state.tool.draw_overlay(surface, state, _font())      # must not raise
+
+
+def test_the_transfer_is_computed_from_the_craft_not_from_the_selection(state):
+    """Silently worse than the crash: with another body selected, the plan
+    was worked out from *that* body's orbit and then written onto the craft."""
+    from src import units as _u
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+
+    state.tool._plan_transfer(state)                       # craft selected
+    from_craft = [round(_u.to_ms(n.prograde)) for n in craft.plan]
+
+    craft.plan = ()
+    _click_body(state, "Jupiter")                          # merely looking
+    state.tool._plan_transfer(state)
+    while_looking = [round(_u.to_ms(n.prograde)) for n in craft.plan]
+
+    assert from_craft, "no plan was made at all"
+    assert while_looking == from_craft, (
+        "plan changed when the selection did: %s vs %s"
+        % (from_craft, while_looking))
+
+
+def test_the_node_readout_follows_the_craft_not_the_selection(state):
+    from src import maneuver
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    craft.plan = (maneuver.Maneuver(state.sim.world.time + 30.0,
+                                    units.from_ms(900.0)),)
+    _click_body(state, "Jupiter")
+    surface = pygame.Surface(SIZE)
+    before = pygame.image.tostring(surface, "RGB")
+    state.tool.draw_overlay(surface, state, _font())
+    assert pygame.image.tostring(surface, "RGB") != before
+
+
+def test_the_craft_index_is_none_when_there_is_no_craft(state):
+    _click_body(state, "Earth")
+    assert state.tool._craft_index(state) is None
+    craft = state.tool._launch(state)
+    assert state.tool._craft_index(state) == state.sim.world.index_of(craft.id)
