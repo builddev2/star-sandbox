@@ -327,3 +327,115 @@ def test_planning_a_transfer_from_a_degenerate_orbit_does_nothing_quietly(state)
     state.sim.refresh()
     state.tool._plan_transfer(state)              # must not raise
     assert craft.plan == ()
+
+
+# --- the flow a person actually follows ---------------------------------------------
+
+
+def _click_body(state, name):
+    """Click a body where it is drawn, the way a person does."""
+    world = state.sim.world
+    i = [b.name for b in world.bodies].index(name)
+    x, y = state.camera.world_to_screen(world.pos[i])
+    down = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(int(x), int(y)),
+                              button=1, buttons=(1, 0, 0))
+    up = pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(int(x), int(y)), button=1)
+    state.tool.on_event(down, state)
+    state.tool.on_event(up, state)
+
+
+def test_clicking_a_planet_selects_it(state):
+    """The reported bug: press 4, click a planet, nothing happens.  Every
+    other tool that acts on a selection lets you click one -- Edit does it at
+    tools.py:250 -- and Fly did not."""
+    _click_body(state, "Earth")
+    assert state.selected_body is not None, "clicking a planet in Fly did nothing"
+    assert state.selected_body.name == "Earth"
+
+
+def test_launch_is_enabled_once_a_planet_is_clicked(state, ui):
+    _click_body(state, "Earth")
+    ui.build(state, SIZE)
+    launch = next(c for c in ui.controls if c.id == "fly.launch")
+    assert launch.enabled
+
+
+def test_the_launch_button_says_what_to_do_when_it_cannot_be_pressed(state, ui):
+    """A greyed-out button with no explanation is a dead end.  It should name
+    the thing standing in the way."""
+    state.selected_id = None
+    ui.build(state, SIZE)
+    launch = next(c for c in ui.controls if c.id == "fly.launch")
+    assert not launch.enabled
+    assert "pick" in (launch.label or "").lower()
+
+
+def test_dragging_pans_the_view(state):
+    """Fly consumed no drags, so the camera could not be moved at all."""
+    before = np.array(state.camera.centre)
+    start = (300, 200)
+    state.tool.on_event(pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN, pos=start, button=1, buttons=(1, 0, 0)), state)
+    state.tool.on_event(pygame.event.Event(
+        pygame.MOUSEMOTION, pos=(360, 240), rel=(60, 40), buttons=(1, 0, 0)), state)
+    assert not np.allclose(before, state.camera.centre), "drag did not pan"
+
+
+def test_the_panel_survives_looking_at_another_body(state, ui):
+    """Launch a craft, then click Mars to look at it: the tool must still know
+    which craft it is flying, or the whole panel goes dead under the cursor."""
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    _click_body(state, "Mars")
+    assert state.selected_body.name == "Mars"
+    assert state.tool._craft(state) is craft, "the tool forgot the craft"
+    ui.build(state, SIZE)
+    assert next(c for c in ui.controls if c.id == "fly.refuel").enabled
+
+
+def test_a_deleted_craft_is_forgotten(state):
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    world = state.sim.world
+    world.remove(world.index_of(craft.id))
+    state.sim.refresh()
+    state.selected_id = None
+    assert state.tool._craft(state) is None
+
+
+def test_the_fly_readout_does_not_hide_behind_the_body_list(state, ui):
+    """The list is open by default, and the readout was drawn underneath it --
+    the fuel figure was simply invisible when the tool first opened."""
+    from src.render import widgets as _w
+    state.show_body_list = True
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    ui.build(state, SIZE)
+    m = ui.hud.metrics(*SIZE)
+    list_right = m.pad + _w.body_list_width(m)
+    assert state.tool.readout_x(state, m) >= list_right, (
+        "readout starts at %d, inside a body list reaching %d"
+        % (state.tool.readout_x(state, m), list_right))
+
+
+def test_the_readout_returns_to_the_edge_when_the_list_is_closed(state, ui):
+    from src.render import widgets as _w
+    state.show_body_list = False
+    ui.build(state, SIZE)
+    m = ui.hud.metrics(*SIZE)
+    assert state.tool.readout_x(state, m) < m.pad + _w.body_list_width(m)
+
+
+def test_every_disabled_fly_button_says_what_is_missing(state, ui):
+    """The whole panel opens greyed out.  Each button that cannot be pressed
+    should name the thing standing in its way rather than sit there dead."""
+    state.selected_id = None
+    ui.build(state, SIZE)
+    for control in ui.controls:
+        if not control.id.startswith("fly.") or control.enabled:
+            continue
+        if control.readout or control.compact:
+            continue          # readouts and icon-only buttons carry no label
+        text = "%s %s" % (control.label or "", control.tooltip or "")
+        assert any(w in text.lower() for w in ("pick", "first", "launch", "target")), \
+            "%s is disabled and explains nothing: %r" % (control.id, control.label)

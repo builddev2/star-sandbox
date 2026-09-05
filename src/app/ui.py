@@ -24,7 +24,7 @@ belongs to that panel until the button comes back up.
 
 import pygame
 
-from ..render import palette
+from ..render import palette, widgets
 from ..render.hud import PAD as HUD_PAD
 from ..render.hud import PANEL_WIDTH_CHARS
 from ..render.widgets import (Control, Metrics, draw_button, draw_panel,
@@ -49,7 +49,9 @@ MAX_REPEATS_PER_FRAME = 8
 TETHER_VISIBLE_MS = 3000
 
 #: Width of the body list, in characters.
-BODY_LIST_CHARS = 16
+#: Re-exported for readers that already import this module; the
+#: definition lives in widgets, beside the width helper.
+BODY_LIST_CHARS = widgets.BODY_LIST_CHARS
 
 #: Height of the zoom slider's track, in button-heights.  The whole log-space
 #: zoom range (14 decades) has to fit in it, so a short slider is unusable --
@@ -403,7 +405,7 @@ class UiLayer:
         if not state.show_body_list:
             return
         world = state.sim.world
-        width = m.font.width("X") * BODY_LIST_CHARS + 2 * m.pad
+        width = widgets.body_list_width(m)
         x = m.pad
         top = m.content_top
         header = m.btn_h + m.gap

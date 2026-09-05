@@ -786,9 +786,9 @@ LAUNCH_OFFSET = 0.02
 
 class FlyTool(Tool):
     name = "Fly"
-    hint = ("Pick a body and press Launch  -  then set a burn and watch the new "
-            "orbit appear before you commit to it  -  X locks a target, "
-            "M works out the transfer for you")
+    hint = ("Click a planet, then Launch craft  -  X locks somewhere to fly to, "
+            "M works out the two burns  -  the new orbit is drawn before you "
+            "commit, and nothing moves until the burn falls due")
     context_title = "Fly"
 
     #: The rows the panel scrubs, in order.  Up/Down picks one.
@@ -802,6 +802,13 @@ class FlyTool(Tool):
         self.target_id = None
         self.picking_target = False
         self._drag_x = None
+        #: The craft this tool is flying, remembered so that looking at
+        #: another body does not empty the whole panel under the cursor.
+        self.craft_id = None
+        #: Press position and whether it has become a drag, so a click can
+        #: select and a drag can pan without the two fighting.
+        self._press = None
+        self._dragged = False
         #: Populated (Task 10) by whatever finds the closest approach to the
         #: locked target, so the overlay can draw it without recomputing it.
         #: Established here, not left to spring into existence on first read,
@@ -811,15 +818,27 @@ class FlyTool(Tool):
     # --- what we are flying -----------------------------------------------------
 
     def _craft(self, state):
-        """The selected body if it is a craft, otherwise None.
+        """The craft this tool is flying.
 
-        Deliberately not "the last craft launched": the selection is already
-        how everything else in the interface says what it acts on, and a tool
-        that silently acts on something other than what is selected is the
-        kind of thing that makes a sandbox feel haunted.
+        The selection first, when it *is* a craft -- that is how the rest of
+        the interface says what it acts on.  Otherwise the craft last flown,
+        for as long as it still exists.
+
+        That fallback is not a nicety.  Locking a target means clicking a
+        planet, and so does simply looking at one; without it, either action
+        emptied every row of the panel and greyed out the buttons the player
+        was in the middle of using.
         """
         body = state.selected_body
-        return body if body is not None and body.kind == KIND_CRAFT else None
+        if body is not None and body.kind == KIND_CRAFT:
+            self.craft_id = body.id
+            return body
+        if self.craft_id is not None:
+            remembered = state.sim.world.body_by_id(self.craft_id)
+            if remembered is None:
+                self.craft_id = None          # destroyed; stop pointing at it
+            return remembered
+        return None
 
     def _node(self, state):
         craft = self._craft(state)
@@ -887,6 +906,10 @@ class FlyTool(Tool):
         if body is None:
             return None
         body.fuel_dv = units.from_ms(units.DEFAULT_FUEL_MS)
+        # Recorded here rather than left for _craft to notice: launching is
+        # what makes this the craft being flown, and the player may click
+        # away to another body before _craft is ever asked.
+        self.craft_id = body.id
         state.select(body.id)
         state.sim.refresh()
         return body
@@ -937,7 +960,7 @@ class FlyTool(Tool):
         index = self._target_index(state.sim.world)
         if index is not None:
             return "Target: %s" % state.sim.world.bodies[index].name
-        return "Target lock"
+        return "Pick somewhere to go"
 
     def controls(self, state, metrics):
         craft = self._craft(state)
@@ -965,20 +988,36 @@ class FlyTool(Tool):
             ]
 
         return [
-            [Control("fly.launch", label="Launch craft", icon="fly",
+            [Control("fly.launch",
+                     # A greyed-out button with no reason on it is a dead end:
+                     # it names what is missing instead.
+                     label=("Launch craft" if state.selected_index is not None
+                            else "Pick a body first"),
+                     icon="fly",
                      enabled=state.selected_index is not None,
-                     tooltip="Put a shuttle in orbit beside what you picked"),
-             Control("fly.refuel", label="Refuel", icon="reset",
-                     enabled=has_craft, tooltip="Fill the tank back up")],
+                     tooltip=("Put a shuttle in orbit beside what you picked"
+                              if state.selected_index is not None
+                              else "Click a planet first, then press this")),
+             Control("fly.refuel",
+                     label="Refuel" if has_craft else "No craft yet",
+                     icon="reset", enabled=has_craft,
+                     tooltip=("Fill the tank back up" if has_craft
+                              else "Launch a craft first"))],
             [Control("fly.target", label=self._target_label(state), icon="target",
                      hotkey="X", active=self.picking_target or target is not None,
                      tooltip="Click a body to measure your approach to it")],
             stepper("fly.when", "When  %s" % when, 0),
             stepper("fly.prograde", "Along  %s" % prograde, 1),
             stepper("fly.radial", "Out    %s" % radial, 2),
-            [Control("fly.hohmann", label="Work out the transfer", icon="flyto",
+            [Control("fly.hohmann",
+                     label=("Work out the transfer" if has_craft and target is not None
+                            else "Launch, then lock a target" if not has_craft
+                            else "Lock a target first"),
+                     icon="flyto",
                      hotkey="M", enabled=has_craft and target is not None,
-                     tooltip="Plan the two burns that get you there"),
+                     tooltip=("Plan the two burns that get you there"
+                              if has_craft and target is not None
+                              else "Press X, then click where you want to go")),
              Control("fly.clear", icon="close", hotkey="N", compact=True,
                      enabled=has_craft and node is not None,
                      tooltip="Throw the plan away")],
@@ -1122,12 +1161,39 @@ class FlyTool(Tool):
                 self._scrub(state, field, step * self.CLICK_NOTCHES[field])
                 return True
 
-        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
-                and self.picking_target):
-            index = state.pick_body_at(event.pos[0], event.pos[1])
-            self.target_id = (state.sim.world.bodies[index].id
-                              if index is not None else None)
-            self.picking_target = False
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.picking_target:
+                index = state.pick_body_at(event.pos[0], event.pos[1])
+                self.target_id = (state.sim.world.bodies[index].id
+                                  if index is not None else None)
+                self.picking_target = False
+                return True
+            self._press = event.pos
+            self._dragged = False
+            return True
+
+        if event.type == pygame.MOUSEMOTION and self._press is not None:
+            if event.buttons[0]:
+                if (abs(event.pos[0] - self._press[0]) > CLICK_SLOP
+                        or abs(event.pos[1] - self._press[1]) > CLICK_SLOP):
+                    self._dragged = True
+                if self._dragged:
+                    state.camera.pan_pixels(event.rel[0], event.rel[1])
+                return True
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            pressed, self._press = self._press, None
+            if pressed is None or self._dragged:
+                return True
+            # A click rather than a drag: select what is under it.  Every
+            # other tool that acts on a selection lets you click one -- Edit
+            # does -- and Fly not doing so is exactly what made "press 4,
+            # click a planet" appear to do nothing at all.
+            index = state.pick_body_at(pressed[0], pressed[1])
+            if index is not None:
+                state.select(state.sim.world.bodies[index].id)
+            else:
+                state.selected_id = None
             return True
 
         return False
@@ -1274,6 +1340,18 @@ class FlyTool(Tool):
         pygame.draw.line(surface, palette.SELECT, (nx - 7, ny), (nx + 7, ny), 1)
         pygame.draw.line(surface, palette.SELECT, (nx, ny - 7), (nx, ny + 7), 1)
 
+    def readout_x(self, state, metrics):
+        """Left edge for the overlay readout, in pixels.
+
+        The body list is open by default and sits in exactly this corner, so
+        the readout starts clear of it when it is showing -- otherwise the
+        fuel figure is drawn underneath the drawer and is simply invisible
+        the first time the tool is opened.
+        """
+        if state.show_body_list:
+            return metrics.pad + widgets.body_list_width(metrics) + metrics.gap
+        return 8
+
     def _draw_readout(self, surface, state, font, craft):
         """Fuel, the countdown, and where the plan puts you.
 
@@ -1281,7 +1359,7 @@ class FlyTool(Tool):
         rows is the floor-size limit ``tests/test_layout.py`` enforces.
         """
         world = state.sim.world
-        x = 8
+        x = self.readout_x(state, widgets.Metrics(font, *surface.get_size()))
         y = 34
         line = font.height + 2
 

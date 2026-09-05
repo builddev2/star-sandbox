@@ -99,6 +99,18 @@ class Control:
         return text
 
 
+#: Characters wide the body list is sized for.  Lives here rather than in
+#: ``app.ui`` because two layers need the same number: the list draws itself
+#: from it, and a tool's overlay has to know where that list ends so it does
+#: not paint underneath it.
+BODY_LIST_CHARS = 16
+
+
+def body_list_width(metrics):
+    """Width of the body-list drawer in pixels, for whoever must avoid it."""
+    return metrics.font.width("X") * BODY_LIST_CHARS + 2 * metrics.pad
+
+
 class Metrics:
     """Every spacing number in the interface, derived from one font."""
 
