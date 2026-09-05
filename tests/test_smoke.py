@@ -7,11 +7,11 @@ divides by zero when the last body is destroyed.
 
 import os
 
+os.environ["SDL_VIDEODRIVER"] = "dummy"
+
 import numpy as np
 import pygame
 import pytest
-
-os.environ["SDL_VIDEODRIVER"] = "dummy"
 
 
 @pytest.fixture

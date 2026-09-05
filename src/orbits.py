@@ -427,21 +427,26 @@ def dominant_attractor(world, index):
     return int(candidates[np.argmin(hill[candidates])])
 
 
-def circular_velocity(world, index, attractor, retrograde=False):
-    """Velocity that puts body ``index`` on a circular orbit about ``attractor``.
+def circular_velocity(world, attractor, rel, sense=None):
+    """Velocity of a circular orbit ``rel`` away from ``attractor``, world frame.
 
-    Returned in the world frame, so it already includes the attractor's own motion --
-    a moon of a moving planet gets the right answer.
+    Takes an offset rather than a body, because both callers ask about a point
+    no body occupies yet -- where a comet is about to be released, and where a
+    shuttle is about to appear.  The world frame includes the attractor's own
+    motion, so an orbit about a moving planet comes out right.
+
+    ``sense`` is any velocity the orbit should share a direction with -- the
+    drag that aimed the throw, or the parent's own motion -- so a new orbit
+    runs the same way round as what it was launched from.  Without one the
+    orbit is anticlockwise.
     """
-    rel = world.pos[index] - world.pos[attractor]
     r = float(np.hypot(rel[0], rel[1]))
     if r <= 0.0:
         return world.vel[attractor].copy()
 
-    mu = G * (world.mass[attractor] + world.mass[index])
-    speed = math.sqrt(mu / r)
     # Rotate the radius vector a quarter turn to get the tangential direction.
     tangent = np.array([-rel[1], rel[0]]) / r
-    if retrograde:
+    if sense is not None and float(np.dot(tangent, sense)) < 0.0:
         tangent = -tangent
+    speed = math.sqrt(G * float(world.mass[attractor]) / r)
     return world.vel[attractor] + speed * tangent

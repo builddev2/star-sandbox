@@ -1,10 +1,10 @@
 import math
 import os
 
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
 import pygame
 import pytest
-
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 
 @pytest.fixture(scope="module", autouse=True)

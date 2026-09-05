@@ -12,15 +12,15 @@ returned.
 
 import os
 
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
 import pygame
 import pytest
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-
 from src.app import config
-from src.app.config import (DisplayContext, GRID_CHOICES, MIN_INTERNAL,
-                            MIN_WINDOW, WINDOW_FRACTIONS, clamp_window,
-                            font_px, grid_fits, internal_size, min_internal,
+from src.app.config import (DisplayContext, GRID_CHOICES, MIN_WINDOW,
+                            WINDOW_FRACTIONS, clamp_window, font_px,
+                            grid_fits, internal_size, min_internal,
                             preset_size)
 
 #: A 16" MacBook Pro, the machine the measurements in config.py come from.

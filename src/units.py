@@ -39,8 +39,6 @@ MOON_MASS = 3.6923e-8                # solar masses
 
 #: Below this mass hydrogen fusion never ignites: a brown dwarf, not a star.
 STAR_MASS_THRESHOLD = 0.08
-#: Below this, not even deuterium burns: it is a planet.
-BROWN_DWARF_MASS_THRESHOLD = 0.013
 
 # --- Time ---------------------------------------------------------------------------
 
@@ -121,14 +119,6 @@ def surface_gravity(mass, radius):
 def escape_velocity(mass, radius):
     """Escape velocity in simulation units (AU/day)."""
     return math.sqrt(2.0 * G * mass / radius)
-
-
-def binding_energy(mass, radius):
-    """Gravitational binding energy 3GM^2/5R of a uniform sphere, simulation units.
-
-    This is the energy an impact must exceed to shatter a body rather than merge with it.
-    """
-    return 0.6 * G * mass * mass / radius
 
 
 def hill_radius(mass, primary_mass, distance):

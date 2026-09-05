@@ -461,23 +461,33 @@ class SpriteCache:
     def clear(self):
         self._entries.clear()
 
+    def _hit(self, key):
+        """The sprite cached under ``key``, freshened, or None."""
+        surface = self._entries.get(key)
+        if surface is not None:
+            self._entries.move_to_end(key)
+        return surface
+
+    def _store(self, key, surface):
+        """Keep a new sprite, dropping the least recently used if we are full."""
+        self._entries[key] = surface
+        if len(self._entries) > self.limit:
+            self._entries.popitem(last=False)
+        return surface
+
     def get(self, material, seed, px, lit_angle, is_star,
             temperature=units.CMB_TEMPERATURE_K):
         px = max(1, int(px))
         bucket = int(round(lit_angle / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
         heat = glow_key(temperature)
         key = (material.key, seed, px, bucket, bool(is_star), heat)
-        hit = self._entries.get(key)
+        hit = self._hit(key)
         if hit is not None:
-            self._entries.move_to_end(key)
             return hit
         angle = bucket * 2 * math.pi / LIT_BUCKETS
         surface = _make_body(material, seed, px, angle, is_star,
                              heat * GLOW_TEMP_STEP)
-        self._entries[key] = surface
-        if len(self._entries) > self.limit:
-            self._entries.popitem(last=False)
-        return surface
+        return self._store(key, surface)
 
     def get_black_hole(self, seed, px, spin, disk):
         """A black hole sprite, cached like any other.
@@ -492,16 +502,12 @@ class SpriteCache:
                                 / units.MAX_SPIN * 8))
         disk_bucket = int(round(min(max(float(disk), 0.0), 1.0) * 8))
         key = ("bh", int(seed) & 1, px, spin_bucket, disk_bucket)
-        hit = self._entries.get(key)
+        hit = self._hit(key)
         if hit is not None:
-            self._entries.move_to_end(key)
             return hit
         surface = _make_black_hole(px, spin_bucket / 8.0 * units.MAX_SPIN,
                                    disk_bucket / 8.0, seed)
-        self._entries[key] = surface
-        if len(self._entries) > self.limit:
-            self._entries.popitem(last=False)
-        return surface
+        return self._store(key, surface)
 
     def get_craft(self, px, heading):
         """A shuttle sprite, cached like any other.
@@ -514,12 +520,8 @@ class SpriteCache:
         px = max(1, int(px))
         bucket = int(round(heading / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
         key = ("craft", px, bucket)
-        hit = self._entries.get(key)
+        hit = self._hit(key)
         if hit is not None:
-            self._entries.move_to_end(key)
             return hit
         surface = _make_craft(px, bucket * 2 * math.pi / LIT_BUCKETS)
-        self._entries[key] = surface
-        if len(self._entries) > self.limit:
-            self._entries.popitem(last=False)
-        return surface
+        return self._store(key, surface)
