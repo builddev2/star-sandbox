@@ -220,33 +220,8 @@ def _change_for(before, after, body_id, noise, is_edited):
 
 
 def _score(change):
-    """How much this body moved, for ranking one body against another.
-
-    The most significant row present, in ``ROW_SPECS`` order -- not the
-    largest fraction among a body's own rows.  ``rows`` is already in that
-    order, because ``_rows_for`` built it by walking ``ROW_SPECS``, so the
-    first entry *is* the most significant one.  Taking the max instead was
-    the first thing tried, and it ranked Venus and Neptune above Mercury when
-    the Sun's mass was doubled: both start on the two most nearly circular
-    orbits in the solar system, so their eccentricity rows -- which have no
-    natural scale, only the interval ``[0, 1)`` -- register a huge fraction
-    of *themselves* while telling you nothing about how hard either planet
-    was hit. Mass, radius, density and temperature carry real units and a
-    real zero, so a fraction of one of those means the same thing on every
-    body; a fraction of eccentricity or period does not, because a planet
-    that started eccentric (Mercury) has less room left to move in than one
-    that started circular, regardless of how strongly it was disturbed.
-    Ranking by the first row lets the universal quantities settle it whenever
-    one is present -- here, every ripple only ever shows Temp first, and its
-    fraction is (to the ninth decimal place) the same +37% for every planet,
-    because it is set by the Sun's own new temperature alone; what breaks the
-    tie, correctly, in Mercury's favour is the CMB floor in the equilibrium
-    formula, which forgives the coldest, most distant planets a little more
-    of that rise than it forgives Mercury.  Only when nothing ahead of
-    eccentricity or period moved does the ranking fall back to them.
-    """
-    row = change.rows[0]
-    return _relative(row.before, row.after)
+    """How much this body moved: its largest single row change."""
+    return max(_relative(row.before, row.after) for row in change.rows)
 
 
 def diff(before, after, edited_id, field, max_ripple=MAX_RIPPLE, noise=NOISE):

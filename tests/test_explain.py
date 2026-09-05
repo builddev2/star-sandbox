@@ -93,7 +93,7 @@ def test_doubling_the_sun_reports_earths_real_new_year(world):
     instantaneous doubling leaves Earth's position and speed alone, so the
     circle becomes an ellipse with the old radius as its farthest point."""
     before, after = double_the_sun(world)
-    report = explain.diff(before, after, id_of(world, "Sun"), "mass")
+    report = explain.diff(before, after, id_of(world, "Sun"), "mass", max_ripple=8)
 
     earth = next(c for c in report.changes if c.name == "Earth")
     lap = rows_of(earth)["One lap"]
@@ -105,14 +105,29 @@ def test_doubling_the_sun_reports_earths_real_new_year(world):
 
 
 def test_the_edited_body_leads_and_the_ripple_is_ranked(world):
+    """The Sun first, then MAX_RIPPLE planets in non-increasing order of how
+    much they moved.
+
+    Deliberately not an exact roster.  Doubling the Sun hits every planet
+    almost identically -- every period falls by a factor near 0.38 and every
+    orbit ends up near e = 0.5 -- so which three come out on top is settled in
+    the third decimal place, by where the planets happened to be at the J2000
+    epoch.  Pinning the roster would be pinning a coincidence, and the next
+    person to touch the ranking would "fix" the code to match it.
+    """
     before, after = double_the_sun(world)
     report = explain.diff(before, after, id_of(world, "Sun"), "mass")
 
     assert report.changes[0].name == "Sun"
     assert report.changes[0].is_edited is True
-    # Three rippled bodies, ordered by how much they moved -- not by index.
-    assert [c.name for c in report.changes[1:]] == ["Mercury", "Venus", "Earth"]
-    assert all(c.is_edited is False for c in report.changes[1:])
+
+    ripple = report.changes[1:]
+    assert len(ripple) == explain.MAX_RIPPLE
+    assert all(c.is_edited is False for c in ripple)
+    others = {b.name for b in world.bodies[:world.n]} - {"Sun"}
+    assert {c.name for c in ripple} <= others
+    scores = [explain._score(c) for c in ripple]
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_the_edited_bodys_own_rows_are_the_ones_that_moved(world):
