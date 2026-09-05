@@ -9,11 +9,11 @@ those two events.
 
 import os
 
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
 import numpy as np
 import pygame
 import pytest
-
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 SIZE = (1000, 700)
 

@@ -100,7 +100,7 @@ def test_a_loosely_bound_rubble_pile_is_torn_apart_inside_the_roche_limit():
 
 def test_a_small_strong_rock_survives_the_same_pass():
     """Not tidally shredded, even at the exact distance that disrupts the
-    loosely-bound water body above -- material strength (Task 1's
+    loosely-bound water body above -- material strength (``Material``'s
     ``toughness``) is what makes the difference, not just being small."""
     d = 0.5 * units.SUN_RADIUS
     r = units.EARTH_RADIUS * 2e-4

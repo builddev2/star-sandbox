@@ -13,10 +13,10 @@ control quietly walking off screen.
 
 import os
 
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
 import pygame
 import pytest
-
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from src.app import config
 from src.app.state import AppState

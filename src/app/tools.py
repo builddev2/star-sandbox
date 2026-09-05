@@ -57,17 +57,25 @@ class Tool:
         pass
 
 
-class SelectTool(Tool):
-    name = "Look"
-    hint = ("Click a body to see what it is  -  or pick one from the list  -  "
-            "drag to pan, and the + and - buttons zoom  -  double-click to fly to it")
+class DragPan:
+    """A left button that both pans the camera and clicks what is under it.
+
+    Look and Fly both do this, and getting it wrong either way is felt: a pan
+    that also selects makes the panel flicker through every body it crosses,
+    and a click that has to be perfectly still is beyond a child's hand.  So a
+    press that travels more than ``CLICK_SLOP`` pans and never selects, and one
+    that does not is a click, delivered to ``_on_click`` at the position the
+    button came *up* -- where the finger ended, not where it started.
+    """
 
     def __init__(self):
+        #: Press position and whether it has become a drag, so a click can
+        #: select and a drag can pan without the two fighting.
         self._press = None
         self._dragged = False
-        self._last_click = (None, 0)
 
-    def on_event(self, event, state):
+    def _pan_event(self, event, state):
+        """Handle one press/drag/release.  Return True if it was consumed."""
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self._press = event.pos
             self._dragged = False
@@ -84,14 +92,77 @@ class SelectTool(Tool):
 
         if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             pressed, self._press = self._press, None
-            if pressed is None or self._dragged:
-                return True
-            self._click(event.pos, state)
+            if pressed is not None and not self._dragged:
+                self._on_click(event.pos, state)
             return True
 
         return False
 
-    def _click(self, pos, state):
+    def _on_click(self, pos, state):
+        """What a press that did not travel means for this tool."""
+
+
+class TargetLock:
+    """A body the tool is aimed at, picked by pressing X and clicking it.
+
+    Throw and Fly both keep one.  Both hold the id rather than the row, because
+    ``World.remove`` is a swap-remove and a row silently becomes another body;
+    both drop the lock when the body is gone; and both label the button the
+    same way apart from what it reads with nothing locked.
+    """
+
+    #: The button's label with no target locked.
+    no_target_label = "Target lock"
+
+    def __init__(self):
+        #: True for the one click after pressing X: the next thing clicked
+        #: becomes the target rather than doing whatever a click usually does.
+        self.picking_target = False
+        #: Body id of the locked target, or None.  Persists, so several shots
+        #: at the same body do not need re-aiming each time.
+        self.target_id = None
+
+    def _target_index(self, world):
+        """Row of the locked target, clearing the lock if it is gone."""
+        if self.target_id is None:
+            return None
+        index = world.index_of(self.target_id)
+        if index is None:
+            self.target_id = None
+        return index
+
+    def _target_label(self, state):
+        if self.picking_target:
+            return "Click a body..."
+        index = self._target_index(state.sim.world)
+        if index is not None:
+            return "Target: %s" % state.sim.world.bodies[index].name
+        return self.no_target_label
+
+    def _pick_target(self, event, state):
+        """Consume the click that picks the target.  True if it was that click."""
+        if not self.picking_target:
+            return False
+        index = state.pick_body_at(event.pos[0], event.pos[1])
+        self.target_id = (state.sim.world.bodies[index].id
+                          if index is not None else None)
+        self.picking_target = False
+        return True
+
+
+class SelectTool(DragPan, Tool):
+    name = "Look"
+    hint = ("Click a body to see what it is  -  or pick one from the list  -  "
+            "drag to pan, and the + and - buttons zoom  -  double-click to fly to it")
+
+    def __init__(self):
+        DragPan.__init__(self)
+        self._last_click = (None, 0)
+
+    def on_event(self, event, state):
+        return self._pan_event(event, state)
+
+    def _on_click(self, pos, state):
         index = state.pick_body_at(pos[0], pos[1])
         if index is None:
             state.selected_id = None
@@ -154,7 +225,7 @@ def preset_body(preset):
     return units.FOUR_THIRDS_PI * density * radius ** 3, radius
 
 
-class LaunchTool(Tool):
+class LaunchTool(TargetLock, Tool):
     name = "Throw"
     hint = ("Pick what to throw on the left  -  then press and drag in space to aim, "
             "and let go to launch  -  green comes back, red never does  -  "
@@ -163,17 +234,12 @@ class LaunchTool(Tool):
     context_title = "Throw"
 
     def __init__(self):
+        TargetLock.__init__(self)
         self.preset_index = 0
         self.shift = False
         #: The circular-orbit button latches what holding Shift does, because a
         #: child cannot hold Shift and drag a mouse across a trackpad at once.
         self.lock_circular = False
-        #: True for the one click after pressing X: the next thing clicked
-        #: becomes the target rather than starting a throw.
-        self.picking_target = False
-        #: Body id of the locked target, or None.  Persists across throws so
-        #: several shots at the same body do not need re-aiming each time.
-        self.target_id = None
         #: Whether the most recent _tentative() found a real intercept for the
         #: locked target -- cached so the overlay's status label does not pay
         #: for a second angle-sweep the same frame.
@@ -210,14 +276,6 @@ class LaunchTool(Tool):
                              tooltip="Click a body to aim a guaranteed hit on it")])
         return rows
 
-    def _target_label(self, state):
-        if self.picking_target:
-            return "Click a body..."
-        index = self._target_index(state.sim.world)
-        if index is not None:
-            return "Target: %s" % state.sim.world.bodies[index].name
-        return "Target lock"
-
     def perform(self, control, state):
         if control.id == "throw.preset":
             self.preset_index = int(control.payload)
@@ -251,10 +309,7 @@ class LaunchTool(Tool):
             return True
 
         if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
-                and self.picking_target):
-            index = state.pick_body_at(event.pos[0], event.pos[1])
-            self.target_id = state.sim.world.bodies[index].id if index is not None else None
-            self.picking_target = False
+                and self._pick_target(event, state)):
             return True
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -326,25 +381,10 @@ class LaunchTool(Tool):
             world = state.sim.world
             index = self._nearest_attractor(world, pos)
             if index is not None:
-                rel = pos - world.pos[index]
-                r = float(np.hypot(rel[0], rel[1]))
-                if r > 0.0:
-                    mu = units.G * world.mass[index]
-                    tangent = np.array([-rel[1], rel[0]]) / r
-                    # Match the drag's sense of rotation.
-                    if float(np.dot(tangent, vel)) < 0.0:
-                        tangent = -tangent
-                    vel = world.vel[index] + tangent * math.sqrt(mu / r)
+                # The drag still decides which way round it goes.
+                vel = orbits.circular_velocity(world, index,
+                                               pos - world.pos[index], vel)
         return pos, vel
-
-    def _target_index(self, world):
-        """Row of the locked target, clearing the lock if it no longer exists."""
-        if self.target_id is None:
-            return None
-        index = world.index_of(self.target_id)
-        if index is None:
-            self.target_id = None
-        return index
 
     def _solve_target(self, state, pos, speed):
         """Intercept solution for the locked target at this speed, or None.
@@ -546,14 +586,14 @@ class EditTool(Tool):
         body = world.bodies[index]
         if body.kind == KIND_BLACK_HOLE:
             return {
-                "mass": _mass_label(float(world.mass[index])),
+                "mass": hud.format_mass(float(world.mass[index])),
                 "spin": "%.2f" % body.spin,
                 "disk": "off" if body.disk <= 0.0 else "%.0f%%" % (body.disk * 100),
             }
         return {
-            "mass": _mass_label(float(world.mass[index])),
+            "mass": hud.format_mass(float(world.mass[index])),
             "density": "%.3g g/cm3" % units.to_gcm3(edits.body_density(world, index)),
-            "temp": _temperature_label(float(world.temperature[index])),
+            "temp": hud.format_temperature(float(world.temperature[index])),
             "material": world.bodies[index].material.name,
         }
 
@@ -784,12 +824,14 @@ class EditTool(Tool):
 LAUNCH_OFFSET = 0.02
 
 
-class FlyTool(Tool):
+class FlyTool(TargetLock, DragPan, Tool):
     name = "Fly"
     hint = ("Click a planet, then Launch craft  -  X locks somewhere to fly to, "
             "M works out the two burns  -  the new orbit is drawn before you "
             "commit, and nothing moves until the burn falls due")
     context_title = "Fly"
+
+    no_target_label = "Pick somewhere to go"
 
     #: The rows the panel scrubs, in order.  Up/Down picks one.
     FIELDS = ("when", "prograde", "radial")
@@ -798,21 +840,15 @@ class FlyTool(Tool):
     CLICK_NOTCHES = {"when": 3, "prograde": 3, "radial": 3}
 
     def __init__(self):
+        TargetLock.__init__(self)
+        DragPan.__init__(self)
         self.field_index = 0
-        self.target_id = None
-        self.picking_target = False
-        self._drag_x = None
         #: The craft this tool is flying, remembered so that looking at
         #: another body does not empty the whole panel under the cursor.
         self.craft_id = None
-        #: Press position and whether it has become a drag, so a click can
-        #: select and a drag can pan without the two fighting.
-        self._press = None
-        self._dragged = False
-        #: Populated (Task 10) by whatever finds the closest approach to the
-        #: locked target, so the overlay can draw it without recomputing it.
-        #: Established here, not left to spring into existence on first read,
-        #: because a constructor should own every attribute its class reads.
+        #: The closest approach to the locked target, so the overlay can draw
+        #: it without recomputing it.  Established here rather than left to
+        #: spring into existence on first read.
         self._encounter_cache = None
 
     # --- what we are flying -----------------------------------------------------
@@ -864,15 +900,6 @@ class FlyTool(Tool):
             return None
         return craft.plan[0]
 
-    def _target_index(self, world):
-        """Row of the locked target, clearing the lock if it is gone."""
-        if self.target_id is None:
-            return None
-        index = world.index_of(self.target_id)
-        if index is None:
-            self.target_id = None
-        return index
-
     # --- launching --------------------------------------------------------------
 
     def _launch(self, state):
@@ -907,18 +934,13 @@ class FlyTool(Tool):
         offset = np.array([cos_a * rel[0] - sin_a * rel[1],
                            sin_a * rel[0] + cos_a * rel[1]])
 
-        mu = units.G * float(world.mass[attractor])
-        speed = math.sqrt(mu / radius)
-        tangent = np.array([-offset[1], offset[0]]) / radius
-        # Match the parent's own sense of rotation.
-        parent_vel = world.vel[index] - world.vel[attractor]
-        if float(np.dot(tangent, parent_vel)) < 0.0:
-            tangent = -tangent
+        # The parent's own motion decides which way round the craft goes.
+        vel = orbits.circular_velocity(world, attractor, offset,
+                                       world.vel[index] - world.vel[attractor])
 
         body = world.add("Shuttle", materials.SPACECRAFT,
                          units.EARTH_MASS * 1e-18, units.CRAFT_RADIUS,
-                         world.pos[attractor] + offset,
-                         world.vel[attractor] + tangent * speed,
+                         world.pos[attractor] + offset, vel,
                          kind=KIND_CRAFT,
                          temperature=float(world.temperature[index]))
         if body is None:
@@ -971,14 +993,6 @@ class FlyTool(Tool):
             return
         craft.plan = (node,) + tuple(craft.plan[1:])
         state.sim.refresh()
-
-    def _target_label(self, state):
-        if self.picking_target:
-            return "Click a body..."
-        index = self._target_index(state.sim.world)
-        if index is not None:
-            return "Target: %s" % state.sim.world.bodies[index].name
-        return "Pick somewhere to go"
 
     def controls(self, state, metrics):
         craft = self._craft(state)
@@ -1179,42 +1193,21 @@ class FlyTool(Tool):
                 self._scrub(state, field, step * self.CLICK_NOTCHES[field])
                 return True
 
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.picking_target:
-                index = state.pick_body_at(event.pos[0], event.pos[1])
-                self.target_id = (state.sim.world.bodies[index].id
-                                  if index is not None else None)
-                self.picking_target = False
-                return True
-            self._press = event.pos
-            self._dragged = False
+        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                and self._pick_target(event, state)):
             return True
 
-        if event.type == pygame.MOUSEMOTION and self._press is not None:
-            if event.buttons[0]:
-                if (abs(event.pos[0] - self._press[0]) > CLICK_SLOP
-                        or abs(event.pos[1] - self._press[1]) > CLICK_SLOP):
-                    self._dragged = True
-                if self._dragged:
-                    state.camera.pan_pixels(event.rel[0], event.rel[1])
-                return True
+        return self._pan_event(event, state)
 
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            pressed, self._press = self._press, None
-            if pressed is None or self._dragged:
-                return True
-            # A click rather than a drag: select what is under it.  Every
-            # other tool that acts on a selection lets you click one -- Edit
-            # does -- and Fly not doing so is exactly what made "press 4,
-            # click a planet" appear to do nothing at all.
-            index = state.pick_body_at(pressed[0], pressed[1])
-            if index is not None:
-                state.select(state.sim.world.bodies[index].id)
-            else:
-                state.selected_id = None
-            return True
-
-        return False
+    def _on_click(self, pos, state):
+        # Every other tool that acts on a selection lets you click one -- Edit
+        # does -- and Fly not doing so is exactly what made "press 4, click a
+        # planet" appear to do nothing at all.
+        index = state.pick_body_at(pos[0], pos[1])
+        if index is not None:
+            state.select(state.sim.world.bodies[index].id)
+        else:
+            state.selected_id = None
 
     # --- overlay ----------------------------------------------------------------
 
@@ -1404,7 +1397,7 @@ class FlyTool(Tool):
         line = font.height + 2
 
         fuel_ms = units.to_ms(craft.fuel_dv)
-        font.draw(surface, x, y, "Fuel   %s m/s" % "{:,.0f}".format(fuel_ms),
+        font.draw(surface, x, y, "Fuel   {:,.0f} m/s".format(fuel_ms),
                   palette.WARN if fuel_ms < 500.0 else palette.TEXT)
         bar = pygame.Rect(x, y + line, font.width("X") * 16, 3)
         widgets.draw_bar(surface, bar,
@@ -1433,7 +1426,7 @@ class FlyTool(Tool):
 
         short = self.shortfall_ms(state)
         if short > 0.0:
-            font.draw(surface, x, y, "Short by %s m/s" % "{:,.0f}".format(short),
+            font.draw(surface, x, y, "Short by {:,.0f} m/s".format(short),
                       palette.DANGER)
             y += line
             font.draw(surface, x, y, "the burn will cut out early",
@@ -1530,20 +1523,6 @@ def _mean_radius(mu, rel_pos, rel_vel):
     if el["bound"] and math.isfinite(a) and a > 0.0:
         return float(a)
     return distance
-
-
-def _temperature_label(kelvin):
-    """Kelvin, grouped rather than in exponent notation -- "1e+04 K" is not a
-    number this audience reads."""
-    return "{:,.0f} K".format(kelvin)
-
-
-def _mass_label(mass):
-    if mass >= 0.02:
-        return "%.3g Suns" % mass
-    if mass >= 0.3 * units.JUPITER_MASS:
-        return "%.3g Jupiters" % units.to_jupiter_masses(mass)
-    return "%.3g Earths" % units.to_earth_masses(mass)
 
 
 def _lead_label(days):

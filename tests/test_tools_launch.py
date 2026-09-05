@@ -1,11 +1,11 @@
 import math
 import os
 
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
 import numpy as np
 import pygame
 import pytest
-
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -71,7 +71,7 @@ def test_ellipse_spans_periapsis_to_apoapsis():
 
 def test_the_predicted_path_matches_where_the_body_actually_goes():
     """The whole point of drawing it: the preview must be the truth, not a hint."""
-    from src import materials, orbits, scenarios, units
+    from src import materials, orbits, units
     from src.integrator import Integrator
     from src.world import World
 

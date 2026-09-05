@@ -81,10 +81,11 @@ sits next to buttons a small hand is reaching for anyway.
   there: the planets keep orbiting a point you cannot see, spaghettified if they
   stray too close, swallowed whole if they touch it. A black hole is also its
   own **Throw** preset, on key `6`.
-- Throw something fast enough at a planet and it will not merge. If the impact
-  carries more energy than the planet's own gravity is holding it together with,
-  it shatters into fragments that fly apart and then slowly pull themselves back
-  into a new body.
+- Throw something fast enough at a planet and it will not merge. Past the energy
+  it takes to break the target apart -- its own gravity plus the strength of the
+  rock it is made of -- it shatters into fragments that fly apart and then slowly
+  pull themselves back into a new body. Come in at a shallow enough angle with
+  something big enough and it neither merges nor shatters: both walk away.
 - Zoom into Jupiter to see Io, Europa, Ganymede and Callisto in the right order
   at the right distances.
 

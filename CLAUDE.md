@@ -314,6 +314,13 @@ constant; `TOOL_BY_NAME` is derived from that dict, so the buttons follow automa
   under the tool palette, and `perform(control, state)` acts on them. A tool never draws
   its own buttons or hit-tests the mouse — `ui.py` does both, which is what stops a tool's
   drag handling from fighting its own buttons over the same press.
+- Two mixins carry the behaviour more than one tool needs, so it exists once.
+  **`DragPan`** is the left button that pans on a drag and selects on a click: call
+  `_pan_event` from `on_event` and override `_on_click`. **`TargetLock`** is the
+  `X`-then-click target: it owns `target_id` and `picking_target`, and gives
+  `_target_index`, `_target_label` (set `no_target_label`) and `_pick_target`. Each
+  mixin's `__init__` is called explicitly from the tool's own, so the order the
+  attributes appear in is the order they are read in.
 
 ### Adding a control
 
