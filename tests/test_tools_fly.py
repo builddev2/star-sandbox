@@ -500,3 +500,53 @@ def test_the_craft_index_is_none_when_there_is_no_craft(state):
     assert state.tool._craft_index(state) is None
     craft = state.tool._launch(state)
     assert state.tool._craft_index(state) == state.sim.world.index_of(craft.id)
+
+
+def test_a_plan_the_tank_cannot_afford_says_so(state):
+    """A finite tank only teaches anything if the interface admits when the
+    plan costs more than it holds.  Otherwise the child waits 430 days for a
+    burn that fires at a fifteenth of its size and goes nowhere."""
+    from src import maneuver
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    craft.fuel_dv = units.from_ms(200.0)
+    craft.plan = (maneuver.Maneuver(state.sim.world.time + 40.0,
+                                    units.from_ms(3000.0)),)
+    assert state.tool.shortfall_ms(state) > 2700.0
+
+
+def test_a_plan_within_the_tank_reports_no_shortfall(state):
+    from src import maneuver
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    craft.plan = (maneuver.Maneuver(state.sim.world.time + 40.0,
+                                    units.from_ms(1000.0)),)
+    assert state.tool.shortfall_ms(state) == 0.0
+
+
+def test_the_shortfall_counts_the_whole_plan_not_just_the_next_burn(state):
+    """Two burns of 3,000 against a 5,000 tank: each fits, the pair does not."""
+    from src import maneuver
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    craft.fuel_dv = units.from_ms(5000.0)
+    now = state.sim.world.time
+    craft.plan = (maneuver.Maneuver(now + 10.0, units.from_ms(3000.0)),
+                  maneuver.Maneuver(now + 20.0, units.from_ms(3000.0)))
+    assert abs(state.tool.shortfall_ms(state) - 1000.0) < 1.0
+
+
+def test_the_warning_is_actually_drawn(state):
+    from src import maneuver
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    craft.fuel_dv = units.from_ms(100.0)
+    craft.plan = (maneuver.Maneuver(state.sim.world.time + 40.0,
+                                    units.from_ms(3000.0)),)
+    rich = pygame.Surface(SIZE)
+    state.tool.draw_overlay(rich, state, _font())
+    craft.fuel_dv = units.from_ms(9300.0)
+    plain = pygame.Surface(SIZE)
+    state.tool.draw_overlay(plain, state, _font())
+    assert (pygame.image.tostring(rich, "RGB")
+            != pygame.image.tostring(plain, "RGB"))

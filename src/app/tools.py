@@ -1360,6 +1360,26 @@ class FlyTool(Tool):
         pygame.draw.line(surface, palette.SELECT, (nx - 7, ny), (nx + 7, ny), 1)
         pygame.draw.line(surface, palette.SELECT, (nx, ny - 7), (nx, ny + 7), 1)
 
+    def shortfall_ms(self, state):
+        """How much delta-v the whole plan needs beyond the tank, in m/s.
+
+        The whole plan, not the next burn: two burns of 3,000 each fit
+        individually in a 5,000 tank and do not fit together, and it is the
+        pair that decides whether the trip happens.
+
+        A finite tank only teaches anything if the interface admits when the
+        plan costs more than it holds.  Silently scaling the burn down --
+        which is what ``maneuver.apply_burn`` correctly does when the moment
+        arrives -- leaves a child waiting four hundred days for a burn that
+        fires at a fifteenth of its size and arrives nowhere, with nothing on
+        screen having said why.
+        """
+        craft = self._craft(state)
+        if craft is None or not craft.plan:
+            return 0.0
+        wanted = sum(node.magnitude for node in craft.plan)
+        return max(0.0, units.to_ms(wanted - craft.fuel_dv))
+
     def readout_x(self, state, metrics):
         """Left edge for the overlay readout, in pixels.
 
@@ -1410,6 +1430,15 @@ class FlyTool(Tool):
                 font.draw(surface, x, y, "Farthest %s" % farthest,
                           palette.TEXT_DIM)
                 y += line
+
+        short = self.shortfall_ms(state)
+        if short > 0.0:
+            font.draw(surface, x, y, "Short by %s m/s" % "{:,.0f}".format(short),
+                      palette.DANGER)
+            y += line
+            font.draw(surface, x, y, "the burn will cut out early",
+                      palette.WARN)
+            y += line
 
         encounter = self._encounter(state)
         target = self._target_index(world)
