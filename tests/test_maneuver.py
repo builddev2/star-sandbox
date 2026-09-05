@@ -538,3 +538,14 @@ def test_the_refinement_pass_is_fine_enough_to_be_worth_having():
         c2, _ = orbits.propagate(mu, craft_pos, craft_vel, found["time"] + step)
         t2, _ = orbits.propagate(mu, target_pos, target_vel, found["time"] + step)
         assert float(np.hypot(c2[0] - t2[0], c2[1] - t2[1])) >= found["distance"] - 1e-9
+
+
+def test_craft_state_refuses_a_missing_row_instead_of_indexing_with_none():
+    """`pos[None]` does not raise -- numpy quietly adds an axis, and the
+    failure surfaces frames later inside an einsum with a message that names
+    nothing.  A missing row means "no craft", which every caller handles."""
+    world = _sun_and_craft()
+    assert maneuver.craft_state(world, None) is None
+    assert maneuver.node_state(world, None, maneuver.Maneuver(0.0)) is None
+    attractor, conics = maneuver.plan_conics(world, None, ())
+    assert attractor is None and conics == []

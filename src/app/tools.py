@@ -840,6 +840,24 @@ class FlyTool(Tool):
             return remembered
         return None
 
+    def _craft_index(self, state):
+        """The craft's current row, or None.
+
+        **Never ``state.selected_index``.**  The tool goes on flying a craft
+        while the player looks at something else, so the selection and the
+        craft are routinely different rows -- and when the player clicks empty
+        space the selection is no row at all.  Passing that ``None`` into the
+        physics did not raise where it happened: ``pos[None]`` quietly adds a
+        numpy axis, and the failure surfaced several frames later inside an
+        einsum.  Worse, when the selection *was* a valid row, a transfer got
+        worked out from that body's orbit and written onto the craft.
+        """
+        craft = self._craft(state)
+        if craft is None:
+            return None
+        return state.sim.world.index_of(craft.id)
+
+
     def _node(self, state):
         craft = self._craft(state)
         if craft is None or not craft.plan:
@@ -922,7 +940,7 @@ class FlyTool(Tool):
         Far enough ahead to be worth planning, near enough to arrive while
         anyone is still watching.
         """
-        index = state.selected_index
+        index = self._craft_index(state)
         if index is None:
             return 30.0
         attractor = orbits.dominant_attractor(state.sim.world, index)
@@ -1074,7 +1092,7 @@ class FlyTool(Tool):
         """Fill the plan with the two burns of a Hohmann transfer."""
         craft = self._craft(state)
         world = state.sim.world
-        index = state.selected_index
+        index = self._craft_index(state)
         target = self._target_index(world)
         if craft is None or index is None or target is None:
             return
@@ -1232,7 +1250,7 @@ class FlyTool(Tool):
             return cached[2]
 
         world = state.sim.world
-        index = state.selected_index
+        index = self._craft_index(state)
         target = self._target_index(world)
         found = maneuver.craft_state(world, index) if index is not None else None
         if found is None or target is None:
@@ -1283,7 +1301,9 @@ class FlyTool(Tool):
         if craft is None:
             return
 
-        index = state.selected_index
+        index = self._craft_index(state)
+        if index is None:
+            return
         attractor = self._draw_paths(surface, state, craft, index)
         self._draw_node(surface, state, craft, index, attractor)
         self._draw_readout(surface, state, font, craft)
@@ -1377,7 +1397,7 @@ class FlyTool(Tool):
             font.draw(surface, x, y, "Burn in %s"
                       % _lead_label(node.due_time - world.time), palette.TEXT)
             y += line
-            found = maneuver.node_state(world, state.selected_index, node)
+            found = maneuver.node_state(world, self._craft_index(state), node)
             if found is not None:
                 mu, pos, vel = found
                 el = orbits.elements_from_state(
