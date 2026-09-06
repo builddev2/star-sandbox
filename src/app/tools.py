@@ -1380,16 +1380,8 @@ class FlyTool(TargetLock, DragPan, Tool):
         return max(0.0, units.to_ms(wanted - craft.fuel_dv))
 
     def readout_x(self, state, metrics):
-        """Left edge for the overlay readout, in pixels.
-
-        The body list is open by default and sits in exactly this corner, so
-        the readout starts clear of it when it is showing -- otherwise the
-        fuel figure is drawn underneath the drawer and is simply invisible
-        the first time the tool is opened.
-        """
-        if state.show_body_list:
-            return metrics.pad + widgets.body_list_width(metrics) + metrics.gap
-        return 8
+        """Left edge for the overlay readout, in pixels."""
+        return widgets.overlay_x(metrics, state.show_body_list)
 
     def _draw_readout(self, surface, state, font, craft):
         """Fuel, the countdown, and where the plan puts you.
@@ -1399,7 +1391,11 @@ class FlyTool(TargetLock, DragPan, Tool):
         """
         world = state.sim.world
         x = self.readout_x(state, widgets.Metrics(font, *surface.get_size()))
-        y = 34
+        # Below the explain panel when one is up: both are overlays in the same
+        # corner, and an edit followed by a switch to Fly puts both on screen.
+        panel = state.explain_rect
+        y = 34 if panel is None else panel.bottom + widgets.Metrics(
+            font, *surface.get_size()).gap
         line = font.height + 2
 
         fuel_ms = units.to_ms(craft.fuel_dv)

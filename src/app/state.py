@@ -114,6 +114,9 @@ class AppState:
         self.effects = EffectField()
         #: The "what changed" report, and the burst that produces it.
         self.explain = ExplainRecorder()
+        #: Where the explain panel was last drawn, so the Fly readout can start
+        #: below it instead of underneath it.  None when no panel is up.
+        self.explain_rect = None
         self.selected_id = None
         #: Collapsed by default: a headline number is what a fresh selection
         #: earns, not a page of stats.  Not per-body -- nothing asked for that,
@@ -342,6 +345,7 @@ class AppState:
     def reset(self):
         self.sim.reset(self.scenario)
         self.explain.clear()
+        self.explain_rect = None
         self.selected_id = None
         self.camera.follow_id = None
         self.body_list_offset = 0

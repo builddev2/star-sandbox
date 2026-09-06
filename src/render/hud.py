@@ -124,6 +124,16 @@ def format_body_temperature(kelvin):
     return "{:,.0f} K  ({:,.0f} C)".format(kelvin, units.to_celsius(kelvin))
 
 
+def orbit_period_label(days):
+    """A period in whichever unit reads better.  Mercury is 88 days; Neptune
+    is 165 years, and "60,190 days" tells a child nothing."""
+    if days <= 0.0:
+        return "escaping"
+    if days >= 2.0 * units.DAYS_PER_YEAR:
+        return "%.1f yr" % units.to_years(days)
+    return "%.1f days" % days
+
+
 def orbit_facts(world, index):
     """Osculating orbit of ``index`` about whatever it is bound to.
 
@@ -144,12 +154,7 @@ def orbit_facts(world, index):
     el = orbits.elements_from_state(mu, rel_pos, rel_vel)
     bound = el["bound"]
 
-    if not bound:
-        period_label = "escaping"
-    elif el["period"] >= 2.0 * units.DAYS_PER_YEAR:
-        period_label = "%.1f yr" % units.to_years(el["period"])
-    else:
-        period_label = "%.1f days" % el["period"]
+    period_label = "escaping" if not bound else orbit_period_label(el["period"])
 
     # An open path has no average distance to quote, so quote where it is now.
     separation = float(np.hypot(rel_pos[0], rel_pos[1]))

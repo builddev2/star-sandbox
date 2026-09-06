@@ -111,6 +111,23 @@ def body_list_width(metrics):
     return metrics.font.width("X") * BODY_LIST_CHARS + 2 * metrics.pad
 
 
+def overlay_x(metrics, show_body_list):
+    """Left edge for anything drawn over the world, in pixels.
+
+    The body-list drawer is open by default and sits in exactly this corner, so
+    an overlay that ignores it is drawn underneath the drawer and is simply
+    invisible the first time it appears.
+
+    One function because two overlays need the same answer -- the Fly tool's
+    fuel readout and the explain panel -- and two copies of the rule is one of
+    them eventually being wrong.  The same argument ``scale.contact_radii_au``
+    makes about drawing and aiming.
+    """
+    if show_body_list:
+        return metrics.pad + body_list_width(metrics) + metrics.gap
+    return 8
+
+
 class Metrics:
     """Every spacing number in the interface, derived from one font."""
 
