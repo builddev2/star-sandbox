@@ -1003,14 +1003,15 @@ def test_reselecting_the_same_body_brings_the_tether_back(state, ui):
 # --- the explain panel --------------------------------------------------------------
 
 def _make_a_report(state):
+    from src.app.state import SETTLE_MS
     from src.app.tools import EditTool
     state.set_tool(EditTool)
     world = state.sim.world
     index = [b.name for b in world.bodies].index("Sun")
     state.select(world.bodies[index].id)
-    state.explain.note(world, state.selected_id, "mass", 0)
+    state.tool.field_index = 0          # mass
     state.tool._scrub(state, 12)
-    state.explain.settle(world, 10_000)
+    state.explain.settle(world, pygame.time.get_ticks() + SETTLE_MS + 1)
     assert state.explain.report is not None
 
 
