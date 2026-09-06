@@ -9,7 +9,7 @@ import math
 
 import pygame
 
-from .. import units
+from .. import explain, units
 from ..body import KIND_CRAFT
 from ..render import scale
 from ..render.effects import EffectField
@@ -37,6 +37,74 @@ PICK_MARGIN = 8
 
 DEFAULT_HINT = "Click a body to inspect it  -  wheel zooms  -  ? for controls"
 
+#: Milliseconds of quiet that end a burst of edits.  Wall clock, never
+#: simulated time -- this is a property of how fast a child's hand moves, and
+#: it must behave identically at one hour a second and at ten years a second,
+#: the same argument render/effects.py makes about particle velocities.
+SETTLE_MS = 350
+
+
+class ExplainRecorder:
+    """One report per burst of edits, not one per scrub notch.
+
+    Mass scrubs by ratio at 1.06 a notch, three notches a press, repeating
+    while held: doubling the Sun is a dozen-plus separate ``set_mass`` calls.
+    A report per call would be a strobe, and the baseline would be the previous
+    notch rather than the state before he started.
+
+    So the baseline is taken once, on the first edit of a burst, and the report
+    is computed once, when the burst has been quiet for ``SETTLE_MS``.
+    """
+
+    def __init__(self):
+        #: The finished report on show, or None.
+        self.report = None
+        #: Off means off: ``note`` returns before taking a snapshot, so the
+        #: feature costs nothing at all rather than recording invisibly.
+        self.enabled = True
+        self._baseline = None
+        self._body_id = None
+        self._field = None
+        self._last_ms = 0
+
+    def note(self, world, body_id, field, now_ms):
+        """Call *before* each write.  Opens or extends a burst."""
+        if not self.enabled or body_id is None:
+            return
+        if self._baseline is not None and (self._body_id != body_id
+                                           or self._field != field):
+            # A different body or a different property is a different lesson.
+            self._close(world)
+        if self._baseline is None:
+            self._baseline = explain.snapshot(world)
+            self._body_id, self._field = body_id, field
+        self._last_ms = now_ms
+
+    def settle(self, world, now_ms):
+        """Call once a frame.  Closes a burst that has gone quiet."""
+        if self._baseline is None:
+            return
+        if now_ms - self._last_ms >= SETTLE_MS:
+            self._close(world)
+
+    def dismiss(self):
+        self.report = None
+
+    def clear(self):
+        """Drop everything.  A restart rebuilds every Body, so a standing
+        report and an open burst both name bodies that no longer exist."""
+        self.report = None
+        self._baseline = None
+        self._body_id = self._field = None
+
+    def _close(self, world):
+        found = explain.diff(self._baseline, explain.snapshot(world),
+                             self._body_id, self._field)
+        if found is not None:
+            self.report = found
+        self._baseline = None
+        self._body_id = self._field = None
+
 
 class AppState:
     def __init__(self, sim, camera, view):
@@ -44,6 +112,8 @@ class AppState:
         self.camera = camera
         self.view = view
         self.effects = EffectField()
+        #: The "what changed" report, and the burst that produces it.
+        self.explain = ExplainRecorder()
         self.selected_id = None
         #: Collapsed by default: a headline number is what a fresh selection
         #: earns, not a page of stats.  Not per-body -- nothing asked for that,
@@ -271,6 +341,7 @@ class AppState:
 
     def reset(self):
         self.sim.reset(self.scenario)
+        self.explain.clear()
         self.selected_id = None
         self.camera.follow_id = None
         self.body_list_offset = 0

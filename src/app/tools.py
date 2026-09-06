@@ -695,6 +695,8 @@ class EditTool(Tool):
             return False
         if state.sim.world.bodies[index].kind != KIND_STAR:
             return False
+        state.explain.note(state.sim.world, state.sim.world.bodies[index].id,
+                           "collapse", pygame.time.get_ticks())
         edits.collapse(state.sim.world, index)
         state.sim.refresh()
         return True
@@ -790,6 +792,10 @@ class EditTool(Tool):
         fields = self._fields(world, index)
         field = fields[min(self.field_index, len(fields) - 1)]
         body = world.bodies[index]
+
+        # Before the write, so the baseline is the state he started from.  The
+        # recorder coalesces the whole held-stepper burst into one report.
+        state.explain.note(world, body.id, field, pygame.time.get_ticks())
 
         if field == "mass":
             edits.set_mass(world, index,
