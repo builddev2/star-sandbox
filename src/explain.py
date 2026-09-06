@@ -181,6 +181,8 @@ ROW_SPECS = (
     ("mass", "Mass", "mass"),
     ("radius", "Radius", "length"),
     ("density", "Density", "density"),
+    # Source resolved per body by _temperature_attribute: the edited body's own
+    # instantaneous temperature, everyone else's equilibrium.
     ("eq_temperature", "Temp", "temperature"),
     # A hole's two dials.  set_spin and set_disk move nothing else in the
     # record, so without these a spin edit diffs to nothing and the panel
@@ -199,10 +201,30 @@ def _relative(before, after):
     return 0.0 if scale == 0.0 else abs(after - before) / scale
 
 
-def _rows_for(before_state, after_state, noise):
+def _temperature_attribute(is_edited):
+    """Which temperature a Temp row compares.
+
+    The edited body's own instantaneous ``temperature``, because that is the
+    number he just set -- and because a temperature edit moves the body's
+    equilibrium not at all: nothing heats itself, so heating Earth to 500 K
+    leaves Earth's equilibrium bit-identical, and a report built on it would
+    diff to nothing.  The panel would then stay silent on the one edit it has
+    the most to say about.
+
+    Everyone else's ``eq_temperature``, because their instantaneous values
+    relax on their own clock and would otherwise report the thermal
+    simulation's own progress during the burst as though the edit had caused
+    it.
+    """
+    return "temperature" if is_edited else "eq_temperature"
+
+
+def _rows_for(before_state, after_state, noise, is_edited):
     """Every row that moved by more than ``noise``, in ROW_SPECS order."""
     rows = []
     for attribute, label, form in ROW_SPECS:
+        if attribute == "eq_temperature":
+            attribute = _temperature_attribute(is_edited)
         was = getattr(before_state, attribute)
         now = getattr(after_state, attribute)
         if _relative(was, now) > noise:
@@ -213,7 +235,7 @@ def _rows_for(before_state, after_state, noise):
 def _change_for(before, after, body_id, noise, is_edited):
     if body_id not in before.bodies or body_id not in after.bodies:
         return None
-    rows = _rows_for(before.bodies[body_id], after.bodies[body_id], noise)
+    rows = _rows_for(before.bodies[body_id], after.bodies[body_id], noise, is_edited)
     if not rows:
         return None
     return Change(name=after.bodies[body_id].name, is_edited=is_edited, rows=rows)
@@ -258,8 +280,12 @@ def diff(before, after, edited_id, field, max_ripple=MAX_RIPPLE, noise=NOISE):
         return None
 
     changes = tuple(([edited] if edited is not None else []) + ripple)
+    edited_state = after.bodies[edited_id]
     return Report(action=_action(before, after, edited_id, field),
-                  changes=changes)
+                  changes=changes,
+                  why=why_lines(before, after, edited_id, field, changes,
+                                material_key=edited_state.material_key,
+                                vapour_k=edited_state.vapour_k))
 
 
 def _action(before, after, edited_id, field):
@@ -278,7 +304,7 @@ def _action(before, after, edited_id, field):
             name, "denser" if now.density > was.density else "less dense")
     if field == "temp":
         return "You %s %s." % (
-            "heated" if now.eq_temperature > was.eq_temperature else "cooled", name)
+            "heated" if now.temperature > was.temperature else "cooled", name)
     if field == "spin":
         return "You spun %s %s." % (
             name, "faster" if now.spin >= was.spin else "slower")
@@ -299,3 +325,140 @@ def _scaled(name, quantity, was, now):
     if ratio > 1.0:
         return "made %s %.3gx heavier" % (name, ratio)
     return "made %s %.3gx lighter" % (name, 1.0 / ratio)
+
+
+# --- why ----------------------------------------------------------------------------
+#
+# A table rather than a chain of ifs, so adding a case is a row.  Keyed on
+# (field, direction, role):
+#
+#   direction  "up" or "down", by where the edited quantity went.
+#   role       "attractor" when at least one rippled body orbits the edited one,
+#              "self" otherwise.  A mixed ripple counts as "attractor", because
+#              that is the case carrying the lesson.
+#
+# ``{name}`` is the edited body.  Lookup falls back from the most specific key
+# to the least, and ``test_no_edit_falls_through_to_silence`` asserts that no
+# combination reaches the end without a line.
+
+WHY = {
+    ("mass", "up", "attractor"):
+        "A heavier {name} pulls harder, so everything around it falls inward "
+        "and speeds up.  Round orbits become long ovals.",
+    ("mass", "down", "attractor"):
+        "A lighter {name} pulls more weakly, so everything around it swings "
+        "outward and slows down.",
+    ("mass", "up", "self"):
+        "{name} got heavier.  Its density did not change, so it grew.",
+    ("mass", "down", "self"):
+        "{name} got lighter, so it shrank.",
+    ("density", "up", "self"):
+        "The same amount of stuff, packed tighter, so {name} shrank.",
+    ("density", "down", "self"):
+        "The same amount of stuff, spread thinner, so {name} swelled.",
+    ("material", "", "self"):
+        "{name} is made of something else now, and the new substance has a "
+        "density of its own -- so the same mass takes up a different amount "
+        "of room.",
+    ("temp", "", "self"):
+        "Heat is not a dial.  You set it, but nothing pins it there.",
+    ("spin", "", "self"):
+        "A faster-spinning hole drags space round with it.  Matter can orbit "
+        "closer in before it must fall, and more of what falls comes back out "
+        "as light.",
+    ("disk", "", "self"):
+        "This is how much matter is falling in.  None of it changes the "
+        "hole's pull -- only how brightly it feeds.",
+    ("collapse", "", "self"):
+        "{name} collapsed into a black hole.  Its mass did not change, so "
+        "nothing orbiting it moved at all -- but all of that mass now sits "
+        "inside a horizon a few kilometres across.",
+}
+
+
+def lookup_why(field, direction, role):
+    """The line for this edit, falling back from specific to general.
+
+    Returns "" only if the table has a genuine hole, which
+    ``test_no_edit_falls_through_to_silence`` forbids.
+    """
+    for key in ((field, direction, role), (field, "", role),
+                (field, direction, "self"), (field, "", "self")):
+        if key in WHY:
+            return WHY[key]
+    return ""
+
+
+#: Water's phase boundaries at one atmosphere, kelvin.  Not a material property
+#: -- these are the two numbers an eight-year-old already has a feel for.
+WATER_FREEZES_K = 273.0
+WATER_BOILS_K = 373.0
+
+#: Materials that plausibly carry water, so the two lines above mean something.
+WATERY = ("rock", "ice", "rock_ice")
+
+
+def _role(after, edited_id, changes):
+    """"attractor" when anything in the ripple orbits the edited body."""
+    for change in changes:
+        if change.is_edited:
+            continue
+        for state in after.bodies.values():
+            if state.name == change.name and state.attractor_id == edited_id:
+                return "attractor"
+    return "self"
+
+
+#: The BodyState attribute each editable field moves.  Fields whose WHY entry
+#: is direction-free are absent, and _direction returns "" for them rather than
+#: comparing some other quantity and calling the answer a direction.  "temp"
+#: reads the instantaneous ``temperature``, not ``eq_temperature`` -- nothing
+#: heats itself, so a temperature edit leaves the edited body's own
+#: equilibrium bit-identical and could never say which way the edit went.
+DIRECTED = {"mass": "mass", "density": "density", "temp": "temperature"}
+
+
+def _direction(was, now, field):
+    attribute = DIRECTED.get(field)
+    if attribute is None:
+        return ""
+    return "up" if getattr(now, attribute) >= getattr(was, attribute) else "down"
+
+
+def _temperature_consequences(was, now, material_key, vapour_k):
+    """The lines a temperature edit earns, in the order they matter.
+
+    The three crossings test against ``temperature`` -- what he actually
+    set -- not ``eq_temperature``, which does not move for the edited body at
+    all (nothing heats itself).  The closing line keeps quoting
+    ``eq_temperature``: that pairing is the point, naming both what he set and
+    where sunlight is already pulling it back to.
+    """
+    lines = []
+    crossed_up = was.temperature < WATER_BOILS_K <= now.temperature
+    crossed_down = was.temperature > WATER_FREEZES_K >= now.temperature
+    if material_key in WATERY and crossed_up:
+        lines.append("Above %d K water boils.  Any ocean %s had is steam now."
+                     % (WATER_BOILS_K, now.name))
+    if material_key in WATERY and crossed_down:
+        lines.append("Below %d K water freezes solid." % WATER_FREEZES_K)
+    if was.temperature < vapour_k <= now.temperature:
+        lines.append("Past %d K, the surface itself boils away." % vapour_k)
+    # Always, on every temperature edit: this is the lesson set_temperature's
+    # own docstring names, and nothing on screen has ever said it.
+    lines.append(
+        "Sunlight decides where it settles, and it is already sliding back "
+        "toward %d K." % round(now.eq_temperature))
+    return lines
+
+
+def why_lines(before, after, edited_id, field, changes, material_key="",
+              vapour_k=2000.0):
+    """The sentences under the numbers.  Never empty for a real edit."""
+    was, now = before.bodies[edited_id], after.bodies[edited_id]
+    role = _role(after, edited_id, changes)
+    line = lookup_why(field, _direction(was, now, field), role)
+    lines = [line.format(name=now.name)] if line else []
+    if field == "temp":
+        lines += _temperature_consequences(was, now, material_key, vapour_k)
+    return tuple(lines)

@@ -220,3 +220,99 @@ def test_temperature_rows_use_equilibrium_not_the_instantaneous_value(world):
         settled.bodies[earth_id].eq_temperature, rel=0.01)
     # The instantaneous value, meanwhile, has fallen a long way.
     assert later.bodies[earth_id].temperature < 0.9 * hot
+
+
+# --- why ----------------------------------------------------------------------------
+
+def test_doubling_the_sun_explains_the_ripple_not_the_edit(world):
+    report = explain.diff(*double_the_sun(world), id_of(world, "Sun"), "mass")
+    said = " ".join(report.why)
+    assert "heavier Sun" in said
+    assert "pulls harder" in said
+    assert "oval" in said
+
+
+def test_collapse_says_the_orbits_did_not_move(world):
+    """The most valuable line in the table: mass is conserved, so the ripple is
+    empty, and the sentence is what makes an empty ripple the right answer."""
+    from src import edits
+    before = explain.snapshot(world)
+    i = index_of_name(world, "Sun")
+    edits.collapse(world, i)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Sun"), "collapse")
+    said = " ".join(report.why)
+    assert "mass did not change" in said
+    assert "nothing orbiting it moved" in said
+
+
+def test_heating_a_world_past_boiling_says_so(world):
+    from src import edits
+    before = explain.snapshot(world)
+    i = index_of_name(world, "Earth")
+    edits.set_temperature(world, i, 500.0)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Earth"), "temp")
+    said = " ".join(report.why)
+    assert "water boils" in said
+
+
+def test_every_temperature_edit_admits_it_is_not_pinned(world):
+    """edits.set_temperature's docstring calls the relaxation "the whole
+    lesson", and nothing on screen has ever said it."""
+    from src import edits
+    before = explain.snapshot(world)
+    i = index_of_name(world, "Earth")
+    edits.set_temperature(world, i, 500.0)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Earth"), "temp")
+    said = " ".join(report.why)
+    assert "nothing pins it there" in said
+
+
+def test_spinning_a_hole_produces_a_report_at_all(world):
+    """set_spin moves nothing but Body.spin, so this is the edit most likely
+    to diff to nothing and leave the panel silent."""
+    from src import edits
+    i = index_of_name(world, "Sun")
+    edits.collapse(world, i)
+    before = explain.snapshot(world)
+    edits.set_spin(world, i, 0.9)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Sun"), "spin")
+    assert report is not None
+    assert any(r.label == "Spin" for r in report.changes[0].rows)
+    assert "drags space" in " ".join(report.why)
+
+
+def test_heating_a_world_reports_the_temperature_he_actually_set(world):
+    """Nothing heats itself, so a temperature edit leaves the edited body's
+    equilibrium bit-identical.  Reporting that row would diff to nothing and
+    the panel would stay silent on the one edit it has most to say about.
+    """
+    from src import edits
+    i = index_of_name(world, "Earth")
+    before = explain.snapshot(world)
+    edits.set_temperature(world, i, 500.0)
+    after = explain.snapshot(world)
+
+    earth_id = id_of(world, "Earth")
+    assert (after.bodies[earth_id].eq_temperature
+            == before.bodies[earth_id].eq_temperature)
+
+    report = explain.diff(before, after, earth_id, "temp")
+    assert report is not None
+    temp = next(r for r in report.changes[0].rows if r.label == "Temp")
+    assert temp.after == pytest.approx(500.0)
+
+
+def test_no_edit_falls_through_to_silence():
+    """Every (field, direction, role) an edit can produce must find a line.
+    A report with no explanation is the failure mode this whole feature exists
+    to fix, so it must not be reachable."""
+    fields = ("mass", "density", "temp", "material", "spin", "disk", "collapse")
+    for field in fields:
+        for direction in ("up", "down"):
+            for role in ("attractor", "self"):
+                assert explain.lookup_why(field, direction, role), \
+                    "no line for %s/%s/%s" % (field, direction, role)
