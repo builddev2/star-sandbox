@@ -31,7 +31,7 @@ FORMATTERS = {
     "temperature": hud.format_body_temperature,
     "period": hud.orbit_period_label,
     "density": lambda density: "%.3g g/cm3" % units.to_gcm3(density),
-    "plain": lambda value: "%.2f" % value,
+    "plain": lambda value: "%.3f" % value,
 }
 
 

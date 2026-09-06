@@ -105,15 +105,20 @@ def test_doubling_the_sun_reports_earths_real_new_year(world):
 
 
 def test_the_edited_body_leads_and_the_ripple_is_ranked(world):
-    """The Sun first, then MAX_RIPPLE planets in non-increasing order of how
-    much they moved.
+    """The Sun first, then MAX_RIPPLE planets ranked by how much they moved --
+    bucketed to one decimal place, ties broken by proximity.
 
-    Deliberately not an exact roster.  Doubling the Sun hits every planet
-    almost identically -- every period falls by a factor near 0.38 and every
-    orbit ends up near e = 0.5 -- so which three come out on top is settled in
-    the third decimal place, by where the planets happened to be at the J2000
-    epoch.  Pinning the roster would be pinning a coincidence, and the next
-    person to touch the ranking would "fix" the code to match it.
+    Doubling the Sun hits every planet almost identically -- every period
+    falls by a factor near 0.38 and every orbit ends up near e = 0.5 -- so an
+    exact sort on the raw score would settle the top three in the third
+    decimal place, by nothing more meaningful than where the planets happened
+    to be at the J2000 epoch.  Bucketing the score to one decimal collapses
+    that noise into a single tied bucket (Mercury's own eccentricity starts
+    well off zero, so it buckets a decile lower and sits out of the tie) --
+    Venus, Earth and Neptune tie in that top bucket and the tie-break by
+    semi-major axis then orders them nearest first.  A real, repeatable
+    property instead of a coincidence, which is why this pins the roster
+    rather than merely asserting the scores are sorted.
     """
     before, after = double_the_sun(world)
     report = explain.diff(before, after, id_of(world, "Sun"), "mass")
@@ -126,8 +131,15 @@ def test_the_edited_body_leads_and_the_ripple_is_ranked(world):
     assert all(c.is_edited is False for c in ripple)
     others = {b.name for b in world.bodies[:world.n]} - {"Sun"}
     assert {c.name for c in ripple} <= others
-    scores = [explain._score(c) for c in ripple]
-    assert scores == sorted(scores, reverse=True)
+
+    buckets = [round(explain._score(c), 1) for c in ripple]
+    assert buckets == sorted(buckets, reverse=True)
+    axes = [after.bodies[c.body_id].a for c in ripple]
+    for k in range(len(ripple) - 1):
+        if buckets[k] == buckets[k + 1]:
+            assert axes[k] <= axes[k + 1], \
+                "equal-bucket bodies must be ordered nearest first"
+    assert [c.name for c in ripple] == ["Venus", "Earth", "Neptune"]
 
 
 def test_the_edited_bodys_own_rows_are_the_ones_that_moved(world):
@@ -243,7 +255,13 @@ def test_collapse_says_the_orbits_did_not_move(world):
                           id_of(world, "Sun"), "collapse")
     said = " ".join(report.why)
     assert "mass did not change" in said
-    assert "nothing orbiting it moved" in said
+    assert "nothing orbiting it changed orbit" in said
+    assert "2.95 km in radius" in said
+    # The best lesson in the feature: the Sun stopped radiating, and every
+    # world it was warming is falling to the cold of empty space.  Buried
+    # right above three planets printed as "270 K -> 3 K" is where a reader
+    # is least likely to connect the two, so it earns its own sentence.
+    assert "light went out" in said
 
 
 def test_heating_a_world_past_boiling_says_so(world):
@@ -413,6 +431,76 @@ def test_an_existing_hole_gets_its_horizon_formula_without_collapsing(world):
     report = explain.diff(before, explain.snapshot(world),
                           id_of(world, "Sun"), "spin")
     assert any("2 G M / c^2" in f.general for f in report.maths)
+
+
+def test_the_horizon_formula_states_a_radius_not_a_diameter(world):
+    """units.schwarzschild_radius is a radius: a 1 solar-mass hole is 2.95 km
+    in radius, 5.9 km across.  The substituted line must say so, and must not
+    say "across" -- that word turned the right number into the wrong claim."""
+    from src import edits
+    i = index_of_name(world, "Sun")
+    edits.collapse(world, i)
+    snap = explain.snapshot(world)
+    formula = next(f for f in explain.formulas(snap, snap, id_of(world, "Sun"),
+                                               "spin", ())
+                  if "2 G M / c^2" in f.general)
+    assert "across" not in formula.substituted
+    assert "3.0 km" in formula.substituted
+    assert "1.00 Sun of mass" in formula.substituted
+    assert "Suns" not in formula.substituted
+
+
+def test_the_horizon_formula_pluralises_suns_above_one(world):
+    """set_mass auto-collapses at COLLAPSE_MASS_THRESHOLD (150), so the mass
+    is set just under it and collapsed by hand -- otherwise edits.collapse is
+    a no-op on an already-collapsed body and mass is conserved either way."""
+    from src import edits
+    i = index_of_name(world, "Sun")
+    edits.set_mass(world, i, 149.99)
+    edits.collapse(world, i)
+    snap = explain.snapshot(world)
+    formula = next(f for f in explain.formulas(snap, snap, id_of(world, "Sun"),
+                                               "spin", ())
+                  if "2 G M / c^2" in f.general)
+    assert "Suns of mass" in formula.substituted
+    assert "443" in formula.substituted
+
+
+def test_collapse_says_a_radius_not_a_few_kilometres(world):
+    """CLAUDE.md: stars collapse up to 150 solar masses, a 443 km horizon --
+    two orders of magnitude past "a few kilometres across", which was also
+    the wrong quantity (a diameter, when the code computes a radius)."""
+    from src import edits
+    i = index_of_name(world, "Sun")
+    edits.set_mass(world, i, 149.99)
+    before = explain.snapshot(world)
+    edits.collapse(world, i)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Sun"), "collapse")
+    said = " ".join(report.why)
+    assert "kilometres across" not in said
+    assert "443" in said
+    assert "in radius" in said
+
+
+def test_density_formula_substitutes_his_mass_and_radius(world):
+    """The spec's contract is the relationship, then the same thing with his
+    numbers in it -- not a bare density figure with nothing substituted."""
+    snap = explain.snapshot(world)
+    earth = snap.bodies[id_of(world, "Earth")]
+    formula = explain._density_formula(earth)
+    assert "Msun" in formula.substituted
+    assert "km" in formula.substituted
+    assert explain._plain_number(earth.mass) in formula.substituted
+
+
+def test_plain_number_gives_three_significant_figures_no_exponent():
+    assert explain._plain_number(12.3456789) == "12.3"
+    assert explain._plain_number(123.456) == "123"
+    assert explain._plain_number(1.23456) == "1.23"
+    assert "e" not in explain._plain_number(999.9).lower()
+    assert explain._plain_number(999.9) == "1000"
+    assert explain._plain_number(12345.6) == "12,346"
 
 
 def test_no_edit_produces_an_empty_maths_list():

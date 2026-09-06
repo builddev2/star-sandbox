@@ -25,7 +25,7 @@ swap-remove, and a snapshot outlives at least one frame.
 from dataclasses import dataclass
 
 from . import orbits, thermal, units
-from .body import KIND_BLACK_HOLE
+from .body import KIND_BLACK_HOLE, KIND_STAR
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,10 @@ class BodyState:
     #: so it drifts during a burst whether or not the edit touched it.
     eq_temperature: float
     attractor: str
-    attractor_id: int
+    #: None when unbound.  Never 0 -- World._next_id happens to start at 1,
+    #: which would make 0 a safe sentinel only by accident, and _role's
+    #: ``attractor_id == edited_id`` comparison should not depend on that.
+    attractor_id: object
     a: float
     e: float
     #: Days.  Zero when unbound -- elements_from_state returns None there, and
@@ -99,7 +102,7 @@ def snapshot(world):
 
         attractor_index = orbits.dominant_attractor(world, i)
         if attractor_index is None:
-            attractor, attractor_id = "", 0
+            attractor, attractor_id = "", None
             a = e = period = periapsis = 0.0
             bound = False
         else:
@@ -263,6 +266,22 @@ def diff(before, after, edited_id, field, max_ripple=MAX_RIPPLE, noise=NOISE):
     much it moved and cut to ``max_ripple``: the ripple is the part he did not
     do himself, and it is what makes doubling the Sun a lesson rather than a
     fact he already knew.
+
+    The ranking is bucketed, not a raw sort on ``_score``.  Doubling the Sun
+    moves every planet's stretch from ~0.007 to ~0.49 -- a ~0.986 relative
+    change for all eight -- so an exact sort settles the top three in the
+    third decimal place, by nothing more meaningful than where the planets
+    happened to be at the J2000 epoch.  Rounding the score to one decimal
+    before sorting buckets bodies that moved by *materially* different
+    amounts into their true order, and leaves bodies that moved by the *same*
+    amount -- what a global edit produces -- tied.  Ties break by semi-major
+    axis, nearest first, which is a real, physically meaningful distinction
+    between otherwise-tied planets: in the flagship case Venus, Earth and
+    Neptune tie in the top bucket (Mercury's own eccentricity starts well off
+    zero, so it buckets a decile lower and sits out of the tie) and come out
+    nearest first.  A local edit (Jupiter's mass, say, where Io and Europa
+    score high and Neptune scores zero) is unaffected: those scores fall in
+    different buckets and the tie-break never applies.
     """
     if edited_id not in before.bodies or edited_id not in after.bodies:
         # Deleted, or merged away, between the baseline and the settle.  Saying
@@ -278,8 +297,8 @@ def diff(before, after, edited_id, field, max_ripple=MAX_RIPPLE, noise=NOISE):
         change = _change_for(before, after, body_id, noise, is_edited=False)
         if change is not None:
             ripple.append(change)
-    # Stable sort, so bodies that moved by the same amount keep world order.
-    ripple.sort(key=_score, reverse=True)
+    # Bucket by score (see the docstring above), then break ties by proximity.
+    ripple.sort(key=lambda c: (-round(_score(c), 1), after.bodies[c.body_id].a))
     ripple = ripple[:max_ripple]
 
     if edited is None and not ripple:
@@ -325,18 +344,33 @@ def _plain_number(value):
 
     ``render/hud.py`` refuses exponent notation on the grounds that
     "5.823e+04" is unreadable to this audience, and a formula line is read by
-    the same person.  %.3g gives up at 999.9, which a black hole reaches by
-    swallowing a few heavy stars -- it accretes without an upper clamp, since
-    MAX_MASS bounds the mass *stepper* and not a merge.
+    the same person.  Three significant figures, not six -- "made Sun
+    12.3457x heavier" reads as noise past the third digit, and a real scrub
+    only ever produces a handful of meaningful ones.
 
-    Below a thousandth of a solar mass an exponent genuinely is the readable
-    form: the alternative is sixteen leading zeros, and nothing in solar
-    masses reads well down there.  That end is left as it is, knowingly.
+    A flat ``%.3g`` cannot give three significant figures across this whole
+    range: it gives up at 999.9, which rounds to 1.00e+03 at three sig figs
+    and, since the exponent then reaches the precision, prints in scientific
+    notation -- exactly the black hole a few heavy-star mergers produces
+    (MAX_MASS bounds the mass *stepper*, not a merge, so mass keeps climbing
+    past it).  So the band from 1 up to 1000 is split by magnitude instead,
+    each fixed at three significant figures by construction, and 1000 and
+    above falls back to a comma-grouped integer.
+
+    Below 1, ``%.3g`` cannot overshoot into the next magnitude the way it does
+    at 999.9, so it is used directly -- down to a thousandth of a solar mass,
+    where an exponent genuinely is the readable form: the alternative is
+    sixteen leading zeros, and nothing in solar masses reads well down there.
+    That end is left as it is, knowingly.
     """
     if value >= 1000.0:
         return "{:,.0f}".format(value)
-    if value >= 0.001:
-        return "%.6g" % value
+    if value >= 100.0:
+        return "%.0f" % value
+    if value >= 10.0:
+        return "%.1f" % value
+    if value >= 1.0:
+        return "%.2f" % value
     return "%.3g" % value
 
 
@@ -398,8 +432,8 @@ WHY = {
         "hole's pull -- only how brightly it feeds.",
     ("collapse", "", "self"):
         "{name} collapsed into a black hole.  Its mass did not change, so "
-        "nothing orbiting it moved at all -- but all of that mass now sits "
-        "inside a horizon a few kilometres across.",
+        "nothing orbiting it changed orbit at all -- but all of that mass "
+        "now sits inside a horizon {radius} in radius.",
 }
 
 
@@ -479,15 +513,43 @@ def _temperature_consequences(was, now, material_key, vapour_k):
     return lines
 
 
+#: The line appended after a collapse when the edited body was a star and the
+#: ripple carries a Temp row that fell -- the lesson a bare "orbits did not
+#: move" sentence buries: three planets printed as "270 K -> 3 K" right above
+#: it, with nothing saying that going dark is *why*.
+GONE_DARK = ("And the light went out.  Every world it was warming is "
+             "falling to the cold of empty space.")
+
+
+def _ripple_cooled(changes):
+    """True if any rippled body's Temp row fell -- the signature of a star
+    that stopped radiating, as opposed to one that never warmed anything."""
+    for change in changes:
+        if change.is_edited:
+            continue
+        for row in change.rows:
+            if row.label == "Temp" and row.after < row.before:
+                return True
+    return False
+
+
 def why_lines(before, after, edited_id, field, changes, material_key="",
               vapour_k=2000.0):
     """The sentences under the numbers.  Never empty for a real edit."""
     was, now = before.bodies[edited_id], after.bodies[edited_id]
     role = _role(after, edited_id, changes)
     line = lookup_why(field, _direction(was, now, field), role)
-    lines = [line.format(name=now.name)] if line else []
+    if line and field == "collapse":
+        radius = "%s km" % _plain_number(units.to_km(now.radius))
+        lines = [line.format(name=now.name, radius=radius)]
+    elif line:
+        lines = [line.format(name=now.name)]
+    else:
+        lines = []
     if field == "temp":
         lines += _temperature_consequences(was, now, material_key, vapour_k)
+    if field == "collapse" and was.kind == KIND_STAR and _ripple_cooled(changes):
+        lines.append(GONE_DARK)
     return tuple(lines)
 
 
@@ -522,18 +584,33 @@ def _period_formula(after, change):
 
 
 def _density_formula(state):
+    """rho = m / (4/3 pi r^3), with his mass and radius in it.
+
+    A mass edit holds density constant and re-derives radius, so for that
+    edit rho itself does not move -- the substitution still earns its place
+    (the spec's contract is the relationship, then the same thing with his
+    numbers in it) by showing the mass and radius that combine to it, in the
+    same units the horizon formula already uses: solar masses, kilometres.
+    """
     return Formula(
         general="rho = m / (4/3 pi r^3)",
-        substituted="rho = %.3g g/cm3 for %s"
-                    % (units.to_gcm3(state.density), state.name))
+        substituted="%s:  rho = %s Msun / (4/3 pi (%s km)^3) = %.3g g/cm3"
+                    % (state.name, _plain_number(state.mass),
+                       "{:,.1f}".format(units.to_km(state.radius)),
+                       units.to_gcm3(state.density)))
 
 
 def _horizon_formula(state):
+    suns = _plain_number(state.mass)
+    # "1.00" reads as one Sun same as "1" does -- the singular/plural choice
+    # follows what is actually displayed, not the underlying float, or a mass
+    # of 1.004 (displayed "1.00") would read "1.00 Suns".
+    singular = suns.rstrip("0").rstrip(".") == "1"
     return Formula(
         general="r = 2 G M / c^2",
-        substituted="r = %s km across, for %s Suns of mass"
-                    % ("{:,.1f}".format(units.to_km(state.radius)),
-                       _plain_number(state.mass)))
+        substituted="r = %s km, for %s %s of mass"
+                    % ("{:,.1f}".format(units.to_km(state.radius)), suns,
+                       "Sun" if singular else "Suns"))
 
 
 def _temperature_formula(state):
