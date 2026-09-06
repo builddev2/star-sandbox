@@ -306,33 +306,45 @@ def test_heating_a_world_reports_the_temperature_he_actually_set(world):
     assert temp.after == pytest.approx(500.0)
 
 
-def test_the_ripple_is_identified_by_id_when_two_bodies_share_a_name(world):
+def test_role_is_decided_by_id_when_two_bodies_share_a_name(world):
     """Collision fragments are all minted "Ejecta" or "Debris"
-    (src/collisions.py), so several bodies in one world routinely share a
-    name.  A `why` line that decided the edited body's role by name would
+    (src/collisions.py:488 and :545), so several bodies in one world
+    routinely share a name.  Deciding the edited body's role by name would
     read some unrelated same-named body's orbit instead of the one the
-    report is actually about.
+    report is actually about, and print "a heavier Sun pulls harder" about
+    a body the Sun does not hold.
+
+    Built directly rather than through a collision: the point is two bodies
+    with one name, and reaching that state through the physics would take a
+    shatter and a great deal of setup to say the same thing.
     """
-    from src import edits, materials
-    import numpy as np
+    import dataclasses
 
-    # Two bodies called "Debris": one bound to the Sun, one far away and
-    # bound to nothing that the edit touches.
-    world.add("Debris", materials.get("rock"), 1e-12, 1e-5,
-              np.array([3.0, 0.0]), np.array([0.0, 0.35]), temperature=100.0)
-    world.add("Debris", materials.get("rock"), 1e-12, 1e-5,
-              np.array([600.0, 0.0]), np.array([0.0, 0.0]), temperature=100.0)
+    snap = explain.snapshot(world)
+    sun_id = id_of(world, "Sun")
+    earth_id = id_of(world, "Earth")
+    mercury_id = id_of(world, "Mercury")
 
-    before = explain.snapshot(world)
-    i = index_of_name(world, "Sun")
-    edits.set_mass(world, i, 2.0 * float(world.mass[i]))
-    report = explain.diff(before, explain.snapshot(world),
-                          id_of(world, "Sun"), "mass", max_ripple=12)
+    # Two bodies called "Debris".  The one the Change is about is bound to
+    # Mercury; the decoy, sharing its name, is bound to the Sun.
+    loose = dataclasses.replace(snap.bodies[earth_id], name="Debris",
+                                attractor_id=mercury_id)
+    decoy = dataclasses.replace(snap.bodies[mercury_id], name="Debris",
+                                attractor_id=sun_id)
+    after = explain.Snapshot(bodies={sun_id: snap.bodies[sun_id],
+                                     earth_id: loose, mercury_id: decoy})
+    moved = (explain.Row("One lap", 365.0, 300.0, "period"),)
 
-    # Every rippled Change resolves to a real body, and to the *right* one.
-    for change in report.changes[1:]:
-        assert change.body_id in explain.snapshot(world).bodies
-        assert change.name == world.body_by_id(change.body_id).name
+    # The Change is about the loose one, which the Sun does not hold -- so
+    # the role is "self", however many same-named bodies the Sun does hold.
+    about_loose = explain.Change(body_id=earth_id, name="Debris",
+                                 is_edited=False, rows=moved)
+    assert explain._role(after, sun_id, (about_loose,)) == "self"
+
+    # And the decoy, which really is the Sun's, still gives the other answer
+    # -- so this cannot be passed by a _role that always says "self".
+    about_decoy = dataclasses.replace(about_loose, body_id=mercury_id)
+    assert explain._role(after, sun_id, (about_decoy,)) == "attractor"
 
 
 def test_no_edit_falls_through_to_silence():
