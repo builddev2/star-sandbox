@@ -306,6 +306,35 @@ def test_heating_a_world_reports_the_temperature_he_actually_set(world):
     assert temp.after == pytest.approx(500.0)
 
 
+def test_the_ripple_is_identified_by_id_when_two_bodies_share_a_name(world):
+    """Collision fragments are all minted "Ejecta" or "Debris"
+    (src/collisions.py), so several bodies in one world routinely share a
+    name.  A `why` line that decided the edited body's role by name would
+    read some unrelated same-named body's orbit instead of the one the
+    report is actually about.
+    """
+    from src import edits, materials
+    import numpy as np
+
+    # Two bodies called "Debris": one bound to the Sun, one far away and
+    # bound to nothing that the edit touches.
+    world.add("Debris", materials.get("rock"), 1e-12, 1e-5,
+              np.array([3.0, 0.0]), np.array([0.0, 0.35]), temperature=100.0)
+    world.add("Debris", materials.get("rock"), 1e-12, 1e-5,
+              np.array([600.0, 0.0]), np.array([0.0, 0.0]), temperature=100.0)
+
+    before = explain.snapshot(world)
+    i = index_of_name(world, "Sun")
+    edits.set_mass(world, i, 2.0 * float(world.mass[i]))
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Sun"), "mass", max_ripple=12)
+
+    # Every rippled Change resolves to a real body, and to the *right* one.
+    for change in report.changes[1:]:
+        assert change.body_id in explain.snapshot(world).bodies
+        assert change.name == world.body_by_id(change.body_id).name
+
+
 def test_no_edit_falls_through_to_silence():
     """Every (field, direction, role) an edit can produce must find a line.
     A report with no explanation is the failure mode this whole feature exists

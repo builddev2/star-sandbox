@@ -156,6 +156,10 @@ class Row:
 
 @dataclass(frozen=True)
 class Change:
+    #: The body this is about.  An id, not a name: collision fragments are
+    #: minted as "Ejecta" and "Debris" (collisions.py), so several bodies in
+    #: one world routinely share a name and a name cannot identify one.
+    body_id: int
     name: str
     is_edited: bool
     rows: tuple
@@ -238,7 +242,8 @@ def _change_for(before, after, body_id, noise, is_edited):
     rows = _rows_for(before.bodies[body_id], after.bodies[body_id], noise, is_edited)
     if not rows:
         return None
-    return Change(name=after.bodies[body_id].name, is_edited=is_edited, rows=rows)
+    return Change(body_id=body_id, name=after.bodies[body_id].name,
+                  is_edited=is_edited, rows=rows)
 
 
 def _score(change):
@@ -399,13 +404,13 @@ WATERY = ("rock", "ice", "rock_ice")
 
 
 def _role(after, edited_id, changes):
-    """"attractor" when anything in the ripple orbits the edited body."""
+    """Returns "attractor" when anything in the ripple orbits the edited body."""
     for change in changes:
         if change.is_edited:
             continue
-        for state in after.bodies.values():
-            if state.name == change.name and state.attractor_id == edited_id:
-                return "attractor"
+        state = after.bodies.get(change.body_id)
+        if state is not None and state.attractor_id == edited_id:
+            return "attractor"
     return "self"
 
 
