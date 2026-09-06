@@ -320,6 +320,26 @@ def _action(before, after, edited_id, field):
     return "You changed %s's %s." % (name, field)
 
 
+def _plain_number(value):
+    """A number with no exponent in it, wherever %g would reach for one.
+
+    ``render/hud.py`` refuses exponent notation on the grounds that
+    "5.823e+04" is unreadable to this audience, and a formula line is read by
+    the same person.  %.3g gives up at 999.9, which a black hole reaches by
+    swallowing a few heavy stars -- it accretes without an upper clamp, since
+    MAX_MASS bounds the mass *stepper* and not a merge.
+
+    Below a thousandth of a solar mass an exponent genuinely is the readable
+    form: the alternative is sixteen leading zeros, and nothing in solar
+    masses reads well down there.  That end is left as it is, knowingly.
+    """
+    if value >= 1000.0:
+        return "{:,.0f}".format(value)
+    if value >= 0.001:
+        return "%.6g" % value
+    return "%.3g" % value
+
+
 def _scaled(name, quantity, was, now):
     """"doubled the Sun's mass" / "made Jupiter 12x heavier"."""
     if was <= 0.0:
@@ -330,8 +350,8 @@ def _scaled(name, quantity, was, now):
     if abs(ratio - 0.5) < 0.02:
         return "halved %s's %s" % (name, quantity)
     if ratio > 1.0:
-        return "made %s %.3gx heavier" % (name, ratio)
-    return "made %s %.3gx lighter" % (name, 1.0 / ratio)
+        return "made %s %sx heavier" % (name, _plain_number(ratio))
+    return "made %s %sx lighter" % (name, _plain_number(1.0 / ratio))
 
 
 # --- why ----------------------------------------------------------------------------
@@ -496,8 +516,9 @@ def _period_formula(after, change):
         return None
     return Formula(
         general="T = 2*pi * sqrt(a^3 / G M)",
-        substituted="%s:  T = 2*pi * sqrt(%.3f^3 / (G x %.3g)) = %d days"
-                    % (state.name, state.a, attractor.mass, round(state.period)))
+        substituted="%s:  T = 2*pi * sqrt(%.3f^3 / (G x %s)) = %d days"
+                    % (state.name, state.a, _plain_number(attractor.mass),
+                       round(state.period)))
 
 
 def _density_formula(state):
@@ -510,8 +531,9 @@ def _density_formula(state):
 def _horizon_formula(state):
     return Formula(
         general="r = 2 G M / c^2",
-        substituted="r = %s km across, for %.3g Suns of mass"
-                    % ("{:,.1f}".format(units.to_km(state.radius)), state.mass))
+        substituted="r = %s km across, for %s Suns of mass"
+                    % ("{:,.1f}".format(units.to_km(state.radius)),
+                       _plain_number(state.mass)))
 
 
 def _temperature_formula(state):

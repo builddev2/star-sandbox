@@ -397,3 +397,37 @@ def test_every_report_carries_at_least_one_formula(world):
     assert len(report.maths) >= 1
     for formula in report.maths:
         assert formula.general and formula.substituted
+
+
+def test_an_existing_hole_gets_its_horizon_formula_without_collapsing(world):
+    """The collapse test reaches the horizon formula through field ==
+    "collapse", which short-circuits the kind comparison.  This is the only
+    test that exercises `edited.kind == KIND_BLACK_HOLE` on its own -- the
+    branch the constant-vs-literal correction exists to protect.
+    """
+    from src import edits
+    i = index_of_name(world, "Sun")
+    edits.collapse(world, i)
+    before = explain.snapshot(world)
+    edits.set_spin(world, i, 0.9)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Sun"), "spin")
+    assert any("2 G M / c^2" in f.general for f in report.maths)
+
+
+def test_no_edit_produces_an_empty_maths_list():
+    """A "Show the maths" button that opens an empty box is worse than no
+    button, and ui.py draws it whenever maths is non-empty.  So the guarantee
+    is that no field can produce nothing -- the same shape of promise
+    test_no_edit_falls_through_to_silence makes about the why lines.
+    """
+    world = scenarios.solar_system(moons=False)
+    i = [b.name for b in world.bodies].index("Earth")
+    earth_id = world.bodies[i].id
+    snap = explain.snapshot(world)
+    for field in ("mass", "density", "temp", "material", "spin", "disk",
+                  "collapse"):
+        out = explain.formulas(snap, snap, earth_id, field, ())
+        assert out, "no formula for %s" % field
+        for formula in out:
+            assert formula.general and formula.substituted
