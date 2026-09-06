@@ -25,6 +25,7 @@ swap-remove, and a snapshot outlives at least one frame.
 from dataclasses import dataclass
 
 from . import orbits, thermal, units
+from .body import KIND_BLACK_HOLE
 
 
 @dataclass(frozen=True)
@@ -290,7 +291,8 @@ def diff(before, after, edited_id, field, max_ripple=MAX_RIPPLE, noise=NOISE):
                   changes=changes,
                   why=why_lines(before, after, edited_id, field, changes,
                                 material_key=edited_state.material_key,
-                                vapour_k=edited_state.vapour_k))
+                                vapour_k=edited_state.vapour_k),
+                  maths=formulas(before, after, edited_id, field, changes))
 
 
 def _action(before, after, edited_id, field):
@@ -467,3 +469,77 @@ def why_lines(before, after, edited_id, field, changes, material_key="",
     if field == "temp":
         lines += _temperature_consequences(was, now, material_key, vapour_k)
     return tuple(lines)
+
+
+# --- the maths ----------------------------------------------------------------------
+#
+# Two lines each: the relationship, then the same thing with his numbers in it.
+# The audience is eight and ahead of his age in maths, and a relationship with
+# nothing substituted into it is a thing to be told rather than a thing to
+# check.  The substituted line must *evaluate* to the figure the rows above it
+# show -- see test_the_period_formula_evaluates_to_the_number_beside_it.
+
+
+@dataclass(frozen=True)
+class Formula:
+    general: str
+    substituted: str
+
+
+def _period_formula(after, change):
+    """Kepler's third, for the first rippled body -- the one that moved most."""
+    state = after.bodies.get(change.body_id)
+    if state is None or not state.bound or state.period <= 0.0:
+        return None
+    attractor = after.bodies.get(state.attractor_id)
+    if attractor is None:
+        return None
+    return Formula(
+        general="T = 2*pi * sqrt(a^3 / G M)",
+        substituted="%s:  T = 2*pi * sqrt(%.3f^3 / (G x %.3g)) = %d days"
+                    % (state.name, state.a, attractor.mass, round(state.period)))
+
+
+def _density_formula(state):
+    return Formula(
+        general="rho = m / (4/3 pi r^3)",
+        substituted="rho = %.3g g/cm3 for %s"
+                    % (units.to_gcm3(state.density), state.name))
+
+
+def _horizon_formula(state):
+    return Formula(
+        general="r = 2 G M / c^2",
+        substituted="r = %s km across, for %.3g Suns of mass"
+                    % ("{:,.1f}".format(units.to_km(state.radius)), state.mass))
+
+
+def _temperature_formula(state):
+    return Formula(
+        general="T^4 = (1-A)/4 * sum_j T_j^4 (R_j / d_j)^2",
+        substituted="every body warms every other one; %s settles at %d K"
+                    % (state.name, round(state.eq_temperature)))
+
+
+def formulas(before, after, edited_id, field, changes):
+    """Which relationships this edit is an illustration of."""
+    edited = after.bodies[edited_id]
+    out = []
+    ripple = [c for c in changes if not c.is_edited]
+
+    if field in ("mass", "collapse") and ripple:
+        period = _period_formula(after, ripple[0])
+        if period is not None:
+            out.append(period)
+    if field == "collapse" or edited.kind == KIND_BLACK_HOLE:
+        out.append(_horizon_formula(edited))
+    elif field in ("mass", "density", "material"):
+        out.append(_density_formula(edited))
+    if field == "temp":
+        out.append(_temperature_formula(edited))
+
+    # Never nothing: a "Show the maths" button that reveals an empty box is
+    # worse than no button, and ui.py only draws it when maths is non-empty.
+    if not out:
+        out.append(_density_formula(edited))
+    return tuple(out)

@@ -357,3 +357,43 @@ def test_no_edit_falls_through_to_silence():
             for role in ("attractor", "self"):
                 assert explain.lookup_why(field, direction, role), \
                     "no line for %s/%s/%s" % (field, direction, role)
+
+
+# --- the maths ----------------------------------------------------------------------
+
+def test_the_period_formula_evaluates_to_the_number_beside_it(world):
+    """The substituted line is not decoration: worked in the simulation's own
+    units it must come out at the figure the rows above it show, or the panel
+    is lying to a reader who will check.
+
+    Checked against whichever body the formula is about, not against Earth by
+    name.  Which planet leads the ripple is a J2000 coincidence -- see the
+    ranking test -- and naming one here would pin that coincidence a second
+    time, which is the defect this test was rewritten to stop repeating.
+    """
+    report = explain.diff(*double_the_sun(world), id_of(world, "Sun"), "mass")
+    formula = next(f for f in report.maths if "T =" in f.general)
+    assert "a^3" in formula.general
+
+    subject = next(c for c in report.changes if not c.is_edited)
+    lap = {r.label: r for r in subject.rows}["One lap"]
+    # The formula says whose orbit it is working, and lands on that period.
+    assert formula.substituted.startswith(subject.name + ":")
+    assert ("%d days" % round(lap.after)) in formula.substituted
+
+
+def test_a_black_hole_gets_its_horizon_formula(world):
+    from src import edits
+    before = explain.snapshot(world)
+    i = index_of_name(world, "Sun")
+    edits.collapse(world, i)
+    report = explain.diff(before, explain.snapshot(world),
+                          id_of(world, "Sun"), "collapse")
+    assert any("2 G M / c^2" in f.general for f in report.maths)
+
+
+def test_every_report_carries_at_least_one_formula(world):
+    report = explain.diff(*double_the_sun(world), id_of(world, "Sun"), "mass")
+    assert len(report.maths) >= 1
+    for formula in report.maths:
+        assert formula.general and formula.substituted
