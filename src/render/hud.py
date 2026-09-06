@@ -44,6 +44,7 @@ KEY_HELP = (
     ("T", "orbit trails on and off"),
     ("R", "real sizes (everything is a dot)"),
     ("L", "name labels"),
+    ("Y", "explanations on and off"),
     ("G", "pixel grid size"),
     ("Del", "delete the selected body"),
     ("F5", "start the solar system over"),

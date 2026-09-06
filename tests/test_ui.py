@@ -998,3 +998,52 @@ def test_reselecting_the_same_body_brings_the_tether_back(state, ui):
 
     state.select(body.id, now=now)
     assert _tether_visible(ui, state)
+
+
+# --- the explain panel --------------------------------------------------------------
+
+def _make_a_report(state):
+    from src.app.tools import EditTool
+    state.set_tool(EditTool)
+    world = state.sim.world
+    index = [b.name for b in world.bodies].index("Sun")
+    state.select(world.bodies[index].id)
+    state.explain.note(world, state.selected_id, "mass", 0)
+    state.tool._scrub(state, 12)
+    state.explain.settle(world, 10_000)
+    assert state.explain.report is not None
+
+
+def test_the_explain_panel_has_a_close_button(state, ui):
+    _make_a_report(state)
+    ui.build(state, SIZE)
+    assert find(ui, "explain.close") is not None
+    ui.perform(find(ui, "explain.close"), state)
+    assert state.explain.report is None
+
+
+def test_the_maths_button_toggles_and_disappears_with_the_report(state, ui):
+    _make_a_report(state)
+    ui.build(state, SIZE)
+    assert state.show_maths is False
+    ui.perform(find(ui, "explain.maths"), state)
+    assert state.show_maths is True
+    state.explain.dismiss()
+    ui.build(state, SIZE)
+    assert find(ui, "explain.maths") is None
+
+
+def test_y_is_documented_and_has_a_button(state, ui):
+    from src.render.hud import KEY_HELP
+    assert "Y" in {combo for combo, _ in KEY_HELP}
+    ui.build(state, SIZE)
+    assert find(ui, "view.explain").hotkey == "Y"
+
+
+def test_turning_explanations_off_hides_a_standing_report(state, ui):
+    _make_a_report(state)
+    ui.build(state, SIZE)
+    ui.perform(find(ui, "view.explain"), state)
+    assert state.explain.enabled is False
+    ui.build(state, SIZE)
+    assert find(ui, "explain.close") is None

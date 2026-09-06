@@ -80,6 +80,8 @@ def handle_event(event, state, ctx, ui=None):
         state.view.real_size = not state.view.real_size
     elif key == pygame.K_l:
         state.view.show_labels = not state.view.show_labels
+    elif key == pygame.K_y:
+        state.explain.enabled = not state.explain.enabled
     elif key == pygame.K_g:
         state.cycle_grid(ctx)
     elif key == pygame.K_w:

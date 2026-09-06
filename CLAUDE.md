@@ -26,19 +26,21 @@ Three layers, enforced by `tests/test_layering.py`:
 
 | | |
 |---|---|
-| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`, `thermal.py` (every body's temperature), and
+| `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`, `thermal.py` (every body's temperature),
 `maneuver.py` (a craft's flight plan: nodes, burns, closest approach, the Hohmann
-transfer and its launch window, and the gravity assist). |
+transfer and its launch window, and the gravity assist), and `explain.py` (what an edit
+did and why, as plain data). |
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
 
 `App.step_once()` (`src/app/main.py`) is one frame: events (each one put through
 `ctx.map_event` first) → reconcile the window size → rebuild the pixel-sized stack if the
 buffer changed shape → `ui.update` (held steppers) → refresh `world.contact_radius` from
-the camera → `sim.advance` → `sim.update_trails` → camera follow → drain `sim.impacts`
-into `state.effects` → draw world → `effects.update` / `effects.draw` → draw the tool
-overlay → draw HUD → `ui.build` → `ui.draw` → `ctx.present`. It is factored out of `run()`
-so `tests/test_smoke.py` can drive the real application headless.
+the camera → `sim.advance` → `sim.update_trails` → `state.explain.settle` → camera follow
+→ drain `sim.impacts` into `state.effects` → draw world → `effects.update` / `effects.draw`
+→ draw the explain panel → draw the tool overlay → draw HUD → `ui.build` → `ui.draw` →
+`ctx.present`. It is factored out of `run()` so `tests/test_smoke.py` can drive the real
+application headless.
 
 The interface is built **at the end of the frame**, from the state about to be shown, so
 the next frame's clicks hit exactly what is on screen.
@@ -176,6 +178,21 @@ or fast time scales.
 - **Mouse coordinates are internal pixels everywhere.** `ctx.map_event` translates every
   event on the way in and `ctx.mouse_pos()` is how a wheel event finds the pointer, so no
   reader of `event.pos` — interface, tools, effects — knows the grid exists.
+- **The explain layer compares orbital *elements*, never positions**
+  (`src/explain.py`). The world keeps running between an edit's baseline and
+  its report -- at one month a second a 350 ms burst is ten days -- and
+  elements are invariant under motion along the orbit, so a position
+  comparison would report a planet's own progress round its orbit as though
+  the edit had caused it. Temperature rows use
+  `thermal.equilibrium_temperature` for the same reason, and a star's comes
+  from `thermal.pinned_temperature`, since a radiator's heat is set by fusion
+  rather than by what falls on it. **One report per burst, not per scrub
+  notch**: `ExplainRecorder` (`app/state.py`) takes the baseline on the first
+  edit and computes the report after `SETTLE_MS` of quiet, in wall-clock
+  milliseconds -- doubling the Sun is a dozen-plus `set_mass` calls through a
+  held stepper.
+- **`widgets.overlay_x` is where an overlay starts**, so the Fly readout and
+  the explain panel cannot disagree about where the body-list drawer ends.
 
 ### Design decisions worth knowing before changing them
 

@@ -25,6 +25,7 @@ belongs to that panel until the button comes back up.
 import pygame
 
 from ..render import palette, widgets
+from ..render.explain import ExplainPanel
 from ..render.hud import PAD as HUD_PAD
 from ..render.hud import PANEL_WIDTH_CHARS
 from ..render.widgets import (Control, Metrics, draw_button, draw_panel,
@@ -75,6 +76,7 @@ VIEW_BUTTONS = (
     ("view.trails", "trails", "", "T", "Orbit trails"),
     ("view.sizes", "sizes", "", "R", "Real sizes -- everything becomes a dot"),
     ("view.labels", "labels", "", "L", "Name labels"),
+    ("view.explain", "help", "", "Y", "Explain what an edit did"),
     ("view.grid", "grid", "", "G", "Chunkier pixels"),
     ("view.window", "window", "", "W", "Window size"),
     ("view.fullscreen", "fullscreen", "", "Cmd+F", "Fullscreen"),
@@ -137,6 +139,7 @@ class UiLayer:
     def __init__(self, font, hud=None):
         self.font = font
         self.hud = hud
+        self._explain_panel = ExplainPanel(font)
         self.controls = []
         #: (rect, title) slabs drawn under the controls.  They also swallow
         #: clicks where there is no button, so a press on a panel's background
@@ -171,6 +174,7 @@ class UiLayer:
         self._build_inspector_actions(state, m)
         self._build_inspector_expand(state, m)
         self._build_tool_context(state, m)
+        self._build_explain(state, m)
         self._build_body_list(state, m)
         self._build_help(state, m)
         return self.controls
@@ -270,6 +274,38 @@ class UiLayer:
             y += m.btn_h + row_gap
         return width
 
+    def _build_explain(self, state, m):
+        """The close and maths buttons on the what-changed panel.
+
+        The panel itself is drawn by ``render/explain.py`` during the world
+        pass; this only places the two controls on top of it, from a rect
+        computed the same way, so a button cannot be drawn anywhere but on its
+        own panel.  It does not read or write ``state.explain_rect`` --
+        ``App.step_once``'s draw block is the sole writer, since that is what
+        the Fly readout reads from, and this method runs headless in tests
+        with no draw pass at all.
+        """
+        report = state.explain.report if state.explain.enabled else None
+        if report is None or self.hud is None:
+            return
+        rect = self._explain_panel.rect(
+            report, m, widgets.overlay_x(m, state.show_body_list),
+            state.show_maths)
+        self._place([(Control("explain.close", icon="close", compact=True,
+                              tooltip="Close  -- the next edit brings it back"),
+                      pygame.Rect(rect.right - m.icon_btn_w - m.gap,
+                                  rect.y + m.gap, m.icon_btn_w, m.btn_h))])
+        if not report.maths:
+            return
+        control = Control(
+            "explain.maths",
+            label="Hide the maths" if state.show_maths else "Show the maths",
+            tooltip="The relationship behind it, with your numbers in it")
+        width = min(m.button_width(control), rect.width - 2 * m.gap)
+        self._place([(control, pygame.Rect(rect.x + m.gap,
+                                           rect.bottom - m.btn_h - m.gap,
+                                           width, m.btn_h))])
+
     def _build_view_buttons(self, state, m, ctx):
         """Icon toggles along the right of the top bar, then the way out.
 
@@ -298,6 +334,7 @@ class UiLayer:
             "view.trails": state.view.show_trails,
             "view.sizes": state.view.real_size,
             "view.labels": state.view.show_labels,
+            "view.explain": state.explain.enabled,
             "view.grid": ctx is not None and ctx.s != 1,
             "view.window": ctx is not None and not ctx.fullscreen
             and ctx.fraction_index != 0,
@@ -651,6 +688,15 @@ class UiLayer:
             return True
         if cid == "view.labels":
             state.view.show_labels = not state.view.show_labels
+            return True
+        if cid == "view.explain":
+            state.explain.enabled = not state.explain.enabled
+            return True
+        if cid == "explain.close":
+            state.explain.dismiss()
+            return True
+        if cid == "explain.maths":
+            state.show_maths = not state.show_maths
             return True
         if cid == "view.grid":
             state.cycle_grid(ctx)

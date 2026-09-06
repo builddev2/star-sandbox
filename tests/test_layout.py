@@ -173,3 +173,49 @@ def test_the_edit_panel_stays_clear_of_the_transport_bar():
         assert bottom <= metrics.transport_y, \
             "the black hole panel reaches %d, past %d (grid %d)" % (
                 bottom, metrics.transport_y, s)
+
+
+def test_the_explain_panel_fits_at_every_window_size():
+    """A panel drawn past the content band is a panel whose close button
+    cannot be clicked.
+
+    The font comes from ``config.font_px(s)`` -- the grid, not the height --
+    because that is what the application actually uses, and it is what makes
+    this exercise ``ExplainPanel._chars``: at grid 3 the buffer is 213x196
+    with an 8px font, and an unclamped 34-character panel reaches 217.
+    """
+    from src import edits, explain, scenarios
+    from src.render import widgets
+    from src.render.explain import ExplainPanel
+
+    world = scenarios.solar_system(moons=False)
+    before = explain.snapshot(world)
+    i = [b.name for b in world.bodies].index("Sun")
+    edits.set_mass(world, i, 2.0 * float(world.mass[i]))
+    report = explain.diff(before, explain.snapshot(world),
+                          world.bodies[i].id, "mass")
+
+    for s in config.GRID_CHOICES:
+        width, height = config.min_internal(s)
+        font = PixelFont(config.font_px(s))
+        panel = ExplainPanel(font)
+        m = widgets.Metrics(font, width, height)
+        for drawer in (True, False):
+            for maths in (True, False):
+                rect = panel.rect(report, m,
+                                  widgets.overlay_x(m, drawer), maths)
+                assert rect.right <= width, (s, drawer, maths, rect)
+                assert rect.top >= m.content_top
+                assert rect.bottom <= m.content_bottom
+
+    font = PixelFont(config.font_px(1))
+    panel = ExplainPanel(font)
+    for width, height in WINDOWS:
+        m = widgets.Metrics(font, width, height)
+        for drawer in (True, False):
+            for maths in (True, False):
+                rect = panel.rect(report, m,
+                                  widgets.overlay_x(m, drawer), maths)
+                assert rect.right <= width, (width, height, drawer, maths)
+                assert rect.top >= m.content_top
+                assert rect.bottom <= m.content_bottom

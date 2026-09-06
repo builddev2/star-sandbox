@@ -117,6 +117,10 @@ class AppState:
         #: Where the explain panel was last drawn, so the Fly readout can start
         #: below it instead of underneath it.  None when no panel is up.
         self.explain_rect = None
+        #: Whether the explain panel is showing its formulas.  Session-wide
+        #: rather than per-report: someone who wants the maths wants it every
+        #: time, and someone who does not never opens it.
+        self.show_maths = False
         self.selected_id = None
         #: Collapsed by default: a headline number is what a fresh selection
         #: earns, not a page of stats.  Not per-body -- nothing asked for that,
