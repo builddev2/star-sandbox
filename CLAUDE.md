@@ -180,17 +180,40 @@ or fast time scales.
   reader of `event.pos` — interface, tools, effects — knows the grid exists.
 - **The explain layer compares orbital *elements*, never positions**
   (`src/explain.py`). The world keeps running between an edit's baseline and
-  its report -- at one month a second a 350 ms burst is ten days -- and
-  elements are invariant under motion along the orbit, so a position
-  comparison would report a planet's own progress round its orbit as though
-  the edit had caused it. Temperature rows use
-  `thermal.equilibrium_temperature` for the same reason, and a star's comes
-  from `thermal.pinned_temperature`, since a radiator's heat is set by fusion
-  rather than by what falls on it. **One report per burst, not per scrub
-  notch**: `ExplainRecorder` (`app/state.py`) takes the baseline on the first
-  edit and computes the report after `SETTLE_MS` of quiet, in wall-clock
-  milliseconds -- doubling the Sun is a dozen-plus `set_mass` calls through a
-  held stepper.
+  its report -- at one month a second a 350 ms burst is ten days, at ten years
+  a second it is 1278 -- and elements are invariant under motion along the
+  orbit, so a position comparison would report a planet's own progress round
+  its orbit as though the edit had caused it. **Temperature is the one row
+  this argument does not cover, so it is handled differently per body.** The
+  edited body's own Temp row reads the instantaneous `world.temperature` --
+  the number he actually set -- because nothing heats itself: a temperature
+  edit leaves the edited body's own equilibrium bit-identical, so building
+  that row on `thermal.equilibrium_temperature` would diff to nothing and the
+  panel would stay silent on the edit it has the most to say about. Every
+  other body's Temp row uses `thermal.equilibrium_temperature`, because their
+  instantaneous values relax on their own clock and would otherwise report
+  the thermal simulation's own progress as though the edit had caused it, and
+  a star's comes from `thermal.pinned_temperature`, since a radiator's heat is
+  set by fusion rather than by what falls on it. **What keeps the edited
+  body's own instantaneous reading honest is an `_after` snapshot taken
+  synchronously at the write**, not merely on the next frame: `App.step_once`
+  runs `sim.advance` -- which calls `thermal.advance` once, with the *whole*
+  frame's worth of simulated time -- before it calls `explain.settle`, and one
+  frame is not a short time at speed (60+ simulated days at ten years a
+  second), while temperature's relaxation time constant is under a thousandth
+  of a day for anything glowing. A snapshot deferred to "the next frame" would
+  therefore already have relaxed a hot temperature back to equilibrium before
+  ever being captured -- confirmed by measurement, not assumed. So every write
+  path (`EditTool._scrub`, `EditTool._collapse`) calls `ExplainRecorder.note`
+  before the edit and `ExplainRecorder.record` immediately after it, in the
+  same call stack, before anything -- including that frame's own `sim.advance`
+  -- can move the world; `settle`, called once a frame regardless of whether
+  anything was written, only checks the quiet timer and diffs the baseline
+  against the already-frozen `_after`, never taking a snapshot of its own.
+  **One report per burst, not per scrub notch**: the baseline is taken on the
+  first edit and the report is computed after `SETTLE_MS` of quiet, in
+  wall-clock milliseconds -- doubling the Sun is a dozen-plus `set_mass` calls
+  through a held stepper.
 - **`widgets.overlay_x` is where an overlay starts**, so the Fly readout and
   the explain panel cannot disagree about where the body-list drawer ends.
 

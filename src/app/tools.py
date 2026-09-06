@@ -695,9 +695,13 @@ class EditTool(Tool):
             return False
         if state.sim.world.bodies[index].kind != KIND_STAR:
             return False
-        state.explain.note(state.sim.world, state.sim.world.bodies[index].id,
-                           "collapse", pygame.time.get_ticks())
-        edits.collapse(state.sim.world, index)
+        world = state.sim.world
+        state.explain.note(world, world.bodies[index].id, "collapse",
+                           pygame.time.get_ticks())
+        edits.collapse(world, index)
+        # Before sim.refresh() reaches for anything else, and certainly
+        # before this frame's own sim.advance() -- see ExplainRecorder.record.
+        state.explain.record(world)
         state.sim.refresh()
         return True
 
@@ -816,6 +820,12 @@ class EditTool(Tool):
         else:
             edits.cycle_material(world, index, 1 if notches > 0 else -1)
 
+        # After the write and before anything else touches the world: see
+        # ExplainRecorder.record.  sim.refresh() only rebuilds cached
+        # accelerations and does not advance world.time, but this frame's own
+        # sim.advance() -- moments away in App.step_once -- would otherwise
+        # relax a temperature edit before the recorder ever saw it.
+        state.explain.record(world)
         state.sim.refresh()
 
     # This tool draws no overlay: its panel carries every value it used to

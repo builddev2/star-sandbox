@@ -54,6 +54,33 @@ class ExplainRecorder:
 
     So the baseline is taken once, on the first edit of a burst, and the report
     is computed once, when the burst has been quiet for ``SETTLE_MS``.
+
+    The "after" side is *not* a snapshot taken at settle time, and not merely
+    "on the next frame" either.  ``App.step_once`` runs ``sim.advance`` --
+    which calls ``thermal.advance`` once, with the *whole* frame's worth of
+    simulated time -- **before** it calls ``settle``.  So a snapshot deferred
+    to the next ``settle`` call already has one frame of physics baked into
+    it, and one frame is not small in simulated time: at ten years a second a
+    60 fps frame is over 60 simulated days.  Temperature's relaxation time
+    constant is under a thousandth of a day for anything glowing (see
+    ``units.THERMAL_SKIN_DEPTH_M``'s use in ``thermal.py``), which is far
+    shorter than that -- confirmed by direct measurement, not assumed: heating
+    Earth to 3115 K and letting exactly one frame run at ten years a second
+    already relaxes it back to 268 K, indistinguishable from having never
+    written it.  A snapshot taken so much as one frame late would still blame
+    the sim's own progress on the edit, just over a shorter window than the
+    original bug.  Orbital elements do not have this problem -- they are
+    invariant along an orbit -- which is why this class exists to treat
+    temperature specially rather than to delay every snapshot.
+
+    So the "after" snapshot is taken synchronously, in the same call stack as
+    the write itself, before ``step_once`` ever reaches that frame's own
+    ``sim.advance``: every write path calls ``note`` (opens or extends the
+    burst) and then, once the edit is actually made, ``record`` (freezes
+    ``_after``).  ``settle`` -- called once a frame regardless of whether
+    anything was written -- only ever checks the quiet timer and, once it has
+    elapsed, diffs the baseline against that already-frozen ``_after``; it
+    never takes a snapshot of its own.
     """
 
     def __init__(self):
@@ -63,6 +90,9 @@ class ExplainRecorder:
         #: feature costs nothing at all rather than recording invisibly.
         self.enabled = True
         self._baseline = None
+        #: The world exactly as the last write left it -- see the class
+        #: docstring.  None until the first ``record`` of a burst.
+        self._after = None
         self._body_id = None
         self._field = None
         self._last_ms = 0
@@ -80,9 +110,31 @@ class ExplainRecorder:
             self._body_id, self._field = body_id, field
         self._last_ms = now_ms
 
+    def record(self, world):
+        """Call *after* each write, before anything else can move the world.
+
+        This is what makes ``_after`` "the world at the write" rather than
+        "the world one frame later": nothing runs between the edit and this
+        call, in the same tool method, so no physics step -- and no thermal
+        relaxation, whose time constant can be shorter than a single frame at
+        real time-scales -- has a chance to happen first.
+        """
+        if not self.enabled or self._baseline is None:
+            return
+        self._after = explain.snapshot(world)
+
     def settle(self, world, now_ms):
-        """Call once a frame.  Closes a burst that has gone quiet."""
-        if self._baseline is None:
+        """Call once a frame.  Closes a burst that has gone quiet.
+
+        Takes no snapshot itself -- ``record`` already froze ``_after`` at
+        the write -- so this is one float comparison when nothing is pending.
+
+        Off means off (``enabled``): a burst opened while enabled and left
+        open across the toggle must not keep closing (or, before this method
+        existed, snapshotting) and install a report that pops into view when
+        explanations are turned back on.
+        """
+        if not self.enabled or self._baseline is None:
             return
         if now_ms - self._last_ms >= SETTLE_MS:
             self._close(world)
@@ -95,14 +147,24 @@ class ExplainRecorder:
         report and an open burst both name bodies that no longer exist."""
         self.report = None
         self._baseline = None
+        self._after = None
         self._body_id = self._field = None
 
     def _close(self, world):
-        found = explain.diff(self._baseline, explain.snapshot(world),
-                             self._body_id, self._field)
+        """Diff the baseline against ``_after`` -- the world exactly as the
+        last write left it, never a fresh snapshot taken here.
+
+        ``_after`` can still be ``None`` in principle -- a write path that
+        calls ``note`` without ever calling ``record`` -- so this falls back
+        to a fresh snapshot rather than diffing against nothing.  Every real
+        write path (``EditTool._scrub``, ``EditTool._collapse``) calls both.
+        """
+        after = self._after if self._after is not None else explain.snapshot(world)
+        found = explain.diff(self._baseline, after, self._body_id, self._field)
         if found is not None:
             self.report = found
         self._baseline = None
+        self._after = None
         self._body_id = self._field = None
 
 
