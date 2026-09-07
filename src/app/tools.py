@@ -1083,8 +1083,8 @@ class FlyTool(TargetLock, DragPan, Tool):
                             else "Lock a target first"),
                      icon="target",
                      hotkey="A", enabled=has_craft and target is not None,
-                     tooltip=("Point at where it is now and burn -- see what "
-                              "that costs" if has_craft and target is not None
+                     tooltip=("Point straight at it when the burn fires -- "
+                              "see what that costs" if has_craft and target is not None
                               else "Press X, then click where you want to go"))],
         ]
 
@@ -1317,7 +1317,14 @@ class FlyTool(TargetLock, DragPan, Tool):
         return maneuver.Maneuver(due, float(prograde * scale), float(radial * scale))
 
     def _aim_direct(self, state):
-        """Fill the plan with one burn, pointed straight at the target now.
+        """Fill the plan with one burn, pointed at where the target will be
+        standing when that burn fires.
+
+        Not a lead: the aim is at where the target *is* at the moment of the
+        impulse, which is what a child means by "point at Mars and go".  The
+        node is due a quarter of an orbit ahead so the comparison can be read
+        before it commits, and aiming from today's geometry instead would
+        fire 68 degrees off Mars and inflate the miss it reports.
 
         Spends exactly what the transfer would have -- see
         :meth:`compare_plans` -- and shows, rather than tells, why the
