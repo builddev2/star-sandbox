@@ -100,11 +100,15 @@ def _rows(state, ui):
     return [c for c in ui.controls if c.id.startswith("fly.")]
 
 
-def test_the_panel_is_six_rows_and_no_more(state, ui):
+def test_the_panel_is_seven_rows_and_no_more(state, ui):
+    """Was six until "Aim straight at it" needed its own row -- the two
+    full-label buttons already on fly.hohmann's row would not also fit
+    fly.direct at the window floor, so it took the seventh
+    (tests/test_layout.py still enforces that seven fits)."""
     from src.app import config
     state.select(state.sim.world.bodies[_earth_index(state)].id)
     rows = state.tool.controls(state, ui.hud.metrics(*config.min_internal(3)))
-    assert len(rows) == 6
+    assert len(rows) == 7
 
 
 def test_every_control_exists_with_no_craft_selected(state, ui):
@@ -499,6 +503,135 @@ def test_the_craft_index_is_none_when_there_is_no_craft(state):
     assert state.tool._craft_index(state) is None
     craft = state.tool._launch(state)
     assert state.tool._craft_index(state) == state.sim.world.index_of(craft.id)
+
+
+# --- aiming straight at the target: the lesson ---------------------------------------
+
+
+def test_the_direct_plan_costs_about_the_same_as_the_transfer(state):
+    """The whole lesson depends on this: the intuitive shot is given the same
+    fuel the transfer costs, not less and not more."""
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    compare = state.tool.compare_plans(state)
+    assert compare is not None
+    assert compare["direct_dv"] > 0.0
+    assert (abs(compare["direct_dv"] - compare["transfer_dv"])
+            / compare["transfer_dv"] < 0.01)
+
+
+def test_the_direct_shot_misses_badly_while_the_transfer_gets_close(state):
+    """These are the two numbers the panel prints -- pinned to what this
+    simulation's real J2000 state actually produces for Earth and Mars."""
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    compare = state.tool.compare_plans(state)
+    assert compare["direct_miss"] > 1.0
+    assert compare["transfer_miss"] < 0.2
+
+
+def test_compare_plans_reports_the_crafts_own_sideways_speed(state):
+    from src import maneuver
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    index = state.sim.world.index_of(craft.id)
+    state.tool.target_id = _mars_id(state)
+    compare = state.tool.compare_plans(state)
+
+    _attractor, _mu, rel_pos, rel_vel = maneuver.craft_state(state.sim.world, index)
+    real_speed = float(np.hypot(rel_vel[0], rel_vel[1]))
+    assert abs(compare["sideways"] - real_speed) / real_speed < 0.03
+    assert 25.0 < units.to_kms(compare["sideways"]) < 35.0
+
+
+def test_compare_plans_is_none_with_no_craft(state):
+    state.selected_id = None
+    assert state.tool.compare_plans(state) is None
+
+
+def test_compare_plans_is_none_with_no_target(state):
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    state.tool.target_id = None
+    assert state.tool.compare_plans(state) is None
+
+
+def test_compare_plans_survives_the_target_being_deleted_mid_plan(state):
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    state.tool.compare_plans(state)
+    world = state.sim.world
+    world.remove(world.index_of(state.tool.target_id))
+    state.sim.refresh()
+    assert state.tool.compare_plans(state) is None      # must not raise
+
+
+def test_comparing_and_drawing_plans_never_mutates_the_world(state):
+    """Measuring a plan by flying it would corrupt the simulation -- the one
+    defect that matters most here."""
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    world = state.sim.world
+    index = world.index_of(craft.id)
+
+    pos_before = np.array(world.pos)
+    vel_before = np.array(world.vel)
+    fuel_before = craft.fuel_dv
+
+    state.tool.compare_plans(state)
+    surface = pygame.Surface(SIZE)
+    state.tool._draw_paths(surface, state, craft, index)
+
+    assert np.array_equal(world.pos, pos_before)
+    assert np.array_equal(world.vel, vel_before)
+    assert craft.fuel_dv == fuel_before
+
+
+def test_pressing_a_with_no_craft_does_nothing(state):
+    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a, mod=0)
+    state.tool.on_event(event, state)                   # must not raise
+    assert state.tool._craft(state) is None
+
+
+def test_pressing_a_with_no_target_does_nothing(state):
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a, mod=0)
+    state.tool.on_event(event, state)                   # must not raise
+    assert craft.plan == ()
+
+
+def test_pressing_a_sets_a_single_burn_direct_plan(state):
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a, mod=0)
+    state.tool.on_event(event, state)
+    assert len(craft.plan) == 1
+
+
+def test_the_direct_button_exists_with_the_hotkey_a(state, ui):
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    control = next(c for c in _rows(state, ui) if c.id == "fly.direct")
+    assert control.hotkey == "A"
+    assert control.enabled
+
+
+def test_the_comparison_overlay_is_actually_drawn(state):
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    surface = pygame.Surface(SIZE)
+    state.tool.draw_overlay(surface, state, _font())
+    before = _painted(surface)
+    state.tool.target_id = _mars_id(state)
+    state.tool.draw_overlay(surface, state, _font())
+    assert _painted(surface) != before
 
 
 def test_a_plan_the_tank_cannot_afford_says_so(state):

@@ -35,6 +35,7 @@ KEY_HELP = (
     ("F", "follow the selected body"),
     ("1 2 3 4", "Look / Throw / Edit / Fly"),
     ("M", "work out the transfer to the target (Fly)"),
+    ("A", "aim straight at the target (Fly)"),
     ("N", "throw the flight plan away (Fly)"),
     ("C", "collapse a star into a black hole (Edit)"),
     ("K", "lock or unlock the selected field (Edit)"),
