@@ -695,7 +695,13 @@ class EditTool(Tool):
             return False
         if state.sim.world.bodies[index].kind != KIND_STAR:
             return False
-        edits.collapse(state.sim.world, index)
+        world = state.sim.world
+        state.explain.note(world, world.bodies[index].id, "collapse",
+                           pygame.time.get_ticks())
+        edits.collapse(world, index)
+        # Before sim.refresh() reaches for anything else, and certainly
+        # before this frame's own sim.advance() -- see ExplainRecorder.record.
+        state.explain.record(world)
         state.sim.refresh()
         return True
 
@@ -791,6 +797,10 @@ class EditTool(Tool):
         field = fields[min(self.field_index, len(fields) - 1)]
         body = world.bodies[index]
 
+        # Before the write, so the baseline is the state he started from.  The
+        # recorder coalesces the whole held-stepper burst into one report.
+        state.explain.note(world, body.id, field, pygame.time.get_ticks())
+
         if field == "mass":
             edits.set_mass(world, index,
                            edits.scrub_mass(float(world.mass[index]), notches))
@@ -810,6 +820,12 @@ class EditTool(Tool):
         else:
             edits.cycle_material(world, index, 1 if notches > 0 else -1)
 
+        # After the write and before anything else touches the world: see
+        # ExplainRecorder.record.  sim.refresh() only rebuilds cached
+        # accelerations and does not advance world.time, but this frame's own
+        # sim.advance() -- moments away in App.step_once -- would otherwise
+        # relax a temperature edit before the recorder ever saw it.
+        state.explain.record(world)
         state.sim.refresh()
 
     # This tool draws no overlay: its panel carries every value it used to
@@ -1374,16 +1390,8 @@ class FlyTool(TargetLock, DragPan, Tool):
         return max(0.0, units.to_ms(wanted - craft.fuel_dv))
 
     def readout_x(self, state, metrics):
-        """Left edge for the overlay readout, in pixels.
-
-        The body list is open by default and sits in exactly this corner, so
-        the readout starts clear of it when it is showing -- otherwise the
-        fuel figure is drawn underneath the drawer and is simply invisible
-        the first time the tool is opened.
-        """
-        if state.show_body_list:
-            return metrics.pad + widgets.body_list_width(metrics) + metrics.gap
-        return 8
+        """Left edge for the overlay readout, in pixels."""
+        return widgets.overlay_x(metrics, state.show_body_list)
 
     def _draw_readout(self, surface, state, font, craft):
         """Fuel, the countdown, and where the plan puts you.
@@ -1393,7 +1401,11 @@ class FlyTool(TargetLock, DragPan, Tool):
         """
         world = state.sim.world
         x = self.readout_x(state, widgets.Metrics(font, *surface.get_size()))
-        y = 34
+        # Below the explain panel when one is up: both are overlays in the same
+        # corner, and an edit followed by a switch to Fly puts both on screen.
+        panel = state.explain_rect
+        y = 34 if panel is None else panel.bottom + widgets.Metrics(
+            font, *surface.get_size()).gap
         line = font.height + 2
 
         fuel_ms = units.to_ms(craft.fuel_dv)

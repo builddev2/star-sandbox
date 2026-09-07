@@ -998,3 +998,78 @@ def test_reselecting_the_same_body_brings_the_tether_back(state, ui):
 
     state.select(body.id, now=now)
     assert _tether_visible(ui, state)
+
+
+# --- the explain panel --------------------------------------------------------------
+
+def _make_a_report(state):
+    from src.app.state import SETTLE_MS
+    from src.app.tools import EditTool
+    state.set_tool(EditTool)
+    world = state.sim.world
+    index = [b.name for b in world.bodies].index("Sun")
+    state.select(world.bodies[index].id)
+    state.tool.field_index = 0          # mass
+    state.tool._scrub(state, 12)
+    state.explain.settle(world, pygame.time.get_ticks() + SETTLE_MS + 1)
+    assert state.explain.report is not None
+
+
+def test_the_explain_panel_has_a_close_button(state, ui):
+    _make_a_report(state)
+    ui.build(state, SIZE)
+    assert find(ui, "explain.close") is not None
+    ui.perform(find(ui, "explain.close"), state)
+    assert state.explain.report is None
+
+
+def test_the_maths_button_toggles_and_disappears_with_the_report(state, ui):
+    _make_a_report(state)
+    ui.build(state, SIZE)
+    assert state.show_maths is False
+    ui.perform(find(ui, "explain.maths"), state)
+    assert state.show_maths is True
+    state.explain.dismiss()
+    ui.build(state, SIZE)
+    assert find(ui, "explain.maths") is None
+
+
+def test_y_is_documented_and_has_a_button(state, ui):
+    from src.render.hud import KEY_HELP
+    assert "Y" in {combo for combo, _ in KEY_HELP}
+    ui.build(state, SIZE)
+    assert find(ui, "view.explain").hotkey == "Y"
+
+
+@pytest.mark.parametrize("s", (1, 2, 3))
+def test_view_cluster_labels_fit_their_button_at_every_grid(s):
+    """Every view-cluster button is drawn at the fixed square ``icon_btn_w``,
+    and drawing clips to it -- so a label wider than the box is not a
+    neighbour-spilling bug, it is a silently half-erased glyph (this is what
+    "Why" did at the default grid: 25px of label in an 18px button).  A drawn
+    icon fits its box by construction (see the "explain" icon test), so this
+    only has teeth for a button that still draws a label instead -- which is
+    exactly the case this guards against reintroducing.
+    """
+    from src.app import config
+    from src.app.ui import VIEW_BUTTONS
+    from src.render.pixelfont import PixelFont
+    from src.render.widgets import Metrics
+    font = PixelFont(config.font_px(s))
+    w, h = config.min_internal(s)
+    m = Metrics(font, w, h)
+    for cid, icon, label, key, tip in VIEW_BUTTONS:
+        if icon or not label:
+            continue
+        assert font.width(label) <= m.icon_btn_w, (
+            "%s's label %r is %dpx wide, wider than the %dpx button at "
+            "grid %d" % (cid, label, font.width(label), m.icon_btn_w, s))
+
+
+def test_turning_explanations_off_hides_a_standing_report(state, ui):
+    _make_a_report(state)
+    ui.build(state, SIZE)
+    ui.perform(find(ui, "view.explain"), state)
+    assert state.explain.enabled is False
+    ui.build(state, SIZE)
+    assert find(ui, "explain.close") is None

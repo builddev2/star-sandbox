@@ -4,9 +4,10 @@ import sys
 
 import pygame
 
-from ..render import palette, scale
+from ..render import palette, scale, widgets
 from ..render.camera import Camera
 from ..render.draw import ViewSettings, WorldRenderer
+from ..render.explain import ExplainPanel
 from ..render.hud import Hud
 from ..render.pixelfont import PixelFont
 from ..render.sprites import SpriteCache
@@ -61,6 +62,7 @@ class App:
         self.renderer = WorldRenderer(self.cache, self.font)
         self.hud = Hud(self.font)
         self.ui = UiLayer(self.font, self.hud)
+        self.explain_panel = ExplainPanel(self.font)
         self.stars = Starfield(self.ctx.width, self.ctx.height)
         self.cache.clear()
 
@@ -104,6 +106,7 @@ class App:
         frame_dt = self.clock.tick(60) / 1000.0
         state.sim.advance(state.days_per_second * frame_dt)
         state.sim.update_trails()
+        state.explain.settle(state.sim.world, pygame.time.get_ticks())
         state.camera.update_follow(state.sim.world)
         for impact in state.sim.impacts:
             state.effects.spawn(impact)
@@ -117,6 +120,14 @@ class App:
         # any time-scale, and frame_dt is real seconds.
         state.effects.update(frame_dt)
         state.effects.draw(surface, state.camera)
+        report = state.explain.report if state.explain.enabled else None
+        if report is not None:
+            m = self.hud.metrics(surface.get_width(), surface.get_height())
+            state.explain_rect = self.explain_panel.draw(
+                surface, report, m,
+                widgets.overlay_x(m, state.show_body_list), state.show_maths)
+        else:
+            state.explain_rect = None
         state.tool.draw_overlay(surface, state, self.font)
         self.hud.draw(surface, state)
         # Built at the end of the frame, from the state that is about to be

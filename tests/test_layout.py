@@ -173,3 +173,80 @@ def test_the_edit_panel_stays_clear_of_the_transport_bar():
         assert bottom <= metrics.transport_y, \
             "the black hole panel reaches %d, past %d (grid %d)" % (
                 bottom, metrics.transport_y, s)
+
+
+def test_the_explain_panel_fits_at_every_window_size():
+    """A panel drawn past the content band is a panel whose close button
+    cannot be clicked.
+
+    The font comes from ``config.font_px(s)`` -- the grid, not the height --
+    because that is what the application actually uses, and it is what makes
+    this exercise ``ExplainPanel._chars``: at grid 3 the buffer is 213x196
+    with an 8px font, and an unclamped 34-character panel reaches 217.
+    """
+    from src import edits, explain, scenarios
+    from src.app.state import AppState
+    from src.app.ui import UiLayer
+    from src.render import widgets
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.render.explain import ExplainPanel
+    from src.render.hud import Hud
+    from src.sim import Simulation
+
+    world = scenarios.solar_system(moons=False)
+    before = explain.snapshot(world)
+    i = [b.name for b in world.bodies].index("Sun")
+    edits.set_mass(world, i, 2.0 * float(world.mass[i]))
+    report = explain.diff(before, explain.snapshot(world),
+                          world.bodies[i].id, "mass")
+
+    def find(ui, cid):
+        return next((c for c in ui.controls if c.id == cid), None)
+
+    for s in config.GRID_CHOICES:
+        width, height = config.min_internal(s)
+        font = PixelFont(config.font_px(s))
+        panel = ExplainPanel(font)
+        m = widgets.Metrics(font, width, height)
+        for drawer in (True, False):
+            for maths in (True, False):
+                rect = panel.rect(report, m,
+                                  widgets.overlay_x(m, drawer), maths)
+                assert rect.right <= width, (s, drawer, maths, rect)
+                assert rect.top >= m.content_top
+                assert rect.bottom <= m.content_bottom
+
+                # The close and (when shown) maths buttons ui.py places on
+                # top of this panel must land inside it -- a button drawn on
+                # its own panel is the whole point of _build_explain reading
+                # the same rect this test just computed.
+                state = AppState(Simulation(world), Camera(width, height),
+                                 ViewSettings())
+                state.explain.report = report
+                state.show_body_list = drawer
+                state.show_maths = maths
+                ui = UiLayer(font, Hud(font))
+                ui.build(state, (width, height), None)
+
+                close = find(ui, "explain.close")
+                assert close is not None
+                assert rect.contains(close.rect), (s, drawer, maths, rect,
+                                                    close.rect)
+                if maths and report.maths:
+                    button = find(ui, "explain.maths")
+                    assert button is not None
+                    assert rect.contains(button.rect), (
+                        s, drawer, maths, rect, button.rect)
+
+    font = PixelFont(config.font_px(1))
+    panel = ExplainPanel(font)
+    for width, height in WINDOWS:
+        m = widgets.Metrics(font, width, height)
+        for drawer in (True, False):
+            for maths in (True, False):
+                rect = panel.rect(report, m,
+                                  widgets.overlay_x(m, drawer), maths)
+                assert rect.right <= width, (width, height, drawer, maths)
+                assert rect.top >= m.content_top
+                assert rect.bottom <= m.content_bottom
