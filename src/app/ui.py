@@ -76,7 +76,7 @@ VIEW_BUTTONS = (
     ("view.trails", "trails", "", "T", "Orbit trails"),
     ("view.sizes", "sizes", "", "R", "Real sizes -- everything becomes a dot"),
     ("view.labels", "labels", "", "L", "Name labels"),
-    ("view.explain", "", "Why", "Y", "Explain what an edit did"),
+    ("view.explain", "explain", "", "Y", "Explain what an edit did"),
     ("view.grid", "grid", "", "G", "Chunkier pixels"),
     ("view.window", "window", "", "W", "Window size"),
     ("view.fullscreen", "fullscreen", "", "Cmd+F", "Fullscreen"),

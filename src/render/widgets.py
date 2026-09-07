@@ -605,3 +605,18 @@ def draw_icon(surface, name, rect, colour):
                         0.2, 3.3, 1)
         pygame.draw.line(surface, colour, (cx, cy), (cx, cy + max(1, r // 2)), 1)
         surface.set_at((cx, min(rect.bottom - 1, cy + r)), colour)
+    elif name == "explain":
+        # Two dots -- before, then after -- linked by a short arrow: the
+        # panel's own vocabulary, drawn rather than typed the way "Why" was.
+        dot = max(1, r // 3)
+        left = (x + dot + 1, cy)
+        right = (rect.right - dot - 2, cy)
+        pygame.draw.circle(surface, colour, left, dot)
+        pygame.draw.circle(surface, colour, right, dot)
+        head = max(1, dot)
+        shaft_end = max(left[0] + dot, right[0] - dot - head)
+        pygame.draw.line(surface, colour, (left[0] + dot, cy), (shaft_end, cy), 1)
+        pygame.draw.line(surface, colour, (shaft_end, cy - 1),
+                         (shaft_end + head, cy), 1)
+        pygame.draw.line(surface, colour, (shaft_end, cy + 1),
+                         (shaft_end + head, cy), 1)

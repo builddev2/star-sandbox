@@ -129,10 +129,12 @@ class ExplainRecorder:
         Takes no snapshot itself -- ``record`` already froze ``_after`` at
         the write -- so this is one float comparison when nothing is pending.
 
-        Off means off (``enabled``): a burst opened while enabled and left
-        open across the toggle must not keep closing (or, before this method
-        existed, snapshotting) and install a report that pops into view when
-        explanations are turned back on.
+        Off means off (``enabled``), but not by holding the report back: a
+        burst still open when the toggle flips freezes right there, because
+        ``note`` refuses to open or extend one while disabled.  The next call
+        to this method after re-enabling closes that frozen burst and installs
+        its report same as any other -- what disabling withholds is anything
+        from the disabled interval showing up in it, not the report itself.
         """
         if not self.enabled or self._baseline is None:
             return

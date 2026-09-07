@@ -81,9 +81,17 @@ def snapshot(world):
     """Freeze every body in the quantities an edit can move.
 
     O(n^2), through ``thermal.equilibrium_temperatures`` and one
-    ``dominant_attractor`` scan per body.  That is affordable because this runs
-    once per *burst* -- once when a held stepper starts and once when it stops --
-    and never per frame.
+    ``dominant_attractor`` scan per body.  ``ExplainRecorder.record`` calls
+    this once per *write*, not once per burst: the world keeps moving between
+    a write and the eventual ``settle``, and unlike an orbital element,
+    temperature does not hold still along the way -- ``record`` has to freeze
+    it at the write itself or a later snapshot would blame the sim's own
+    progress on an edit that never touched it (see the class docstring).
+    Measured cost: 0.50 ms at 15 bodies, 1.94 ms at 80, 5.91 ms at the
+    200-body ``World.MAX_BODIES`` ceiling.  The horizontal-drag path in
+    ``EditTool.on_event`` is where that cost would first show: it calls
+    ``_scrub`` -- and so this -- once per qualifying ``MOUSEMOTION``, with no
+    cap on how many can arrive in one frame.
     """
     equilibrium = thermal.equilibrium_temperatures(world)
     bodies = {}
@@ -609,7 +617,7 @@ def _horizon_formula(state):
     return Formula(
         general="r = 2 G M / c^2",
         substituted="r = %s km, for %s %s of mass"
-                    % ("{:,.1f}".format(units.to_km(state.radius)), suns,
+                    % (_plain_number(units.to_km(state.radius)), suns,
                        "Sun" if singular else "Suns"))
 
 

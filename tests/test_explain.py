@@ -445,7 +445,7 @@ def test_the_horizon_formula_states_a_radius_not_a_diameter(world):
                                                "spin", ())
                   if "2 G M / c^2" in f.general)
     assert "across" not in formula.substituted
-    assert "3.0 km" in formula.substituted
+    assert "2.95 km" in formula.substituted
     assert "1.00 Sun of mass" in formula.substituted
     assert "Suns" not in formula.substituted
 

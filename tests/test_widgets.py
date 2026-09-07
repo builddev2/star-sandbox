@@ -173,7 +173,7 @@ ICON_NAMES = ("look", "throw", "edit", "play", "pause", "slower", "faster", "res
               "trails", "sizes", "labels", "grid", "fullscreen", "follow", "flyto",
               "stop", "trash", "plus", "minus", "left", "right", "up", "down",
               "list", "close", "circle", "star", "blackhole", "help", "home", "power",
-              "lock", "unlock")
+              "lock", "unlock", "explain")
 
 
 @pytest.mark.parametrize("name", ICON_NAMES)
@@ -274,3 +274,34 @@ def test_the_lock_and_unlock_icons_read_as_a_pair_at_button_size():
                 "%s escaped its box" % name
     assert drawn["lock"] != drawn["unlock"], \
         "locked and unlocked draw the same thing"
+
+
+@pytest.mark.parametrize("s", (1, 2, 3))
+def test_the_explain_icon_fits_the_view_button_at_every_grid(s):
+    """``view.explain`` used to draw the label "Why" -- 25px wide in the 18px
+    button the default grid gives it, so roughly half the W and half the y
+    were clipped away.  A drawn icon is supposed to fit its box by
+    construction; render it at the exact size ``_draw_button_content`` gives a
+    compact icon button at each grid and confirm it actually paints, and
+    paints nothing outside that box.
+    """
+    from src.app import config
+    from src.render import widgets
+    from src.render.pixelfont import PixelFont
+    font = PixelFont(config.font_px(s))
+    gap = max(2, font.height // 6)
+    btn_h = font.height + 2 * gap + 2
+    icon_side = max(8, font.height - 2)
+    side = min(icon_side, btn_h - 4, btn_h - 4)
+    surface = pygame.Surface((btn_h + 8, btn_h + 8))
+    surface.fill((0, 0, 0))
+    rect = pygame.Rect(0, 0, side, side)
+    rect.center = surface.get_rect().center
+    widgets.draw_icon(surface, "explain", rect, (255, 255, 255))
+    drawn = [(x, y) for x in range(surface.get_width())
+             for y in range(surface.get_height())
+             if surface.get_at((x, y))[:3] != (0, 0, 0)]
+    assert drawn, "explain drew nothing at grid %d" % s
+    for point in drawn:
+        assert rect.collidepoint(point), \
+            "explain escaped its %dpx box at grid %d" % (side, s)
