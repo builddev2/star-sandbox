@@ -21,6 +21,7 @@ from .. import edits, maneuver, materials, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
                     KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 from ..render import hud, palette, widgets
+from ..render.explain import wrap
 from ..render.widgets import Control
 
 #: A press-and-release within this many pixels counts as a click, not a drag.
@@ -866,6 +867,9 @@ class FlyTool(TargetLock, DragPan, Tool):
         #: it without recomputing it.  Established here rather than left to
         #: spring into existence on first read.
         self._encounter_cache = None
+        #: Cached the same way, and for the same reason: comparing the two
+        #: plans runs a closest-approach search apiece.
+        self._compare_cache = None
 
     # --- what we are flying -----------------------------------------------------
 
@@ -1069,6 +1073,19 @@ class FlyTool(TargetLock, DragPan, Tool):
              Control("fly.clear", icon="close", hotkey="N", compact=True,
                      enabled=has_craft and node is not None,
                      tooltip="Throw the plan away")],
+            [Control("fly.direct",
+                     # Disabled text follows fly.hohmann's own wording: a
+                     # greyed-out button that explains nothing is a dead end
+                     # (tests/test_tools_fly.py::
+                     # test_every_disabled_fly_button_says_what_is_missing).
+                     label=("Aim straight at it" if has_craft and target is not None
+                            else "Launch, then lock a target" if not has_craft
+                            else "Lock a target first"),
+                     icon="target",
+                     hotkey="A", enabled=has_craft and target is not None,
+                     tooltip=("Point straight at it when the burn fires -- "
+                              "see what that costs" if has_craft and target is not None
+                              else "Press X, then click where you want to go"))],
         ]
 
     def perform(self, control, state):
@@ -1092,6 +1109,9 @@ class FlyTool(TargetLock, DragPan, Tool):
             return True
         if cid == "fly.hohmann":
             self._plan_transfer(state)
+            return True
+        if cid == "fly.direct":
+            self._aim_direct(state)
             return True
         if cid in ("fly.when", "fly.prograde", "fly.radial"):
             field = cid.split(".", 1)[1]
@@ -1118,37 +1138,47 @@ class FlyTool(TargetLock, DragPan, Tool):
                                      maneuver.scrub_dv(node.radial, notches))
         self._replace_node(state, node)
 
-    def _plan_transfer(self, state):
-        """Fill the plan with the two burns of a Hohmann transfer."""
+    def _resolve_hohmann(self, state):
+        """Craft, target, attractor, and the Hohmann solution between their
+        mean radii -- the resolution :meth:`_plan_transfer`, :meth:`_direct_node`
+        and :meth:`_compute_comparison` all need before they diverge into what
+        to do with it.
+
+        **Semi-major axes, not present distances.**  A Hohmann transfer is
+        derived for two circular orbits, and the one radius that stands in
+        for a real elliptical one is its semi-major axis.  Mars swings
+        between 1.38 and 1.67 AU: aiming at wherever it is standing today
+        sends the craft to a radius Mars has already left by the time it
+        arrives, and the phase-angle wait -- which assumes a circular mean
+        motion -- would be computed from a period that does not exist.
+        Measured, aiming at the instantaneous radius missed Mars by 1.9 AU.
+
+        ``None`` for every reason those callers already return without
+        touching anything: no craft, no target, the craft sitting on its own
+        attractor's centre, or an orbit degenerate enough that
+        :func:`maneuver.hohmann` cannot answer.
+        """
         craft = self._craft(state)
         world = state.sim.world
         index = self._craft_index(state)
         target = self._target_index(world)
         if craft is None or index is None or target is None:
-            return
+            return None
 
         state_now = maneuver.craft_state(world, index)
         if state_now is None:
-            return
+            return None
         attractor, mu, rel_pos, rel_vel = state_now
         if target == attractor:
-            return
+            return None
 
         target_rel = world.pos[target] - world.pos[attractor]
         target_vel = world.vel[target] - world.vel[attractor]
 
-        # **Semi-major axes, not present distances.**  A Hohmann transfer is
-        # derived for two circular orbits, and the one radius that stands in
-        # for a real elliptical one is its semi-major axis.  Mars swings
-        # between 1.38 and 1.67 AU: aiming at wherever it is standing today
-        # sends the craft to a radius Mars has already left by the time it
-        # arrives, and the phase-angle wait -- which assumes a circular mean
-        # motion -- would be computed from a period that does not exist.
-        # Measured, aiming at the instantaneous radius missed Mars by 1.9 AU.
         r1 = _mean_radius(mu, rel_pos, rel_vel)
         r2 = _mean_radius(mu, target_rel, target_vel)
         if r1 <= 0.0 or r2 <= 0.0:
-            return
+            return None
 
         solved = maneuver.hohmann(
             mu, r1, r2,
@@ -1156,9 +1186,29 @@ class FlyTool(TargetLock, DragPan, Tool):
             math.atan2(float(target_rel[1]), float(target_rel[0])))
         if solved is None:
             # A degenerate orbit -- a craft sitting on its attractor's centre.
-            # There is no transfer to describe, so leave the plan alone rather
-            # than writing burns derived from a division that did not happen.
+            # There is no transfer to describe, so leave the caller to do
+            # nothing rather than write burns derived from a division that
+            # did not happen.
+            return None
+
+        return {
+            "craft": craft, "world": world, "index": index, "target": target,
+            "attractor": attractor, "mu": mu,
+            "rel_pos": rel_pos, "rel_vel": rel_vel,
+            "target_rel": target_rel, "target_vel": target_vel,
+            "solved": solved,
+        }
+
+    def _plan_transfer(self, state):
+        """Fill the plan with the two burns of a Hohmann transfer."""
+        resolved = self._resolve_hohmann(state)
+        if resolved is None:
             return
+        craft, world = resolved["craft"], resolved["world"]
+        mu = resolved["mu"]
+        rel_pos, rel_vel = resolved["rel_pos"], resolved["rel_vel"]
+        target_rel, target_vel = resolved["target_rel"], resolved["target_vel"]
+        solved = resolved["solved"]
 
         # The circular-orbit window is the first guess; this slides it until
         # the target really is at the arrival point, which matters because
@@ -1174,6 +1224,206 @@ class FlyTool(TargetLock, DragPan, Tool):
                               solved["arrive_dv"], 0.0),
         )
         state.sim.refresh()
+
+    def _direct_node(self, state):
+        """The single burn an intuitive "point at it and go" shot would fire.
+
+        Same budget the transfer costs -- ``abs(depart_dv) + abs(arrive_dv)``
+        from the very same :func:`maneuver.hohmann` call -- spent along the
+        straight line from where the craft will be to where the target will
+        be, both at the instant the burn actually fires.  The node it becomes
+        fires later, at the same lead :meth:`_ensure_node` uses, so "aim
+        straight at it" has to mean straight at where it really is *then*,
+        not a direction frozen from today's geometry and rotated stale by the
+        time it goes off -- both bodies are propagated on their own two-body
+        orbits (:func:`maneuver.node_state` for the craft,
+        :func:`orbits.propagate` for the target, on the same ``mu`` the rest
+        of this comparison already treats them as sharing) to the due time
+        before the gap between them is measured.  This is not leading the
+        target: it is pointing at where the target actually is at the moment
+        of the burn, which is what the label and tooltip both claim.
+
+        The burn direction is fixed in the world frame at that due-time
+        geometry, then re-expressed in whatever prograde/radial frame the
+        craft is in at that same instant -- the direction and radius vectors
+        :func:`maneuver.node_state` already returned.  Solving the 2x2 system
+        against that frame is what makes the fired burn equal the intended
+        vector rather than one rotated by however far the craft coasts before
+        it goes off.
+
+        The two axes coincide only on a circular orbit, so they are solved as
+        the 2x2 system they really are rather than assumed orthogonal, and
+        the result is rescaled to ``budget`` exactly: without that, an
+        eccentric orbit would silently charge and report a different cost
+        than the transfer even though the whole comparison's point is that
+        the two are equal.
+
+        ``None`` for every reason :meth:`_plan_transfer` already returns
+        without touching anything -- no craft, no target, a degenerate orbit
+        -- and here alone: a velocity too close to purely radial for the
+        prograde/radial basis to be trusted (``abs(det) < 1e-3`` is the
+        cosine of the flight-path angle, so this rejects anything closer than
+        0.06 degrees from exactly radial), or a raw solve more than 4x
+        ``budget`` -- the tell that the basis was ill-conditioned even though
+        the determinant guard passed, since a well-conditioned solve never
+        needs to be rescaled down by more than the eccentricity itself asks.
+        """
+        resolved = self._resolve_hohmann(state)
+        if resolved is None:
+            return None
+        world, index = resolved["world"], resolved["index"]
+        mu = resolved["mu"]
+        target_rel, target_vel = resolved["target_rel"], resolved["target_vel"]
+        solved = resolved["solved"]
+        budget = abs(solved["depart_dv"]) + abs(solved["arrive_dv"])
+
+        due = world.time + self._default_lead(state)
+        found = maneuver.node_state(world, index, maneuver.Maneuver(due))
+        if found is None:
+            return None
+        _mu2, pos_due, vel_due = found
+
+        dt = due - world.time
+        target_pos_due, _target_vel_due = orbits.propagate(
+            mu, target_rel, target_vel, dt)
+
+        gap = target_pos_due - pos_due
+        gap_distance = float(np.hypot(gap[0], gap[1]))
+        if gap_distance <= 0.0:
+            return None
+        burn = budget * (gap / gap_distance)
+
+        speed = float(np.hypot(vel_due[0], vel_due[1]))
+        distance = float(np.hypot(pos_due[0], pos_due[1]))
+        if speed <= 0.0 or distance <= 0.0:
+            return None
+        prograde_axis = vel_due / speed
+        radial_axis = pos_due / distance
+        basis = np.array([prograde_axis, radial_axis]).T
+        det = basis[0, 0] * basis[1, 1] - basis[0, 1] * basis[1, 0]
+        # 1e-3 is the cosine of the flight-path angle at 89.94 degrees from
+        # radial -- orders of magnitude above the float noise a near-radial
+        # state produces, unlike the 1e-12 this used to be guarded at.
+        if abs(det) < 1e-3:
+            return None
+        prograde, radial = np.linalg.solve(basis, burn)
+        raw = math.hypot(prograde, radial)
+        # A well-conditioned solve is never far from `budget`; a solve that
+        # blows past it by more than 4x is the ill-conditioned case showing
+        # up directly, not by proxy through the determinant.
+        if raw <= 0.0 or raw > 4.0 * budget:
+            return None
+        scale = budget / raw
+        return maneuver.Maneuver(due, float(prograde * scale), float(radial * scale))
+
+    def _aim_direct(self, state):
+        """Fill the plan with one burn, pointed at where the target will be
+        standing when that burn fires.
+
+        Not a lead: the aim is at where the target *is* at the moment of the
+        impulse, which is what a child means by "point at Mars and go".  The
+        node is due a quarter of an orbit ahead so the comparison can be read
+        before it commits, and aiming from today's geometry instead would
+        fire 68 degrees off Mars and inflate the miss it reports.
+
+        Spends exactly what the transfer would have -- see
+        :meth:`compare_plans` -- and shows, rather than tells, why the
+        intuitive shot cannot compete with the transfer's two carefully
+        timed ones.
+        """
+        craft = self._craft(state)
+        if craft is None:
+            return
+        node = self._direct_node(state)
+        if node is None:
+            return
+        craft.plan = (node,)
+        state.sim.refresh()
+
+    def _compare_key(self, state):
+        craft = self._craft(state)
+        if craft is None:
+            return None
+        # Clears a stale lock as a side effect, so a target deleted since the
+        # last call invalidates the cache instead of the key looking
+        # unchanged and handing back a result for a body no longer there.
+        self._target_index(state.sim.world)
+        return (craft.id, self.target_id)
+
+    def compare_plans(self, state):
+        """Both outcomes, computed for display whether or not either is
+        loaded: what the intuitive shot costs and where it ends up, against
+        what the transfer costs and where *it* ends up.
+
+        ``None`` with no craft or no locked target.  Everything else is
+        read, never flown: :func:`maneuver.node_state`, ``burn_velocity``
+        and :func:`maneuver.closest_approach` describe what a plan would do
+        without applying it, which is the only way to measure a plan
+        without corrupting the very simulation the comparison exists to
+        explain.
+
+        Cached the way :meth:`_encounter` is: a closest-approach search is a
+        few hundred Kepler propagations, and it must not run twice for one
+        frame.  The trade is the same one that cache already makes -- up to
+        ``ENCOUNTER_TTL_MS`` of staleness while the world moves underneath
+        an unchanged craft and target.
+        """
+        key = self._compare_key(state)
+        if key is None or self.target_id is None:
+            self._compare_cache = None
+            return None
+
+        now = pygame.time.get_ticks()
+        cached = self._compare_cache
+        if (cached is not None and cached[0] == key
+                and now - cached[1] < self.ENCOUNTER_TTL_MS):
+            return cached[2]
+
+        result = self._compute_comparison(state)
+        self._compare_cache = (key, now, result)
+        return result
+
+    def _compute_comparison(self, state):
+        resolved = self._resolve_hohmann(state)
+        if resolved is None:
+            return None
+        craft, world = resolved["craft"], resolved["world"]
+        index, target = resolved["index"], resolved["target"]
+        mu = resolved["mu"]
+        rel_pos, rel_vel = resolved["rel_pos"], resolved["rel_vel"]
+        target_rel, target_vel = resolved["target_rel"], resolved["target_vel"]
+        solved = resolved["solved"]
+
+        transfer_dv = abs(solved["depart_dv"]) + abs(solved["arrive_dv"])
+        sideways = float(np.hypot(rel_vel[0], rel_vel[1]))
+
+        # The same two burns _plan_transfer would write, flown in memory only.
+        wait = maneuver.refine_window(mu, rel_pos, rel_vel,
+                                      target_rel, target_vel,
+                                      solved["wait_days"], solved["transfer_days"])
+        depart = world.time + wait
+        transfer_plan = (
+            maneuver.Maneuver(depart, solved["depart_dv"], 0.0),
+            maneuver.Maneuver(depart + solved["transfer_days"], solved["arrive_dv"], 0.0))
+        transfer_result = _closest_approach_for_plan(world, index, target, transfer_plan)
+        transfer_miss = None if transfer_result is None else transfer_result["distance"]
+
+        direct_node = self._direct_node(state)
+        direct_dv = None if direct_node is None else direct_node.magnitude
+        direct_result = (None if direct_node is None else
+                         _closest_approach_for_plan(world, index, target, (direct_node,)))
+        direct_miss = None if direct_result is None else direct_result["distance"]
+
+        return {
+            "direct_dv": direct_dv,
+            "transfer_dv": transfer_dv,
+            "direct_miss": direct_miss,
+            "transfer_miss": transfer_miss,
+            "sideways": sideways,
+            "affordable_direct": (direct_dv is not None
+                                  and direct_dv <= craft.fuel_dv),
+            "affordable_transfer": transfer_dv <= craft.fuel_dv,
+        }
 
     # --- events -----------------------------------------------------------------
 
@@ -1196,6 +1446,11 @@ class FlyTool(TargetLock, DragPan, Tool):
                 if (self._craft(state) is not None
                         and self._target_index(state.sim.world) is not None):
                     self._plan_transfer(state)
+                return True
+            if event.key == pygame.K_a:
+                if (self._craft(state) is not None
+                        and self._target_index(state.sim.world) is not None):
+                    self._aim_direct(state)
                 return True
             if event.key in (pygame.K_UP, pygame.K_DOWN):
                 step = -1 if event.key == pygame.K_UP else 1
@@ -1261,39 +1516,9 @@ class FlyTool(TargetLock, DragPan, Tool):
         world = state.sim.world
         index = self._craft_index(state)
         target = self._target_index(world)
-        found = maneuver.craft_state(world, index) if index is not None else None
-        if found is None or target is None:
-            self._encounter_cache = (key, now, None)
-            return None
-
-        attractor, mu, rel_pos, rel_vel = found
-        if target == attractor:
-            self._encounter_cache = (key, now, None)
-            return None
-
-        clock = float(world.time)
-        for node in self._craft(state).plan:
-            dt = float(node.due_time) - clock
-            if dt > 0.0:
-                rel_pos, rel_vel = orbits.propagate(mu, rel_pos, rel_vel, dt)
-                clock = float(node.due_time)
-            rel_vel = maneuver.burn_velocity(rel_pos, rel_vel, node)
-
-        target_pos = world.pos[target] - world.pos[attractor]
-        target_vel = world.vel[target] - world.vel[attractor]
-        lead = max(0.0, clock - float(world.time))
-        if lead > 0.0:
-            target_pos, target_vel = orbits.propagate(mu, target_pos,
-                                                      target_vel, lead)
-
-        el = orbits.elements_from_state(mu, rel_pos, rel_vel)
-        horizon = el["period"] if el["period"] is not None else 2000.0
-        result = maneuver.closest_approach(mu, rel_pos, rel_vel,
-                                           target_pos, target_vel,
-                                           horizon_days=min(horizon, 4000.0),
-                                           samples=200)
-        result["attractor"] = attractor
-        result["mu"] = mu
+        craft = self._craft(state)
+        result = (None if index is None or target is None or craft is None
+                  else _closest_approach_for_plan(world, index, target, craft.plan))
         self._encounter_cache = (key, now, result)
         return result
 
@@ -1340,6 +1565,19 @@ class FlyTool(TargetLock, DragPan, Tool):
             # is context, so it is drawn a tier back.
             colour = palette.ACCENT if k == 0 else palette.AIM_GOOD
             self._stroke(surface, camera, points, origin, bound, colour)
+
+        # The intuitive shot, in a colour that reads as "wrong" against the
+        # transfer's ACCENT -- drawn from a throwaway plan so comparing the
+        # two costs nothing the craft is actually committed to.
+        if self.compare_plans(state) is not None:
+            direct_node = self._direct_node(state)
+            if direct_node is not None:
+                _direct_attractor, direct_conics = maneuver.plan_conics(
+                    world, index, (direct_node,), samples=160)
+                if direct_conics:
+                    points, bound = direct_conics[0]
+                    self._stroke(surface, camera, points, origin, bound,
+                                palette.DANGER)
         return attractor
 
     @staticmethod
@@ -1452,6 +1690,77 @@ class FlyTool(TargetLock, DragPan, Tool):
                       % (world.bodies[target].name,
                          hud.format_length(encounter["distance"])),
                       palette.AIM_GOOD)
+            y += line
+
+        self._draw_comparison(surface, state, font, x, y, line)
+
+    def _draw_comparison(self, surface, state, font, x, y, line):
+        """Why pointing at the target and burning is not the same as a
+        transfer -- the two plans, their cost, and where each one ends up.
+
+        Never drawn in the panel: it is already at its floor-size row limit
+        (see ``controls``' own comment on ``fly.direct``), and this is the
+        same trade ``_draw_readout``'s docstring already makes for the rest
+        of this readout.
+
+        Bottom-clipped against ``Metrics.content_bottom``: at the coarse grid
+        floors the sentence's last wrapped line otherwise lands on the
+        transport band.  The blank line between the numbers and the prose is
+        dropped first, and only if that still does not fit does the prose
+        itself lose its trailing lines -- a coarse grid loses whitespace
+        before it loses words.
+        """
+        compare = self.compare_plans(state)
+        if compare is None:
+            return
+        world = state.sim.world
+        target = self._target_index(world)
+        name = world.bodies[target].name if target is not None else "it"
+        metrics = widgets.Metrics(font, *surface.get_size())
+
+        col2 = x + font.width("X") * 22
+
+        def miss_text(value):
+            return "--" if value is None else hud.format_length(value)
+
+        # direct_dv is None whenever _direct_node refused to answer (an
+        # ill-conditioned near-radial state, most reachably) -- the same
+        # miss_text treatment direct_miss already gets, since
+        # hud.format_speed(None) reaches units.to_kms(None) and raises.
+        def dv_text(value):
+            return "--" if value is None else hud.format_speed(value)
+
+        sentence = (
+            "You are already moving sideways at %s.  Pointing at %s means "
+            "throwing all of that away first.  The transfer keeps your "
+            "sideways motion and just stretches your orbit until it reaches "
+            "%s." % (hud.format_speed(compare["sideways"]), name, name))
+        parts = wrap(sentence, hud.PANEL_WIDTH_CHARS)
+
+        gap_lines = 2
+        if y + line * (3 + gap_lines + len(parts)) > metrics.content_bottom:
+            gap_lines = 1
+
+        y += line
+        font.draw(surface, x, y, "Straight at %s" % name, palette.DANGER)
+        font.draw(surface, col2, y, "Transfer", palette.ACCENT)
+        y += line
+        font.draw(surface, x, y, "burn  %s" % dv_text(compare["direct_dv"]),
+                  palette.TEXT)
+        font.draw(surface, col2, y, dv_text(compare["transfer_dv"]),
+                  palette.TEXT)
+        y += line
+        font.draw(surface, x, y, "miss  %s" % miss_text(compare["direct_miss"]),
+                  palette.TEXT)
+        font.draw(surface, col2, y, miss_text(compare["transfer_miss"]),
+                  palette.TEXT)
+        y += line * gap_lines
+
+        for part in parts:
+            if y + line > metrics.content_bottom:
+                break
+            font.draw(surface, x, y, part, palette.TEXT_DIM)
+            y += line
 
     def _draw_assist(self, surface, state, font):
         """The velocity triangle at a flyby.
@@ -1535,6 +1844,54 @@ def _mean_radius(mu, rel_pos, rel_vel):
     if el["bound"] and math.isfinite(a) and a > 0.0:
         return float(a)
     return distance
+
+
+def _closest_approach_for_plan(world, index, target, plan):
+    """Closest approach to ``target`` after flying ``plan`` -- without
+    mutating the world.
+
+    The craft is carried forward through the plan first -- propagate to each
+    node, apply that burn, carry on -- exactly as :meth:`FlyTool._encounter`
+    always has; this is that same walk, pulled out so a *hypothetical* plan
+    (:meth:`FlyTool.compare_plans`'s two, neither of which the craft may be
+    carrying) can be measured the same way as the real one, without either
+    caller reading or writing ``craft.plan`` itself.
+
+    ``None`` for every reason :func:`maneuver.craft_state` already returns
+    None -- no attractor, no such row -- and also when ``target`` is the
+    very body ``index`` orbits, which has no meaningful approach to measure.
+    """
+    found = maneuver.craft_state(world, index)
+    if found is None:
+        return None
+    attractor, mu, rel_pos, rel_vel = found
+    if target == attractor:
+        return None
+
+    clock = float(world.time)
+    for node in plan:
+        dt = float(node.due_time) - clock
+        if dt > 0.0:
+            rel_pos, rel_vel = orbits.propagate(mu, rel_pos, rel_vel, dt)
+            clock = float(node.due_time)
+        rel_vel = maneuver.burn_velocity(rel_pos, rel_vel, node)
+
+    target_pos = world.pos[target] - world.pos[attractor]
+    target_vel = world.vel[target] - world.vel[attractor]
+    lead = max(0.0, clock - float(world.time))
+    if lead > 0.0:
+        target_pos, target_vel = orbits.propagate(mu, target_pos,
+                                                   target_vel, lead)
+
+    el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+    horizon = el["period"] if el["period"] is not None else 2000.0
+    result = maneuver.closest_approach(mu, rel_pos, rel_vel,
+                                       target_pos, target_vel,
+                                       horizon_days=min(horizon, 4000.0),
+                                       samples=200)
+    result["attractor"] = attractor
+    result["mu"] = mu
+    return result
 
 
 def _lead_label(days):
