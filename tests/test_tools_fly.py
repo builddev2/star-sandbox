@@ -521,14 +521,49 @@ def test_the_direct_plan_costs_about_the_same_as_the_transfer(state):
             / compare["transfer_dv"] < 0.01)
 
 
+def test_the_direct_cost_still_matches_the_transfer_on_an_eccentric_orbit(state):
+    """Prograde and radial are only orthogonal on a circular orbit, so
+    ``Maneuver.magnitude`` (a plain ``hypot``) only equals the true delta-v
+    there.  One burn actually fired leaves the craft on a genuinely eccentric
+    orbit; the second direct plan solved against that orbit must still be
+    rescaled to cost exactly what the transfer costs, or the panel's entire
+    claim -- that the two are the same fuel -- silently drifts with
+    eccentricity."""
+    from src import maneuver, orbits
+    _click_body(state, "Earth")
+    craft = state.tool._launch(state)
+    world = state.sim.world
+    index = world.index_of(craft.id)
+    state.tool.target_id = _mars_id(state)
+
+    first = state.tool._direct_node(state)
+    assert first is not None
+    maneuver.apply_burn(world, index, first)
+    state.sim.refresh()
+
+    attractor, mu, rel_pos, rel_vel = maneuver.craft_state(world, index)
+    el = orbits.elements_from_state(mu, rel_pos, rel_vel)
+    assert el["e"] > 0.05, "the burn left the orbit circular; nothing was tested"
+
+    compare = state.tool._compute_comparison(state)
+    assert compare["direct_dv"] is not None
+    assert (abs(compare["direct_dv"] - compare["transfer_dv"])
+            / compare["transfer_dv"] < 0.01)
+
+
 def test_the_direct_shot_misses_badly_while_the_transfer_gets_close(state):
     """These are the two numbers the panel prints -- pinned to what this
-    simulation's real J2000 state actually produces for Earth and Mars."""
+    simulation's real J2000 state actually produces for Earth and Mars, aimed
+    from the due-time geometry (both craft and target propagated to the
+    instant the single burn actually fires, not frozen from the moment the
+    button was pressed).  The absolute range catches a regression back to the
+    stale-aim 2.31 AU miss that shipped before this was fixed."""
     _click_body(state, "Earth")
     state.tool._launch(state)
     state.tool.target_id = _mars_id(state)
     compare = state.tool.compare_plans(state)
-    assert compare["direct_miss"] > 1.0
+    assert compare["direct_miss"] > 4.0 * compare["transfer_miss"]
+    assert 0.4 < compare["direct_miss"] < 0.9      # measured ~0.6395 AU
     assert compare["transfer_miss"] < 0.2
 
 
@@ -571,7 +606,10 @@ def test_compare_plans_survives_the_target_being_deleted_mid_plan(state):
 
 def test_comparing_and_drawing_plans_never_mutates_the_world(state):
     """Measuring a plan by flying it would corrupt the simulation -- the one
-    defect that matters most here."""
+    defect that matters most here.  Set the plan, measure it, restore it is
+    the most likely way this gets broken, so ``craft.plan`` and
+    ``world.time`` are snapshotted too, not just position, velocity and
+    fuel."""
     _click_body(state, "Earth")
     craft = state.tool._launch(state)
     state.tool.target_id = _mars_id(state)
@@ -581,6 +619,8 @@ def test_comparing_and_drawing_plans_never_mutates_the_world(state):
     pos_before = np.array(world.pos)
     vel_before = np.array(world.vel)
     fuel_before = craft.fuel_dv
+    plan_before = craft.plan
+    time_before = world.time
 
     state.tool.compare_plans(state)
     surface = pygame.Surface(SIZE)
@@ -589,6 +629,8 @@ def test_comparing_and_drawing_plans_never_mutates_the_world(state):
     assert np.array_equal(world.pos, pos_before)
     assert np.array_equal(world.vel, vel_before)
     assert craft.fuel_dv == fuel_before
+    assert craft.plan == plan_before == ()
+    assert world.time == time_before
 
 
 def test_pressing_a_with_no_craft_does_nothing(state):
@@ -597,12 +639,44 @@ def test_pressing_a_with_no_craft_does_nothing(state):
     assert state.tool._craft(state) is None
 
 
-def test_pressing_a_with_no_target_does_nothing(state):
+def test_pressing_a_with_no_target_does_nothing(state, monkeypatch):
+    """A key never passes ``UiLayer.perform``'s ``clickable`` gate, so the
+    ``K_a`` branch re-checks its own precondition (a craft and a locked
+    target) before calling ``_aim_direct`` at all.  Asserting only
+    ``craft.plan == ()`` affords that check to be deleted, since
+    ``_aim_direct`` bails on a missing target internally anyway -- so this
+    spies on the call itself."""
     _click_body(state, "Earth")
     craft = state.tool._launch(state)
+    calls = []
+    monkeypatch.setattr(state.tool, "_aim_direct", lambda s: calls.append(s))
     event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a, mod=0)
     state.tool.on_event(event, state)                   # must not raise
     assert craft.plan == ()
+    assert calls == []
+
+
+def test_a_craft_stopped_dead_produces_no_direct_plan(state):
+    """The reported bug: zeroing the craft's velocity (``0``,
+    ``state.stop_selected``) leaves it close enough to exactly radial that
+    the old ``abs(det) < 1e-12`` guard passed on float noise, handing back a
+    burn of hundreds of thousands of AU/day -- 647,410,222 km/s in the
+    reviewer's measurement, ~2000c.  ``_direct_node`` must refuse instead,
+    and the overlay -- which used to call ``hud.format_speed(None)`` and
+    raise ``TypeError`` in ``units.to_kms`` once this guard actually
+    triggered -- must still draw."""
+    _click_body(state, "Earth")
+    state.tool._launch(state)
+    state.tool.target_id = _mars_id(state)
+    state.stop_selected()
+
+    assert state.tool._direct_node(state) is None
+    compare = state.tool.compare_plans(state)
+    assert compare is not None
+    assert compare["direct_dv"] is None
+
+    surface = pygame.Surface(SIZE)
+    state.tool.draw_overlay(surface, state, _font())     # must not raise
 
 
 def test_pressing_a_sets_a_single_burn_direct_plan(state):
@@ -623,15 +697,27 @@ def test_the_direct_button_exists_with_the_hotkey_a(state, ui):
     assert control.enabled
 
 
-def test_the_comparison_overlay_is_actually_drawn(state):
+def test_the_comparison_overlay_is_actually_drawn(state, monkeypatch):
+    """Locking a target also draws the SELECT ring, the DANGER conic and the
+    "Passes Mars at ..." line, so comparing a target-locked overlay against a
+    no-target one (as this test used to) still passes with ``_draw_comparison``
+    stubbed to a no-op.  Calling ``_draw_comparison`` directly, once with the
+    real comparison and once with it forced to ``None``, isolates the block
+    it is actually responsible for."""
     _click_body(state, "Earth")
     state.tool._launch(state)
-    surface = pygame.Surface(SIZE)
-    state.tool.draw_overlay(surface, state, _font())
-    before = _painted(surface)
     state.tool.target_id = _mars_id(state)
-    state.tool.draw_overlay(surface, state, _font())
-    assert _painted(surface) != before
+    font = _font()
+    line = font.height + 2
+
+    with_compare = pygame.Surface(SIZE)
+    state.tool._draw_comparison(with_compare, state, font, 10, 10, line)
+
+    without_compare = pygame.Surface(SIZE)
+    monkeypatch.setattr(state.tool, "compare_plans", lambda s: None)
+    state.tool._draw_comparison(without_compare, state, font, 10, 10, line)
+
+    assert _painted(with_compare) != _painted(without_compare)
 
 
 def test_a_plan_the_tank_cannot_afford_says_so(state):

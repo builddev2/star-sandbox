@@ -64,14 +64,14 @@ class ExplainPanel:
         out.append(("", palette.TEXT))
         for sentence in report.why:
             out += [(part, palette.TEXT_DIM)
-                    for part in _wrap(sentence, width_chars)]
+                    for part in wrap(sentence, width_chars)]
         if show_maths and report.maths:
             out.append(("", palette.TEXT))
             for formula in report.maths:
                 out += [(part, palette.ACCENT)
-                        for part in _wrap(formula.general, width_chars)]
+                        for part in wrap(formula.general, width_chars)]
                 out += [(part, palette.TEXT_DIM)
-                        for part in _wrap(formula.substituted, width_chars)]
+                        for part in wrap(formula.substituted, width_chars)]
         return out
 
     def _chars(self, metrics, x):
@@ -114,7 +114,7 @@ class ExplainPanel:
         return rect
 
 
-def _wrap(text, chars):
+def wrap(text, chars):
     """Greedy word wrap.  Never returns an empty list, so a blank line stays
     a blank line rather than vanishing out of the layout."""
     words, lines, current = text.split(), [], ""

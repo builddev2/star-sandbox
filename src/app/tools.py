@@ -21,7 +21,7 @@ from .. import edits, maneuver, materials, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
                     KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 from ..render import hud, palette, widgets
-from ..render.explain import _wrap
+from ..render.explain import wrap
 from ..render.widgets import Control
 
 #: A press-and-release within this many pixels counts as a click, not a drag.
@@ -1138,86 +1138,25 @@ class FlyTool(TargetLock, DragPan, Tool):
                                      maneuver.scrub_dv(node.radial, notches))
         self._replace_node(state, node)
 
-    def _plan_transfer(self, state):
-        """Fill the plan with the two burns of a Hohmann transfer."""
-        craft = self._craft(state)
-        world = state.sim.world
-        index = self._craft_index(state)
-        target = self._target_index(world)
-        if craft is None or index is None or target is None:
-            return
+    def _resolve_hohmann(self, state):
+        """Craft, target, attractor, and the Hohmann solution between their
+        mean radii -- the resolution :meth:`_plan_transfer`, :meth:`_direct_node`
+        and :meth:`_compute_comparison` all need before they diverge into what
+        to do with it.
 
-        state_now = maneuver.craft_state(world, index)
-        if state_now is None:
-            return
-        attractor, mu, rel_pos, rel_vel = state_now
-        if target == attractor:
-            return
+        **Semi-major axes, not present distances.**  A Hohmann transfer is
+        derived for two circular orbits, and the one radius that stands in
+        for a real elliptical one is its semi-major axis.  Mars swings
+        between 1.38 and 1.67 AU: aiming at wherever it is standing today
+        sends the craft to a radius Mars has already left by the time it
+        arrives, and the phase-angle wait -- which assumes a circular mean
+        motion -- would be computed from a period that does not exist.
+        Measured, aiming at the instantaneous radius missed Mars by 1.9 AU.
 
-        target_rel = world.pos[target] - world.pos[attractor]
-        target_vel = world.vel[target] - world.vel[attractor]
-
-        # **Semi-major axes, not present distances.**  A Hohmann transfer is
-        # derived for two circular orbits, and the one radius that stands in
-        # for a real elliptical one is its semi-major axis.  Mars swings
-        # between 1.38 and 1.67 AU: aiming at wherever it is standing today
-        # sends the craft to a radius Mars has already left by the time it
-        # arrives, and the phase-angle wait -- which assumes a circular mean
-        # motion -- would be computed from a period that does not exist.
-        # Measured, aiming at the instantaneous radius missed Mars by 1.9 AU.
-        r1 = _mean_radius(mu, rel_pos, rel_vel)
-        r2 = _mean_radius(mu, target_rel, target_vel)
-        if r1 <= 0.0 or r2 <= 0.0:
-            return
-
-        solved = maneuver.hohmann(
-            mu, r1, r2,
-            math.atan2(float(rel_pos[1]), float(rel_pos[0])),
-            math.atan2(float(target_rel[1]), float(target_rel[0])))
-        if solved is None:
-            # A degenerate orbit -- a craft sitting on its attractor's centre.
-            # There is no transfer to describe, so leave the plan alone rather
-            # than writing burns derived from a division that did not happen.
-            return
-
-        # The circular-orbit window is the first guess; this slides it until
-        # the target really is at the arrival point, which matters because
-        # Mars's true anomaly does not advance at its mean motion.
-        wait = maneuver.refine_window(mu, rel_pos, rel_vel,
-                                      target_rel, target_vel,
-                                      solved["wait_days"],
-                                      solved["transfer_days"])
-        depart = world.time + wait
-        craft.plan = (
-            maneuver.Maneuver(depart, solved["depart_dv"], 0.0),
-            maneuver.Maneuver(depart + solved["transfer_days"],
-                              solved["arrive_dv"], 0.0),
-        )
-        state.sim.refresh()
-
-    def _direct_node(self, state):
-        """The single burn an intuitive "point at it and go" shot would fire.
-
-        Same budget the transfer costs -- ``abs(depart_dv) + abs(arrive_dv)``
-        from the very same :func:`maneuver.hohmann` call -- spent along the
-        straight line from the craft to wherever the target sits **right
-        now**.  Aiming at where it stands today is the whole point: leading
-        it would already be half the lesson the transfer teaches.
-
-        The burn is a fixed vector in the world frame, decided from the
-        current geometry.  The node it becomes fires later, at the same lead
-        :meth:`_ensure_node` uses, so it has to be re-expressed in whatever
-        prograde/radial frame the craft will be in *then*: the direction and
-        radius vectors at the due time, from :func:`maneuver.node_state`
-        propagating the craft's unburned orbit forward.  Solving the 2x2
-        system against that later frame is what makes the fired burn equal
-        the intended vector rather than one rotated by however far the craft
-        coasts before it goes off.
-
-        ``None`` for every reason :meth:`_plan_transfer` already returns
-        without touching anything -- no craft, no target, a degenerate orbit
-        -- and, here alone, a velocity that is exactly radial: with no
-        prograde axis to speak of, the 2x2 system has no solution.
+        ``None`` for every reason those callers already return without
+        touching anything: no craft, no target, the craft sitting on its own
+        attractor's centre, or an orbit degenerate enough that
+        :func:`maneuver.hohmann` cannot answer.
         """
         craft = self._craft(state)
         world = state.sim.world
@@ -1246,14 +1185,97 @@ class FlyTool(TargetLock, DragPan, Tool):
             math.atan2(float(rel_pos[1]), float(rel_pos[0])),
             math.atan2(float(target_rel[1]), float(target_rel[0])))
         if solved is None:
+            # A degenerate orbit -- a craft sitting on its attractor's centre.
+            # There is no transfer to describe, so leave the caller to do
+            # nothing rather than write burns derived from a division that
+            # did not happen.
             return None
-        budget = abs(solved["depart_dv"]) + abs(solved["arrive_dv"])
 
-        gap = target_rel - rel_pos
-        gap_distance = float(np.hypot(gap[0], gap[1]))
-        if gap_distance <= 0.0:
+        return {
+            "craft": craft, "world": world, "index": index, "target": target,
+            "attractor": attractor, "mu": mu,
+            "rel_pos": rel_pos, "rel_vel": rel_vel,
+            "target_rel": target_rel, "target_vel": target_vel,
+            "solved": solved,
+        }
+
+    def _plan_transfer(self, state):
+        """Fill the plan with the two burns of a Hohmann transfer."""
+        resolved = self._resolve_hohmann(state)
+        if resolved is None:
+            return
+        craft, world = resolved["craft"], resolved["world"]
+        mu = resolved["mu"]
+        rel_pos, rel_vel = resolved["rel_pos"], resolved["rel_vel"]
+        target_rel, target_vel = resolved["target_rel"], resolved["target_vel"]
+        solved = resolved["solved"]
+
+        # The circular-orbit window is the first guess; this slides it until
+        # the target really is at the arrival point, which matters because
+        # Mars's true anomaly does not advance at its mean motion.
+        wait = maneuver.refine_window(mu, rel_pos, rel_vel,
+                                      target_rel, target_vel,
+                                      solved["wait_days"],
+                                      solved["transfer_days"])
+        depart = world.time + wait
+        craft.plan = (
+            maneuver.Maneuver(depart, solved["depart_dv"], 0.0),
+            maneuver.Maneuver(depart + solved["transfer_days"],
+                              solved["arrive_dv"], 0.0),
+        )
+        state.sim.refresh()
+
+    def _direct_node(self, state):
+        """The single burn an intuitive "point at it and go" shot would fire.
+
+        Same budget the transfer costs -- ``abs(depart_dv) + abs(arrive_dv)``
+        from the very same :func:`maneuver.hohmann` call -- spent along the
+        straight line from where the craft will be to where the target will
+        be, both at the instant the burn actually fires.  The node it becomes
+        fires later, at the same lead :meth:`_ensure_node` uses, so "aim
+        straight at it" has to mean straight at where it really is *then*,
+        not a direction frozen from today's geometry and rotated stale by the
+        time it goes off -- both bodies are propagated on their own two-body
+        orbits (:func:`maneuver.node_state` for the craft,
+        :func:`orbits.propagate` for the target, on the same ``mu`` the rest
+        of this comparison already treats them as sharing) to the due time
+        before the gap between them is measured.  This is not leading the
+        target: it is pointing at where the target actually is at the moment
+        of the burn, which is what the label and tooltip both claim.
+
+        The burn direction is fixed in the world frame at that due-time
+        geometry, then re-expressed in whatever prograde/radial frame the
+        craft is in at that same instant -- the direction and radius vectors
+        :func:`maneuver.node_state` already returned.  Solving the 2x2 system
+        against that frame is what makes the fired burn equal the intended
+        vector rather than one rotated by however far the craft coasts before
+        it goes off.
+
+        The two axes coincide only on a circular orbit, so they are solved as
+        the 2x2 system they really are rather than assumed orthogonal, and
+        the result is rescaled to ``budget`` exactly: without that, an
+        eccentric orbit would silently charge and report a different cost
+        than the transfer even though the whole comparison's point is that
+        the two are equal.
+
+        ``None`` for every reason :meth:`_plan_transfer` already returns
+        without touching anything -- no craft, no target, a degenerate orbit
+        -- and here alone: a velocity too close to purely radial for the
+        prograde/radial basis to be trusted (``abs(det) < 1e-3`` is the
+        cosine of the flight-path angle, so this rejects anything closer than
+        0.06 degrees from exactly radial), or a raw solve more than 4x
+        ``budget`` -- the tell that the basis was ill-conditioned even though
+        the determinant guard passed, since a well-conditioned solve never
+        needs to be rescaled down by more than the eccentricity itself asks.
+        """
+        resolved = self._resolve_hohmann(state)
+        if resolved is None:
             return None
-        burn = budget * (gap / gap_distance)
+        world, index = resolved["world"], resolved["index"]
+        mu = resolved["mu"]
+        target_rel, target_vel = resolved["target_rel"], resolved["target_vel"]
+        solved = resolved["solved"]
+        budget = abs(solved["depart_dv"]) + abs(solved["arrive_dv"])
 
         due = world.time + self._default_lead(state)
         found = maneuver.node_state(world, index, maneuver.Maneuver(due))
@@ -1261,20 +1283,38 @@ class FlyTool(TargetLock, DragPan, Tool):
             return None
         _mu2, pos_due, vel_due = found
 
+        dt = due - world.time
+        target_pos_due, _target_vel_due = orbits.propagate(
+            mu, target_rel, target_vel, dt)
+
+        gap = target_pos_due - pos_due
+        gap_distance = float(np.hypot(gap[0], gap[1]))
+        if gap_distance <= 0.0:
+            return None
+        burn = budget * (gap / gap_distance)
+
         speed = float(np.hypot(vel_due[0], vel_due[1]))
         distance = float(np.hypot(pos_due[0], pos_due[1]))
         if speed <= 0.0 or distance <= 0.0:
             return None
         prograde_axis = vel_due / speed
         radial_axis = pos_due / distance
-        # The two axes coincide only on a circular orbit; solved as the 2x2
-        # system it really is rather than assumed orthogonal.
         basis = np.array([prograde_axis, radial_axis]).T
         det = basis[0, 0] * basis[1, 1] - basis[0, 1] * basis[1, 0]
-        if abs(det) < 1e-12:
+        # 1e-3 is the cosine of the flight-path angle at 89.94 degrees from
+        # radial -- orders of magnitude above the float noise a near-radial
+        # state produces, unlike the 1e-12 this used to be guarded at.
+        if abs(det) < 1e-3:
             return None
         prograde, radial = np.linalg.solve(basis, burn)
-        return maneuver.Maneuver(due, float(prograde), float(radial))
+        raw = math.hypot(prograde, radial)
+        # A well-conditioned solve is never far from `budget`; a solve that
+        # blows past it by more than 4x is the ill-conditioned case showing
+        # up directly, not by proxy through the determinant.
+        if raw <= 0.0 or raw > 4.0 * budget:
+            return None
+        scale = budget / raw
+        return maneuver.Maneuver(due, float(prograde * scale), float(radial * scale))
 
     def _aim_direct(self, state):
         """Fill the plan with one burn, pointed straight at the target now.
@@ -1337,34 +1377,16 @@ class FlyTool(TargetLock, DragPan, Tool):
         return result
 
     def _compute_comparison(self, state):
-        craft = self._craft(state)
-        world = state.sim.world
-        index = self._craft_index(state)
-        target = self._target_index(world)
-        if craft is None or index is None or target is None:
+        resolved = self._resolve_hohmann(state)
+        if resolved is None:
             return None
+        craft, world = resolved["craft"], resolved["world"]
+        index, target = resolved["index"], resolved["target"]
+        mu = resolved["mu"]
+        rel_pos, rel_vel = resolved["rel_pos"], resolved["rel_vel"]
+        target_rel, target_vel = resolved["target_rel"], resolved["target_vel"]
+        solved = resolved["solved"]
 
-        state_now = maneuver.craft_state(world, index)
-        if state_now is None:
-            return None
-        attractor, mu, rel_pos, rel_vel = state_now
-        if target == attractor:
-            return None
-
-        target_rel = world.pos[target] - world.pos[attractor]
-        target_vel = world.vel[target] - world.vel[attractor]
-
-        r1 = _mean_radius(mu, rel_pos, rel_vel)
-        r2 = _mean_radius(mu, target_rel, target_vel)
-        if r1 <= 0.0 or r2 <= 0.0:
-            return None
-
-        solved = maneuver.hohmann(
-            mu, r1, r2,
-            math.atan2(float(rel_pos[1]), float(rel_pos[0])),
-            math.atan2(float(target_rel[1]), float(target_rel[0])))
-        if solved is None:
-            return None
         transfer_dv = abs(solved["depart_dv"]) + abs(solved["arrive_dv"])
         sideways = float(np.hypot(rel_vel[0], rel_vel[1]))
 
@@ -1673,6 +1695,13 @@ class FlyTool(TargetLock, DragPan, Tool):
         (see ``controls``' own comment on ``fly.direct``), and this is the
         same trade ``_draw_readout``'s docstring already makes for the rest
         of this readout.
+
+        Bottom-clipped against ``Metrics.content_bottom``: at the coarse grid
+        floors the sentence's last wrapped line otherwise lands on the
+        transport band.  The blank line between the numbers and the prose is
+        dropped first, and only if that still does not fit does the prose
+        itself lose its trailing lines -- a coarse grid loses whitespace
+        before it loses words.
         """
         compare = self.compare_plans(state)
         if compare is None:
@@ -1680,33 +1709,49 @@ class FlyTool(TargetLock, DragPan, Tool):
         world = state.sim.world
         target = self._target_index(world)
         name = world.bodies[target].name if target is not None else "it"
+        metrics = widgets.Metrics(font, *surface.get_size())
 
         col2 = x + font.width("X") * 22
 
         def miss_text(value):
             return "--" if value is None else hud.format_length(value)
 
-        y += line
-        font.draw(surface, x, y, "Straight at %s" % name, palette.DANGER)
-        font.draw(surface, col2, y, "Transfer", palette.ACCENT)
-        y += line
-        font.draw(surface, x, y, "burn  %s"
-                  % hud.format_speed(compare["direct_dv"]), palette.TEXT)
-        font.draw(surface, col2, y,
-                  hud.format_speed(compare["transfer_dv"]), palette.TEXT)
-        y += line
-        font.draw(surface, x, y, "miss  %s" % miss_text(compare["direct_miss"]),
-                  palette.TEXT)
-        font.draw(surface, col2, y, miss_text(compare["transfer_miss"]),
-                  palette.TEXT)
-        y += line * 2
+        # direct_dv is None whenever _direct_node refused to answer (an
+        # ill-conditioned near-radial state, most reachably) -- the same
+        # miss_text treatment direct_miss already gets, since
+        # hud.format_speed(None) reaches units.to_kms(None) and raises.
+        def dv_text(value):
+            return "--" if value is None else hud.format_speed(value)
 
         sentence = (
             "You are already moving sideways at %s.  Pointing at %s means "
             "throwing all of that away first.  The transfer keeps your "
             "sideways motion and just stretches your orbit until it reaches "
             "%s." % (hud.format_speed(compare["sideways"]), name, name))
-        for part in _wrap(sentence, hud.PANEL_WIDTH_CHARS):
+        parts = wrap(sentence, hud.PANEL_WIDTH_CHARS)
+
+        gap_lines = 2
+        if y + line * (3 + gap_lines + len(parts)) > metrics.content_bottom:
+            gap_lines = 1
+
+        y += line
+        font.draw(surface, x, y, "Straight at %s" % name, palette.DANGER)
+        font.draw(surface, col2, y, "Transfer", palette.ACCENT)
+        y += line
+        font.draw(surface, x, y, "burn  %s" % dv_text(compare["direct_dv"]),
+                  palette.TEXT)
+        font.draw(surface, col2, y, dv_text(compare["transfer_dv"]),
+                  palette.TEXT)
+        y += line
+        font.draw(surface, x, y, "miss  %s" % miss_text(compare["direct_miss"]),
+                  palette.TEXT)
+        font.draw(surface, col2, y, miss_text(compare["transfer_miss"]),
+                  palette.TEXT)
+        y += line * gap_lines
+
+        for part in parts:
+            if y + line > metrics.content_bottom:
+                break
             font.draw(surface, x, y, part, palette.TEXT_DIM)
             y += line
 
