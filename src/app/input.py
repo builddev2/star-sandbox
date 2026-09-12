@@ -11,6 +11,7 @@ level down: a tool can capture a drag without the camera panning underneath it.
 
 import pygame
 
+from .state import DIALOG_SAVES, DIALOG_START
 from .tools import TOOLS
 
 
@@ -27,6 +28,19 @@ def handle_event(event, state, ctx, ui=None):
         if ctx is not None:
             ctx.resize(event.size)
             state.on_resize(ctx)
+        return
+
+    # A dialog owns every event.  The interface still gets the mouse, so its
+    # buttons work as buttons; the keys go to the dialog and stop there --
+    # the throw tool must not fire through the slot list, and a name being
+    # typed must not toggle trails with every T.
+    if state.dialog is not None:
+        if event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN,
+                          pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
+            if ui is not None:
+                ui.on_event(event, state, ctx)
+        elif event.type == pygame.KEYDOWN:
+            dialog_key(event, state, ctx)
         return
 
     if ui is not None and ui.on_event(event, state, ctx):
@@ -100,6 +114,8 @@ def handle_event(event, state, ctx, ui=None):
         state.delete_selected()
     elif key == pygame.K_F5:
         state.reset()
+    elif key == pygame.K_s:
+        state.toggle_saves()
     elif key in (pygame.K_SLASH, pygame.K_QUESTION):
         state.help_visible = not state.help_visible
     elif key == pygame.K_ESCAPE:
@@ -109,3 +125,50 @@ def handle_event(event, state, ctx, ui=None):
             state.help_visible = False
         else:
             state.selected_id = None
+
+
+def dialog_key(event, state, ctx):
+    """Keys while a dialog is up.
+
+    Cmd+Q and Cmd+F still mean what they mean everywhere.  A text field
+    with focus takes everything else: Enter keeps the name, Esc drops the
+    edit (and only the edit -- a second Esc closes the dialog), Backspace
+    deletes, and any printable character is typed.  Otherwise Esc disarms
+    a waiting Overwrite? before it closes anything, the start menu answers
+    to its three letters, and S puts the in-game list away.
+    """
+    key = event.key
+    command = event.mod & (pygame.KMOD_META | pygame.KMOD_CTRL)
+    d = state.dialog
+    if command and key == pygame.K_q:
+        state.running = False
+        return
+    if command and key == pygame.K_f:
+        if ctx is not None:
+            ctx.toggle_fullscreen()
+            state.on_resize(ctx)
+        return
+    if d.renaming is not None:
+        if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            state.rename_commit()
+        elif key == pygame.K_ESCAPE:
+            state.rename_cancel()
+        elif key == pygame.K_BACKSPACE:
+            state.rename_backspace()
+        elif not command and getattr(event, "unicode", ""):
+            state.rename_type(event.unicode)
+        return
+    if key == pygame.K_ESCAPE:
+        if d.armed is not None:
+            state.disarm()
+        else:
+            state.close_dialog()
+    elif d.kind == DIALOG_START:
+        if key == pygame.K_n:
+            state.start_new()
+        elif key == pygame.K_l:
+            state.open_load()
+        elif key == pygame.K_q:
+            state.quit_now()
+    elif d.kind == DIALOG_SAVES and key == pygame.K_s:
+        state.toggle_saves()

@@ -1269,3 +1269,110 @@ def test_the_dialog_draws_over_a_veil(saving):
                  for py in range(y, y + height)
                  if surface.get_at((px, py))[:3] == palette.TEXT_DIM)
     assert inside > 10, "the slot descriptions are drawn"
+
+
+def key(code, unicode="", mod=0):
+    return pygame.event.Event(pygame.KEYDOWN, key=code, unicode=unicode, mod=mod)
+
+
+def test_the_s_key_opens_and_closes_the_list(saving):
+    from src.app.input import handle_event
+    st, ui, _ = saving
+    handle_event(key(pygame.K_s, "s"), st, None, ui)
+    assert st.dialog is not None and st.dialog.kind == "saves"
+    handle_event(key(pygame.K_s, "s"), st, None, ui)
+    assert st.dialog is None
+
+
+def test_keys_go_to_the_field_while_renaming(saving):
+    from src.app.input import handle_event
+    st, ui, _ = saving
+    st.open_saves()
+    st.save_slot(1)
+    st.begin_rename(1)
+    handle_event(key(pygame.K_s, "s"), st, None, ui)
+    assert st.dialog is not None and st.dialog.renaming == 1
+    assert st.dialog.text.endswith("s")
+    handle_event(key(pygame.K_BACKSPACE), st, None, ui)
+    assert not st.dialog.text.endswith("s")
+    handle_event(key(pygame.K_SPACE, " "), st, None, ui)
+    assert st.sim.paused, "Space is a character here, not the pause key"
+    handle_event(key(pygame.K_ESCAPE), st, None, ui)
+    assert st.dialog is not None and st.dialog.renaming is None
+    handle_event(key(pygame.K_ESCAPE), st, None, ui)
+    assert st.dialog is None
+
+
+def test_enter_commits_a_name(saving):
+    from src.app.input import handle_event
+    st, ui, store = saving
+    st.open_saves()
+    st.save_slot(1)
+    st.begin_rename(1)
+    for ch in "!?":
+        handle_event(key(pygame.K_1, ch), st, None, ui)
+    handle_event(key(pygame.K_RETURN), st, None, ui)
+    assert st.dialog.renaming is None
+    assert store.list()[0].name.endswith("!?")
+
+
+def test_global_keys_are_swallowed_by_a_dialog(saving):
+    from src.app.input import handle_event
+    st, ui, _ = saving
+    st.open_saves()
+    before = st.time_index
+    handle_event(key(pygame.K_RIGHTBRACKET), st, None, ui)
+    handle_event(key(pygame.K_F5), st, None, ui)
+    handle_event(key(pygame.K_t), st, None, ui)
+    assert st.time_index == before and st.view.show_trails
+    handle_event(key(pygame.K_DELETE), st, None, ui)
+    assert st.dialog is not None
+
+
+def test_escape_disarms_before_it_closes(saving):
+    from src.app.input import handle_event
+    st, ui, _ = saving
+    st.open_saves()
+    st.save_slot(1)
+    st.save_slot(1)
+    assert st.dialog.armed == 1
+    handle_event(key(pygame.K_ESCAPE), st, None, ui)
+    assert st.dialog is not None and st.dialog.armed is None
+    handle_event(key(pygame.K_ESCAPE), st, None, ui)
+    assert st.dialog is None
+
+
+def test_the_start_menu_keys(saving):
+    from src.app.input import handle_event
+    st, ui, _ = saving
+    st.open_start()
+    handle_event(key(pygame.K_l, "l"), st, None, ui)
+    assert st.dialog.kind == "load"
+    handle_event(key(pygame.K_ESCAPE), st, None, ui)
+    assert st.dialog.kind == "start"
+    handle_event(key(pygame.K_n, "n"), st, None, ui)
+    assert st.dialog is None and not st.sim.paused
+    st.open_start()
+    handle_event(key(pygame.K_q, "q"), st, None, ui)
+    assert st.running is False
+
+
+def test_command_q_still_quits_under_a_dialog(saving):
+    from src.app.input import handle_event
+    st, ui, _ = saving
+    st.open_saves()
+    handle_event(key(pygame.K_q, "q", pygame.KMOD_META), st, None, ui)
+    assert st.running is False
+
+
+def test_a_click_on_the_world_under_a_dialog_does_not_reach_the_tool(saving):
+    from src.app.input import handle_event
+    from src.app.tools import LaunchTool
+    st, ui, _ = saving
+    st.set_tool(LaunchTool)
+    st.open_saves()
+    ui.build(st, SIZE)
+    n = st.sim.world.n
+    for kind in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+        handle_event(pygame.event.Event(kind, pos=(5, 5), button=1), st, None, ui)
+    assert st.sim.world.n == n and st.dialog is not None
