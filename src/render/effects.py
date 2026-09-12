@@ -121,6 +121,10 @@ class EffectField:
     def count(self):
         return len(self.particles)
 
+    def clear(self):
+        """Drop every particle.  A loaded world has no impact to show."""
+        self.particles = []
+
     # --- spawning ----------------------------------------------------------
 
     def spawn(self, event):
