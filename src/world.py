@@ -108,6 +108,26 @@ class World:
         i = self._by_id.get(body_id)
         return None if i is None else self.bodies[i]
 
+    @property
+    def next_id(self):
+        """The id the next ``add`` will hand out.  Saved with the world so a
+        body added after a load cannot collide with one that was saved."""
+        return self._next_id
+
+    def rekey(self, next_id):
+        """Rebuild the id index from the bodies' own ids, and set the counter.
+
+        For the loader: it rewrites ``Body.id`` after ``add`` so a saved
+        selection still names the same planet, and the index built by ``add``
+        is then wrong.  Raises ValueError on a duplicate id, before anything
+        is changed.
+        """
+        ids = [body.id for body in self.bodies]
+        if len(set(ids)) != len(ids):
+            raise ValueError("duplicate body id")
+        self._by_id = {body.id: i for i, body in enumerate(self.bodies)}
+        self._next_id = max([int(next_id)] + [i + 1 for i in ids])
+
     def clear(self):
         self.n = 0
         self.bodies.clear()
