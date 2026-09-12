@@ -74,6 +74,9 @@ class Control:
     #: fraction as ``payload`` every motion event, not just on release.
     slider: bool = False
     value: float = 0.0
+    #: A text field is drawn as an input with a cursor and takes keystrokes
+    #: (routed by ``app/input.py``); its ``label`` is the text so far.
+    text_field: bool = False
     rect: pygame.Rect = field(default=None)
 
     @property
@@ -222,6 +225,9 @@ def _draw_button_content(surface, font, control, rect, hovered, pressed):
     if control.slider:
         draw_slider(surface, control, rect, pressed)
         return
+    if control.text_field:
+        draw_text_field(surface, font, control, rect)
+        return
     if control.readout:
         draw_panel(surface, rect)
         x = rect.x + (rect.width - font.width(control.label)) // 2
@@ -356,6 +362,31 @@ def draw_slider(surface, control, rect, pressed=False):
     thumb.centery = int(round(top + height - frac * height))
     pygame.draw.rect(surface, palette.BUTTON_DOWN if pressed else palette.BUTTON_ACTIVE, thumb)
     pygame.draw.rect(surface, palette.BUTTON_EDGE_ACTIVE, thumb, 1)
+
+
+#: The cursor's on/off period, ms.  Wall clock: a cursor must blink at the
+#: same rate at one hour a second and at ten years a second.
+CURSOR_BLINK_MS = 500
+
+
+def draw_text_field(surface, font, control, rect, now_ms=None):
+    """An input box: selection-colour ring, the text, a blinking cursor.
+
+    No opaque interior fill -- a translucent panel behind the whole field
+    would leave every pixel under the cursor already "ink" before the cursor
+    is drawn, so nothing distinguishes the blink's on and off phases from
+    outside. The ring alone marks it as the thing being edited.
+
+    ``now_ms`` is for tests; the frame loop leaves it to the clock.
+    """
+    pad = max(3, font.height // 3)
+    pygame.draw.rect(surface, palette.SELECT, rect, 1)
+    y = rect.y + (rect.height - font.height) // 2
+    advance = font.draw(surface, rect.x + pad, y, control.label, palette.TEXT)
+    now = pygame.time.get_ticks() if now_ms is None else now_ms
+    if (now // CURSOR_BLINK_MS) % 2 == 0:
+        cx = min(rect.x + pad + advance + 1, rect.right - 2)
+        pygame.draw.line(surface, palette.TEXT, (cx, y), (cx, y + font.height - 1), 1)
 
 
 def draw_bar(surface, rect, fraction, colour, bg=None):
@@ -594,6 +625,13 @@ def draw_icon(surface, name, rect, colour):
         ])
         pygame.draw.line(surface, colour, (x + w // 5, cy),
                          (x + w // 5, cy - h // 3), 1)
+    elif name == "save":
+        # A floppy disk: the one icon every child still knows means "save".
+        pygame.draw.rect(surface, colour, pygame.Rect(cx - r, cy - r, 2 * r, 2 * r), 1)
+        pygame.draw.rect(surface, colour,
+                         pygame.Rect(cx - r // 2, cy - r + 1, r, max(1, r // 2)))
+        pygame.draw.rect(surface, colour,
+                         pygame.Rect(cx - r // 2, cy + 1, r, max(1, r - 1)), 1)
     elif name == "power":
         # The gap sits at the top, where the stem goes through it: pygame's
         # angles run counterclockwise from three o'clock, so the top is pi/2.

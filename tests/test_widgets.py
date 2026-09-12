@@ -305,3 +305,40 @@ def test_the_explain_icon_fits_the_view_button_at_every_grid(s):
     for point in drawn:
         assert rect.collidepoint(point), \
             "explain escaped its %dpx box at grid %d" % (side, s)
+
+
+def test_a_text_field_draws_its_text_and_a_cursor(font):
+    from src.render import palette, widgets
+    surface = pygame.Surface((200, 40))
+    surface.fill(palette.SPACE)
+    control = widgets.Control("slot.name", label="Mars trip", text_field=True,
+                              rect=pygame.Rect(4, 4, 190, 30))
+    widgets.draw_button(surface, font, control)
+    with_text = _ink(surface)
+    assert with_text > 100
+    # The focus ring is the selection colour: a text field is the thing on
+    # screen you are editing, the same way a selected planet is.
+    assert surface.get_at((4, 20))[:3] == palette.SELECT
+    empty = widgets.Control("slot.name", label="", text_field=True,
+                            rect=pygame.Rect(4, 4, 190, 30))
+    surface.fill(palette.SPACE)
+    widgets.draw_text_field(surface, font, empty, empty.rect, now_ms=0)
+    lit = _ink(surface)
+    surface.fill(palette.SPACE)
+    widgets.draw_text_field(surface, font, empty, empty.rect, now_ms=500)
+    dark = _ink(surface)
+    assert lit > dark, "the cursor blinks: on at 0 ms, off at 500 ms"
+
+
+def test_a_text_field_is_clickable_but_a_readout_is_not():
+    from src.render.widgets import Control
+    assert Control("x", text_field=True).clickable
+    assert not Control("x", readout=True).clickable
+
+
+def test_the_save_icon_draws_something(font):
+    from src.render import palette, widgets
+    surface = pygame.Surface((24, 24))
+    surface.fill(palette.SPACE)
+    widgets.draw_icon(surface, "save", pygame.Rect(2, 2, 20, 20), palette.TEXT)
+    assert _ink(surface) > 20
