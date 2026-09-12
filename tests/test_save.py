@@ -22,7 +22,10 @@ def session(**over):
 
 def busy_world():
     """Everything a save has to carry: a hole with spin, a craft with a plan,
-    a locked planet, rings, a body with collision immunity."""
+    a locked planet, rings, a body with collision immunity, and a gap in the
+    id sequence (from a swap-removed body) so the saved ids are not simply
+    1..N in list order -- the only case where ``World.rekey`` rebuilding
+    ``_by_id`` is not a no-op."""
     world = scenarios.solar_system()
     sun = world.bodies[0]
     assert sun.kind == KIND_STAR
@@ -35,6 +38,8 @@ def busy_world():
     world.bodies[earth].no_collide_until = world.time + 3.0
     saturn = next(b for b in world.bodies if b.name == "Saturn")
     assert saturn.rings
+    mercury = next(i for i, b in enumerate(world.bodies) if b.name == "Mercury")
+    world.remove(mercury)
     craft = world.add("Shuttle", materials.SPACECRAFT, units.EARTH_MASS * 1e-18,
                       units.CRAFT_RADIUS, world.pos[earth] + (0.01, 0.0),
                       world.vel[earth] + (0.0, 0.001), kind=KIND_CRAFT,
@@ -88,6 +93,8 @@ def test_ids_and_the_counter_are_preserved():
     for body in world.bodies:
         assert target.index_of(body.id) is not None
         assert target.body_by_id(body.id).name == body.name
+    for i, body in enumerate(target.bodies):
+        assert target.index_of(body.id) == i
     assert target.next_id == world.next_id
     fresh = target.add("New", materials.ROCK, 1e-6, 1e-5, (5.0, 0.0), (0.0, 0.01))
     assert fresh.id not in {b.id for b in world.bodies}
