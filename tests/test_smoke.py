@@ -195,16 +195,24 @@ def _release(pos):
     return pygame.event.Event(pygame.MOUSEBUTTONUP, pos=pos, button=1)
 
 
-def test_the_buttons_are_laid_out_before_the_first_event(app):
-    """A click in the opening frame has to land on something."""
-    # The fixture presses New directly on the state, not through a click, so
-    # the interface is still showing the start menu it was built with in
-    # __init__ until a frame runs and rebuilds it from the state that is
-    # actually current -- one frame is still before any *event* reaches it.
-    app.step_once()
-    assert app.ui.controls
-    assert app.ui.control_at(next(c for c in app.ui.controls
-                                  if c.id == "time.pause").rect.center) is not None
+def test_the_buttons_are_laid_out_before_the_first_event(tmp_path):
+    """A click in the opening frame has to land on something.
+
+    The opening frame is now the start menu, not the game HUD, so this builds
+    its own App rather than going through the ``app`` fixture -- that fixture
+    presses New before yielding, which would make this test pass even if
+    ``__init__`` never built anything, because the very next ``step_once`` (in
+    the test body, or in any other test) rebuilds the interface regardless.
+    """
+    from src.app.main import App
+    instance = App(fullscreen=False, saves_dir=str(tmp_path / "saves"))
+    try:
+        assert instance.ui.controls
+        for cid in ("start.new", "start.load", "start.quit"):
+            control = next(c for c in instance.ui.controls if c.id == cid)
+            assert instance.ui.control_at(control.rect.center) is not None
+    finally:
+        pygame.quit()
 
 
 def test_pressing_every_button_in_the_real_app_keeps_it_running(app):

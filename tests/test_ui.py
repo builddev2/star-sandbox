@@ -1297,6 +1297,9 @@ def test_keys_go_to_the_field_while_renaming(saving):
     assert not st.dialog.text.endswith("s")
     handle_event(key(pygame.K_SPACE, " "), st, None, ui)
     assert st.sim.paused, "Space is a character here, not the pause key"
+    before = st.dialog.text
+    handle_event(key(pygame.K_s, "s", pygame.KMOD_META), st, None, ui)
+    assert st.dialog.text == before, "Cmd+S must not type -- macOS hands it unicode='s'"
     handle_event(key(pygame.K_ESCAPE), st, None, ui)
     assert st.dialog is not None and st.dialog.renaming is None
     handle_event(key(pygame.K_ESCAPE), st, None, ui)
