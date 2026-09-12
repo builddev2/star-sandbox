@@ -1259,7 +1259,13 @@ def test_the_dialog_draws_over_a_veil(saving):
     ui.draw(surface, st)
     corner = surface.get_at((2, 2))[:3]
     assert corner != palette.SPACE[:3], "the world behind the dialog is dimmed"
-    inside = sum(1 for x in range(ui.modal.left, ui.modal.right, 3)
-                 for y in range(ui.modal.top, ui.modal.bottom, 3)
-                 if surface.get_at((x, y))[:3] == palette.TEXT_DIM)
+    # Sample the box of the first slot's description line itself, rather than
+    # the whole modal -- the panel title is drawn in the same colour, so a
+    # count over the whole modal would pass even if the labels were never
+    # drawn at all.
+    x, y, text, _ = ui.labels[0]
+    width, height = ui.font.width(text), ui.font.height
+    inside = sum(1 for px in range(x, x + width)
+                 for py in range(y, y + height)
+                 if surface.get_at((px, py))[:3] == palette.TEXT_DIM)
     assert inside > 10, "the slot descriptions are drawn"

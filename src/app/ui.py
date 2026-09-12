@@ -459,8 +459,7 @@ class UiLayer:
         x -= m.gap * 3
 
         saves = Control("game.saves", icon="save", hotkey="S", compact=True,
-                        tooltip="Save or load a game",
-                        active=state.dialog is not None)
+                        tooltip="Save or load a game")
         x -= m.icon_btn_w
         self._place([(saves, pygame.Rect(x, y, m.icon_btn_w, m.btn_h))])
         x -= m.gap * 3
