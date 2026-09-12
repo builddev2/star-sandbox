@@ -8,7 +8,6 @@ start referring to a different planet.  Every read goes through index_of.
 import math
 from datetime import datetime
 
-import numpy as np
 import pygame
 
 from .. import explain, save, units

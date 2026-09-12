@@ -414,7 +414,13 @@ def test_loading_refreshes_the_integrator_and_drops_the_stale_report(saving_stat
     st.explain.report = object()
     st.load_slot(1)
     assert st.explain.report is None
-    st.sim.advance(1.0)                      # would blow up on stale accelerations
+    world = st.sim.world
+    # World.add zeroes acc for every body it adds, and nothing else fills it
+    # back in on its own -- only Simulation.refresh() (-> Integrator.refresh)
+    # recomputes it.  A skipped refresh does not raise: the first substep
+    # would just half-kick every body from a silently wrong (zero) force,
+    # so the only way to catch it is to look at world.acc directly.
+    assert np.abs(world.acc[:world.n]).max() > 0
 
 
 def test_a_slot_that_cannot_be_loaded_is_marked_and_the_world_survives(saving_state, store):
