@@ -1073,3 +1073,193 @@ def test_turning_explanations_off_hides_a_standing_report(state, ui):
     assert state.explain.enabled is False
     ui.build(state, SIZE)
     assert find(ui, "explain.close") is None
+
+
+# --- saving and loading ---------------------------------------------------------------
+
+@pytest.fixture
+def saving(tmp_path):
+    from src.app.saves import SlotStore
+    from src.app.state import AppState
+    from src.app.tools import SelectTool
+    from src.app.ui import UiLayer
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.render.hud import Hud
+    from src.render.pixelfont import PixelFont
+    from src.sim import Simulation
+    store = SlotStore(str(tmp_path / "saves"))
+    st = AppState(Simulation(), Camera(*SIZE), ViewSettings(), store=store)
+    st.set_tool(SelectTool)
+    font = PixelFont(18)
+    layer = UiLayer(font, Hud(font))
+    layer.build(st, SIZE)
+    return st, layer, store
+
+
+def test_the_saves_button_carries_the_s_key_and_opens_the_list(saving):
+    st, ui, _ = saving
+    button = find(ui, "game.saves")
+    assert button is not None and button.hotkey == "S"
+    click(ui, st, button)
+    assert st.dialog is not None and st.dialog.kind == "saves"
+    assert st.sim.paused
+
+
+def test_with_a_dialog_open_nothing_else_is_built(saving):
+    st, ui, _ = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    built = ids(ui)
+    assert "dialog.close" in built and "slot.save" in built
+    assert not built & {"tool.look", "sim.reset", "app.quit", "game.saves",
+                        "body.follow", "view.zoom"}
+    assert ui.modal is not None
+
+
+def test_an_empty_slot_offers_save_only(saving):
+    st, ui, _ = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    assert find(ui, "slot.save", 1) is not None
+    assert find(ui, "slot.load", 1) is None
+    assert find(ui, "slot.rename", 1) is None
+    assert "Empty" in find(ui, "slot.name", 1).label
+
+
+def test_saving_by_button_fills_the_slot_and_offers_load_and_rename(saving):
+    st, ui, store = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    click_id(ui, st, "slot.save", 2)
+    assert store.list()[1] is not None
+    assert find(ui, "slot.load", 2) is not None
+    assert find(ui, "slot.rename", 2) is not None
+    assert st.default_save_name() in find(ui, "slot.name", 2).label
+
+
+def test_overwrite_reads_as_a_question_and_a_stray_press_disarms(saving):
+    st, ui, store = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    click_id(ui, st, "slot.save", 1)
+    click_id(ui, st, "slot.save", 1)
+    armed = find(ui, "slot.save", 1)
+    assert armed.label == "Overwrite?" and armed.danger and armed.active
+    # A press on the panel background, off every button.
+    pos = (ui.modal.x + 2, ui.modal.bottom - 2)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1), st)
+    ui.on_event(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=pos, button=1), st)
+    ui.build(st, SIZE)
+    assert find(ui, "slot.save", 1).label == "Save"
+    assert st.dialog is not None, "a stray press disarms, it does not close"
+
+
+def test_load_by_button_replaces_the_world_and_closes(saving):
+    st, ui, _ = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    click_id(ui, st, "slot.save", 3)
+    st.close_dialog()
+    st.sim.world.time = 4321.0
+    st.open_saves()
+    ui.build(st, SIZE)
+    click_id(ui, st, "slot.load", 3)
+    assert st.dialog is None
+    assert st.sim.world.time != 4321.0
+    assert "game.saves" in ids(ui)
+
+
+def test_rename_by_button_turns_the_name_into_a_field(saving):
+    st, ui, _ = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    click_id(ui, st, "slot.save", 1)
+    click_id(ui, st, "slot.rename", 1)
+    field = find(ui, "slot.name", 1)
+    assert field.text_field and field.label == st.default_save_name()
+
+
+def test_close_button_restores_the_pause_state(saving):
+    st, ui, _ = saving
+    st.sim.paused = False
+    st.open_saves()
+    ui.build(st, SIZE)
+    click_id(ui, st, "dialog.close")
+    assert st.dialog is None and st.sim.paused is False
+
+
+def test_the_start_menu_has_three_buttons_with_keys(saving):
+    st, ui, _ = saving
+    st.open_start()
+    ui.build(st, SIZE)
+    assert {c.hotkey for c in ui.controls if c.id.startswith("start.")} == {"N", "L", "Q"}
+    assert ids(ui) == {"start.new", "start.load", "start.quit"}
+
+
+def test_new_starts_time_and_load_shows_slots_with_back(saving):
+    st, ui, _ = saving
+    st.open_start()
+    ui.build(st, SIZE)
+    click_id(ui, st, "start.load")
+    assert st.dialog.kind == "load"
+    assert "slot.save" not in ids(ui) and "slot.rename" not in ids(ui)
+    assert "Back" in find(ui, "dialog.close").tooltip
+    click_id(ui, st, "dialog.close")
+    assert st.dialog.kind == "start"
+    click_id(ui, st, "start.new")
+    assert st.dialog is None and not st.sim.paused
+
+
+def test_quit_from_the_start_menu_is_immediate(saving):
+    st, ui, _ = saving
+    st.open_start()
+    ui.build(st, SIZE)
+    click_id(ui, st, "start.quit")
+    assert st.running is False
+
+
+def test_without_a_store_save_is_disabled_and_says_why(state, ui):
+    state.open_saves()
+    ui.build(state, SIZE)
+    button = find(ui, "slot.save", 1)
+    assert not button.enabled and "folder" in button.tooltip.lower()
+
+
+def test_an_unreadable_slot_disables_load_and_rename(saving):
+    import os
+    st, ui, store = saving
+    os.makedirs(store.directory, exist_ok=True)
+    with open(store.path(2), "w") as f:
+        f.write("junk")
+    st.open_saves()
+    ui.build(st, SIZE)
+    assert not find(ui, "slot.load", 2).enabled
+    assert not find(ui, "slot.rename", 2).enabled
+    assert find(ui, "slot.save", 2).enabled
+
+
+def test_the_wheel_does_nothing_under_a_dialog(saving):
+    st, ui, _ = saving
+    st.show_body_list = True
+    st.open_saves()
+    ui.build(st, SIZE)
+    ui.mouse = ui.modal.center
+    assert ui.on_event(pygame.event.Event(pygame.MOUSEWHEEL, y=-3), st)
+    assert st.body_list_offset == 0
+
+
+def test_the_dialog_draws_over_a_veil(saving):
+    from src.render import palette
+    st, ui, _ = saving
+    st.open_saves()
+    ui.build(st, SIZE)
+    surface = pygame.Surface(SIZE)
+    surface.fill(palette.SPACE)
+    ui.draw(surface, st)
+    corner = surface.get_at((2, 2))[:3]
+    assert corner != palette.SPACE[:3], "the world behind the dialog is dimmed"
+    inside = sum(1 for x in range(ui.modal.left, ui.modal.right, 3)
+                 for y in range(ui.modal.top, ui.modal.bottom, 3)
+                 if surface.get_at((x, y))[:3] == palette.TEXT_DIM)
+    assert inside > 10, "the slot descriptions are drawn"

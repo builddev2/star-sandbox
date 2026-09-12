@@ -250,3 +250,61 @@ def test_the_explain_panel_fits_at_every_window_size():
                 assert rect.right <= width, (width, height, drawer, maths)
                 assert rect.top >= m.content_top
                 assert rect.bottom <= m.content_bottom
+
+
+@pytest.fixture(scope="module")
+def store(tmp_path_factory):
+    """One slot at the longest name allowed, one corrupt, one empty."""
+    import os
+    from src import save, scenarios
+    from src.app.saves import SlotStore
+    from src.app.state import NAME_MAX
+    store = SlotStore(str(tmp_path_factory.mktemp("saves")))
+    world = scenarios.solar_system()
+    session = save.Session("solar_system", 5, False, True, False, True, True,
+                           True, None, (0.0, 0.0), None, 13.0)
+    store.write(1, save.to_data(world, session, "W" * NAME_MAX, "Solar"))
+    os.makedirs(store.directory, exist_ok=True)
+    with open(store.path(2), "w") as f:
+        f.write("junk")
+    return store
+
+
+DIALOGS = ("start", "load", "saves")
+
+
+def build_dialog(size, s, dialog, store):
+    from src.app.tools import SelectTool
+    font = PixelFont(config.font_px(s))
+    hud = Hud(font)
+    internal = config.internal_size(size[0], size[1], s)
+    state = AppState(Simulation(), Camera(*internal), ViewSettings(), store=store)
+    state.set_tool(SelectTool)
+    if dialog == "start":
+        state.open_start()
+    elif dialog == "load":
+        state.open_start()
+        state.open_load()
+    else:
+        state.open_saves()
+        state.begin_rename(1)
+    ui = UiLayer(font, hud)
+    ui.build(state, internal, None)
+    return ui, pygame.Rect(0, 0, *internal)
+
+
+@pytest.mark.parametrize("window", WINDOWS)
+@pytest.mark.parametrize("s", config.GRID_CHOICES)
+@pytest.mark.parametrize("dialog", DIALOGS)
+def test_the_dialogs_fit_inside_the_window(window, s, dialog, store):
+    if not config.grid_fits(window[0], window[1], s):
+        pytest.skip("grid does not fit")
+    ui, screen = build_dialog(window, s, dialog, store)
+    assert ui.modal is not None and screen.contains(ui.modal)
+    outside = sorted({c.id for c in ui.controls if not screen.contains(c.rect)})
+    assert not outside, "%s off screen at %s grid %d (%s)" % (outside, screen.size, s, dialog)
+    for i, a in enumerate(ui.controls):
+        for b in ui.controls[i + 1:]:
+            assert not a.rect.colliderect(b.rect), \
+                "%s overlaps %s at %s grid %d (%s)" % (a.id, b.id, window, s, dialog)
+        assert ui.modal.contains(a.rect), "%s hangs off the dialog" % a.id
