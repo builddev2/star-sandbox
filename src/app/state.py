@@ -77,6 +77,12 @@ class DialogState:
         #: Whether the sim was paused before the in-game dialog opened, so
         #: closing it puts time back how it was.
         self.resume_paused = False
+        #: Whether the Save button can do anything.  ``store.writable()``
+        #: creates ``saves/`` if it can, so this is computed once, in
+        #: ``open_saves`` -- never every frame in ``ui.py`` -- or the start
+        #: menu's Load list (which has no Save button at all) would create
+        #: the folder just by being opened.  False for the start dialogs.
+        self.can_save = False
 
 
 class ExplainRecorder:
@@ -487,6 +493,7 @@ class AppState:
             return
         d = DialogState(DIALOG_SAVES, self._list_slots())
         d.resume_paused = self.sim.paused
+        d.can_save = self.store is not None and self.store.writable()
         self.sim.paused = True
         self.dialog = d
         self.cancel_quit()
@@ -581,8 +588,14 @@ class AppState:
         try:
             self.store.write(slot, data)
         except OSError:
+            # The folder could have gone read-only, or vanished, between the
+            # dialog opening and this press -- re-list and re-check so a
+            # stale "readable" row and a lit Save button don't linger.
+            d.slots = self.store.list()
+            d.can_save = self.store.writable()
             return False
         d.slots = self.store.list()
+        d.can_save = self.store.writable()
         return True
 
     def load_slot(self, slot):
@@ -594,6 +607,8 @@ class AppState:
         """
         d = self.dialog
         if d is None or self.store is None:
+            return False
+        if not d.slots:              # the start dialog has no slots to index
             return False
         info = d.slots[slot - 1]
         if info is None or not info.readable:
@@ -626,6 +641,8 @@ class AppState:
     def begin_rename(self, slot):
         d = self.dialog
         if d is None or self.store is None:
+            return
+        if not d.slots:              # the start dialog has no slots to index
             return
         info = d.slots[slot - 1]
         if info is None or not info.readable:
@@ -660,6 +677,10 @@ class AppState:
         try:
             self.store.rename(slot, name[:NAME_MAX])
         except (OSError, ValueError):
+            # The file it was renaming could have vanished, or the read that
+            # rename() does internally could now fail -- re-list so the row
+            # reflects that instead of staying "readable" and stale.
+            d.slots = self.store.list()
             return
         d.slots = self.store.list()
 
@@ -680,9 +701,20 @@ class AppState:
             when = datetime.fromisoformat(info.saved_at).strftime("%a %d %b %H:%M")
         except (TypeError, ValueError):
             when = info.saved_at
-        years = float(summary.get("days", 0.0)) / units.DAYS_PER_YEAR
-        return "%s  Year %.1f  %d bodies  %s" % (
-            summary.get("scenario_label", "?"), years, int(summary.get("bodies", 0)), when)
+        # A hand-edited save can put anything in these two fields -- SlotStore
+        # only checks that "summary" is a dict, not what is inside it -- so a
+        # bad value falls back to "?" rather than crashing ui.build the
+        # moment the dialog opens.
+        try:
+            year_text = "%.1f" % (float(summary.get("days", 0.0)) / units.DAYS_PER_YEAR)
+        except (TypeError, ValueError):
+            year_text = "?"
+        try:
+            bodies_text = "%d" % int(summary.get("bodies", 0))
+        except (TypeError, ValueError):
+            bodies_text = "?"
+        return "%s  Year %s  %s bodies  %s" % (
+            str(summary.get("scenario_label", "?")), year_text, bodies_text, when)
 
     def cycle_grid(self, ctx):
         """Step the pixel grid.  Sprites are sized in pixels, so the cache dies.

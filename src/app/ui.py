@@ -259,9 +259,12 @@ class UiLayer:
         slot offers, and a dim line saying what is in it."""
         d = state.dialog
         loading = d.kind == DIALOG_LOAD
-        # ``writable()`` also creates the saves directory if it can -- one
-        # call per build while the dialog is open costs nothing.
-        can_save = state.store is not None and state.store.writable()
+        # ``store.writable()`` creates the saves directory if it can, so it
+        # is called once, in ``AppState.open_saves()``, and cached on the
+        # dialog as ``can_save`` -- not here, every frame the dialog is up,
+        # or the start menu's Load list (no Save button, ``can_save`` stays
+        # False) would create the folder just by being opened.
+        can_save = d.can_save
         char = m.font.width("X")
         row_h = m.btn_h + m.line + m.gap
         widest_buttons = (m.button_width(Control("x", label="Load"))

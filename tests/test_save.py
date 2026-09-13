@@ -177,6 +177,21 @@ def test_a_duplicate_id_raises():
         save.from_data(data, World())
 
 
+def test_a_bad_session_is_caught_before_the_world_is_touched():
+    """The session is parsed (``_parse_session``) before ``world.clear()`` --
+    a bad centre must not leave the target half-loaded."""
+    world = busy_world()
+    data = save.to_data(world, session(), "x", "Solar")
+    data["session"]["centre"] = "x"
+    target = scenarios.solar_system()
+    before = target.pos[:target.n].copy()
+    n = target.n
+    with pytest.raises(save.SaveFormatError):
+        save.from_data(data, target)
+    assert target.n == n
+    assert np.array_equal(target.pos[:n], before)
+
+
 def test_garbage_raises_rather_than_crashing():
     for garbage in (None, [], {}, {"version": 1}, {"version": 1, "world": 3, "session": {}}):
         with pytest.raises(save.SaveFormatError):

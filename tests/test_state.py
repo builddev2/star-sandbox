@@ -343,6 +343,55 @@ def test_save_over_an_unreadable_slot_uses_the_default_name(saving_state, store)
     assert store.list()[0].name == st.default_save_name()
 
 
+def test_opening_load_does_not_create_the_saves_folder(saving_state, store):
+    import os
+    st = saving_state
+    st.open_start()
+    st.open_load()
+    assert not os.path.isdir(store.directory)
+    st.close_dialog()            # back to start
+    st.start_new()
+    st.open_saves()
+    assert st.dialog.can_save
+    st.save_slot(1)
+    assert os.path.isdir(store.directory)
+
+
+def test_slot_actions_are_a_no_op_from_the_start_dialog(saving_state):
+    """The start dialog's ``slots`` is always ``[]`` -- there is nothing to
+    index -- so a stray call must not raise IndexError."""
+    st = saving_state
+    st.open_start()
+    assert st.load_slot(1) is False
+    st.begin_rename(1)
+    assert st.dialog.renaming is None
+
+
+def test_a_bad_time_index_clamps_on_load(saving_state, store):
+    """A save from a build with fewer time scales, or a hand-edited file,
+    could carry a time_index past the end of this build's ladder."""
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    data = store.read(1)
+    data["session"]["time_index"] = 99
+    store.write(1, data)
+    st.dialog.slots = store.list()
+    st.load_slot(1)
+    assert st.time_index == st.time_index_max
+
+
+def test_loading_clears_leftover_impact_particles(saving_state):
+    """A loaded world has no impact of its own to show -- the particles left
+    over belong to whatever happened in the world being replaced."""
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.effects.particles.append(object())
+    st.load_slot(1)
+    assert st.effects.count == 0
+
+
 def test_without_a_store_nothing_is_saved(state):
     state.open_saves()
     assert state.dialog.slots == [None, None, None]
@@ -365,6 +414,7 @@ def test_loading_restores_the_world_the_selection_and_the_camera(saving_state, s
     st.save_slot(1)
     st.close_dialog()
 
+    st.cycle_scenario()          # now "black_hole" -- the save was "solar_system"
     st.reset()
     st.sim.paused = False
     st.time_index = 2
@@ -381,6 +431,27 @@ def test_loading_restores_the_world_the_selection_and_the_camera(saving_state, s
     assert tuple(st.camera.centre) == (1.0, 2.0)
     assert abs(st.camera.width / st.camera.zoom - 4.0) < 1e-9
     assert st.sim.world.time != 5000.0
+    assert st.scenario == "solar_system"
+
+
+def test_an_unknown_saved_scenario_leaves_the_current_one_alone(saving_state, store):
+    """A save written by a future build might name a scenario this one does
+    not have.  ``_apply_session`` must leave the running choice alone rather
+    than crash on a KeyError or silently adopt a name Restart cannot use."""
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.close_dialog()
+
+    data = store.read(1)
+    data["session"]["scenario"] = "moon_base"
+    store.write(1, data)
+
+    before = st.scenario
+    st.open_saves()
+    st.dialog.slots = store.list()
+    assert st.load_slot(1) is True
+    assert st.scenario == before
 
 
 def test_a_save_made_from_a_running_world_loads_running(saving_state):
@@ -437,6 +508,21 @@ def test_a_slot_that_cannot_be_loaded_is_marked_and_the_world_survives(saving_st
     assert st.dialog is not None
     assert not st.dialog.slots[0].readable
     assert st.sim.world.n == n
+
+
+def test_a_vanished_slot_relists_after_a_failed_rename(saving_state, store):
+    """The file rename() reads could disappear between opening the dialog and
+    pressing Enter -- os.remove is enough to simulate it -- and the row
+    should reflect that instead of staying stuck on the stale "readable"
+    entry the dialog opened with."""
+    import os
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    os.remove(store.path(1))
+    st.begin_rename(1)
+    st.rename_commit()                   # must not raise
+    assert st.dialog.slots[0] is None
 
 
 def test_rename_commit_writes_and_cancel_does_not(saving_state, store):
@@ -509,6 +595,10 @@ def test_describe_slot_reads_well(saving_state, store):
     assert st.describe_slot(good) == "Solar  Year 3.2  9 bodies  Sat 12 Sep 14:03"
     odd = SlotInfo(1, "x", "yesterday", {"scenario_label": "Solar", "days": 0, "bodies": 1}, True)
     assert st.describe_slot(odd).endswith("yesterday")
+    junk = SlotInfo(1, "x", "2026-09-12T14:03",
+                    {"scenario_label": "Solar", "days": "abc", "bodies": None}, True)
+    text = st.describe_slot(junk)           # must not raise
+    assert text.startswith("Solar") and "?" in text
 
 
 def test_restart_closes_nothing_but_loading_resets_the_tool(saving_state):
