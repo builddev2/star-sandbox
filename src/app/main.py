@@ -15,6 +15,7 @@ from ..render.starfield import Starfield
 from ..sim import Simulation
 from .config import DEFAULT_S, open_display
 from .input import handle_event
+from .saves import SlotStore, default_directory
 from .state import AppState
 from .tools import SelectTool
 from .ui import UiLayer
@@ -42,15 +43,18 @@ def probe(fullscreen=False):
 
 
 class App:
-    def __init__(self, fullscreen=False):
+    def __init__(self, fullscreen=False, saves_dir=None):
         pygame.init()
         self.ctx = open_display(fullscreen=fullscreen)
         self.clock = pygame.time.Clock()
         self.cache = SpriteCache()
         self.camera = Camera(self.ctx.width, self.ctx.height)
         self._build_render_stack()
-        self.state = AppState(Simulation(), self.camera, ViewSettings())
+        self.store = SlotStore(default_directory() if saves_dir is None else saves_dir)
+        self.state = AppState(Simulation(), self.camera, ViewSettings(), store=self.store)
         self.state.set_tool(SelectTool)
+        # Opens onto New / Load / Quit, with the solar system frozen behind it.
+        self.state.open_start()
         # Lay the buttons out once before the first event, so a click landing in
         # the opening frame hits a button rather than falling through to space.
         self.ui.build(self.state, (self.ctx.width, self.ctx.height), self.ctx)
@@ -120,16 +124,17 @@ class App:
         # any time-scale, and frame_dt is real seconds.
         state.effects.update(frame_dt)
         state.effects.draw(surface, state.camera)
-        report = state.explain.report if state.explain.enabled else None
-        if report is not None:
-            m = self.hud.metrics(surface.get_width(), surface.get_height())
-            state.explain_rect = self.explain_panel.draw(
-                surface, report, m,
-                widgets.overlay_x(m, state.show_body_list), state.show_maths)
-        else:
-            state.explain_rect = None
-        state.tool.draw_overlay(surface, state, self.font)
-        self.hud.draw(surface, state)
+        if state.dialog is None:
+            report = state.explain.report if state.explain.enabled else None
+            if report is not None:
+                m = self.hud.metrics(surface.get_width(), surface.get_height())
+                state.explain_rect = self.explain_panel.draw(
+                    surface, report, m,
+                    widgets.overlay_x(m, state.show_body_list), state.show_maths)
+            else:
+                state.explain_rect = None
+            state.tool.draw_overlay(surface, state, self.font)
+            self.hud.draw(surface, state)
         # Built at the end of the frame, from the state that is about to be
         # shown: next frame's clicks then hit exactly what the eye can see.
         self.ui.build(state, surface.get_size(), self.ctx)

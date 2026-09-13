@@ -221,3 +221,392 @@ def test_cycling_selection_restamps_the_time(state):
     before = pygame.time.get_ticks()
     state.cycle_selection()
     assert state.selected_at >= before
+
+
+# --- saving, loading, the menus ------------------------------------------------------
+
+@pytest.fixture
+def store(tmp_path):
+    from src.app.saves import SlotStore
+    return SlotStore(str(tmp_path / "saves"))
+
+
+@pytest.fixture
+def saving_state(store):
+    from src.app.state import AppState
+    from src.app.tools import SelectTool
+    st = AppState(Simulation(), Camera(1000, 700), ViewSettings(), store=store)
+    st.set_tool(SelectTool)
+    return st
+
+
+def test_the_start_menu_freezes_time(saving_state):
+    from src.app.state import DIALOG_START
+    st = saving_state
+    st.open_start()
+    assert st.dialog.kind == DIALOG_START and st.sim.paused
+    st.start_new()
+    assert st.dialog is None and not st.sim.paused
+
+
+def test_quit_from_the_start_menu_needs_no_confirmation(saving_state):
+    saving_state.open_start()
+    saving_state.quit_now()
+    assert saving_state.running is False
+
+
+def test_load_from_the_start_menu_and_back(saving_state):
+    from src.app.state import DIALOG_LOAD, DIALOG_START
+    st = saving_state
+    st.open_start()
+    st.open_load()
+    assert st.dialog.kind == DIALOG_LOAD
+    assert st.dialog.slots == [None, None, None]
+    st.close_dialog()
+    assert st.dialog.kind == DIALOG_START
+
+
+def test_opening_the_saves_dialog_pauses_and_closing_restores(saving_state):
+    st = saving_state
+    for was_paused in (False, True):
+        st.sim.paused = was_paused
+        st.open_saves()
+        assert st.sim.paused is True
+        st.close_dialog()
+        assert st.dialog is None
+        assert st.sim.paused is was_paused
+
+
+def test_toggle_saves_opens_and_closes(saving_state):
+    from src.app.state import DIALOG_SAVES
+    st = saving_state
+    st.toggle_saves()
+    assert st.dialog.kind == DIALOG_SAVES
+    st.toggle_saves()
+    assert st.dialog is None
+
+
+def test_saving_into_an_empty_slot_takes_one_press(saving_state, store):
+    st = saving_state
+    st.open_saves()
+    assert st.save_slot(2) is True
+    assert store.list()[1].name == st.default_save_name()
+    assert st.dialog.slots[1] is not None
+    assert st.dialog.armed is None
+
+
+def test_default_name_is_scenario_and_year(saving_state):
+    saving_state.sim.world.time = 3.2 * 365.25
+    assert saving_state.default_save_name() == "Solar Year 3.2"
+
+
+def test_saving_over_a_full_slot_takes_two_presses_and_keeps_the_name(saving_state, store):
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    store.rename(1, "Mars trip")
+    st.dialog.slots = store.list()
+    st.sim.world.time = 999.0
+    assert st.save_slot(1) is False
+    assert st.dialog.armed == 1
+    assert store.read(1)["world"]["time"] != 999.0
+    assert st.save_slot(1) is True
+    assert st.dialog.armed is None
+    assert store.read(1)["world"]["time"] == 999.0
+    assert store.read(1)["name"] == "Mars trip"
+
+
+def test_anything_else_disarms_an_overwrite(saving_state):
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.save_slot(1)
+    assert st.dialog.armed == 1
+    st.disarm()
+    assert st.dialog.armed is None
+    st.save_slot(1)
+    st.save_slot(3)                       # a different slot is "something else"
+    assert st.dialog.armed is None
+    assert st.dialog.slots[2] is not None
+
+
+def test_save_over_an_unreadable_slot_uses_the_default_name(saving_state, store):
+    import os
+    os.makedirs(store.directory, exist_ok=True)
+    with open(store.path(1), "w") as f:
+        f.write("junk")
+    st = saving_state
+    st.open_saves()
+    assert not st.dialog.slots[0].readable
+    st.save_slot(1)
+    assert st.save_slot(1) is True
+    assert store.list()[0].name == st.default_save_name()
+
+
+def test_opening_load_does_not_create_the_saves_folder(saving_state, store):
+    import os
+    st = saving_state
+    st.open_start()
+    st.open_load()
+    assert not os.path.isdir(store.directory)
+    st.close_dialog()            # back to start
+    st.start_new()
+    st.open_saves()
+    assert st.dialog.can_save
+    st.save_slot(1)
+    assert os.path.isdir(store.directory)
+
+
+def test_slot_actions_are_a_no_op_from_the_start_dialog(saving_state):
+    """The start dialog's ``slots`` is always ``[]`` -- there is nothing to
+    index -- so a stray call must not raise IndexError."""
+    st = saving_state
+    st.open_start()
+    assert st.load_slot(1) is False
+    st.begin_rename(1)
+    assert st.dialog.renaming is None
+
+
+def test_a_bad_time_index_clamps_on_load(saving_state, store):
+    """A save from a build with fewer time scales, or a hand-edited file,
+    could carry a time_index past the end of this build's ladder."""
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    data = store.read(1)
+    data["session"]["time_index"] = 99
+    store.write(1, data)
+    st.dialog.slots = store.list()
+    st.load_slot(1)
+    assert st.time_index == st.time_index_max
+
+
+def test_loading_clears_leftover_impact_particles(saving_state):
+    """A loaded world has no impact of its own to show -- the particles left
+    over belong to whatever happened in the world being replaced."""
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.effects.particles.append(object())
+    st.load_slot(1)
+    assert st.effects.count == 0
+
+
+def test_without_a_store_nothing_is_saved(state):
+    state.open_saves()
+    assert state.dialog.slots == [None, None, None]
+    assert state.save_slot(1) is False
+    assert state.dialog.slots == [None, None, None]
+
+
+def test_loading_restores_the_world_the_selection_and_the_camera(saving_state, store):
+    st = saving_state
+    world = st.sim.world
+    earth_id = next(b.id for b in world.bodies if b.name == "Earth")
+    st.select(earth_id)
+    st.camera.follow_id = earth_id
+    st.camera.centre[:] = (1.0, 2.0)
+    st.camera.log_zoom = np.log(1000 / 4.0)          # 4 AU across
+    st.time_index = 8
+    st.view.show_trails = False
+    st.sim.paused = True
+    st.open_saves()
+    st.save_slot(1)
+    st.close_dialog()
+
+    st.cycle_scenario()          # now "black_hole" -- the save was "solar_system"
+    st.reset()
+    st.sim.paused = False
+    st.time_index = 2
+    st.view.show_trails = True
+    st.camera.log_zoom = np.log(1000 / 50.0)
+    st.sim.world.time = 5000.0
+    st.open_saves()
+    assert st.load_slot(1) is True
+    assert st.dialog is None
+    assert st.sim.paused is True
+    assert st.time_index == 8 and st.view.show_trails is False
+    assert st.selected_id == earth_id and st.camera.follow_id == earth_id
+    assert st.selected_body.name == "Earth"
+    assert tuple(st.camera.centre) == (1.0, 2.0)
+    assert abs(st.camera.width / st.camera.zoom - 4.0) < 1e-9
+    assert st.sim.world.time != 5000.0
+    assert st.scenario == "solar_system"
+
+
+def test_an_unknown_saved_scenario_leaves_the_current_one_alone(saving_state, store):
+    """A save written by a future build might name a scenario this one does
+    not have.  ``_apply_session`` must leave the running choice alone rather
+    than crash on a KeyError or silently adopt a name Restart cannot use."""
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.close_dialog()
+
+    data = store.read(1)
+    data["session"]["scenario"] = "moon_base"
+    store.write(1, data)
+
+    before = st.scenario
+    st.open_saves()
+    st.dialog.slots = store.list()
+    assert st.load_slot(1) is True
+    assert st.scenario == before
+
+
+def test_a_save_made_from_a_running_world_loads_running(saving_state):
+    st = saving_state
+    st.sim.paused = False
+    st.open_saves()                      # pauses mechanically
+    st.save_slot(1)
+    st.close_dialog()
+    st.sim.paused = True
+    st.open_saves()
+    st.load_slot(1)
+    assert st.sim.paused is False, "the dialog's own pause must not be saved"
+
+
+def test_the_same_save_shows_the_same_width_of_sky_in_a_narrower_window(saving_state, store):
+    from src.app.state import AppState
+    st = saving_state
+    st.camera.log_zoom = np.log(1000 / 4.0)
+    st.open_saves()
+    st.save_slot(1)
+    narrow = AppState(Simulation(), Camera(400, 300), ViewSettings(), store=store)
+    narrow.open_saves()
+    assert narrow.load_slot(1)
+    assert abs(narrow.camera.width / narrow.camera.zoom - 4.0) < 1e-9
+
+
+def test_loading_refreshes_the_integrator_and_drops_the_stale_report(saving_state):
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.explain.report = object()
+    st.load_slot(1)
+    assert st.explain.report is None
+    world = st.sim.world
+    # World.add zeroes acc for every body it adds, and nothing else fills it
+    # back in on its own -- only Simulation.refresh() (-> Integrator.refresh)
+    # recomputes it.  A skipped refresh does not raise: the first substep
+    # would just half-kick every body from a silently wrong (zero) force,
+    # so the only way to catch it is to look at world.acc directly.
+    assert np.abs(world.acc[:world.n]).max() > 0
+
+
+def test_a_slot_that_cannot_be_loaded_is_marked_and_the_world_survives(saving_state, store):
+    import os
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    data = store.read(1)
+    data["world"]["bodies"][0]["kind"] = "teapot"
+    store.write(1, data)
+    st.dialog.slots = store.list()           # still lists as readable: header is fine
+    n = st.sim.world.n
+    assert st.load_slot(1) is False
+    assert st.dialog is not None
+    assert not st.dialog.slots[0].readable
+    assert st.sim.world.n == n
+
+
+def test_a_vanished_slot_relists_after_a_failed_rename(saving_state, store):
+    """The file rename() reads could disappear between opening the dialog and
+    pressing Enter -- os.remove is enough to simulate it -- and the row
+    should reflect that instead of staying stuck on the stale "readable"
+    entry the dialog opened with."""
+    import os
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    os.remove(store.path(1))
+    st.begin_rename(1)
+    st.rename_commit()                   # must not raise
+    assert st.dialog.slots[0] is None
+
+
+def test_rename_commit_writes_and_cancel_does_not(saving_state, store):
+    st = saving_state
+    st.open_saves()
+    st.save_slot(2)
+    st.begin_rename(2)
+    assert st.dialog.renaming == 2 and st.dialog.text == st.default_save_name()
+    for ch in "!!":
+        st.rename_type(ch)
+    st.rename_backspace()
+    st.rename_commit()
+    assert st.dialog.renaming is None
+    assert store.list()[1].name == st.default_save_name() + "!"
+    st.begin_rename(2)
+    st.rename_type("z")
+    st.rename_cancel()
+    assert store.list()[1].name == st.default_save_name() + "!"
+
+
+def test_an_empty_name_keeps_the_old_one(saving_state, store):
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.begin_rename(1)
+    while st.dialog.text:
+        st.rename_backspace()
+    st.rename_type(" ")
+    st.rename_commit()
+    assert store.list()[0].name == st.default_save_name()
+
+
+def test_names_are_capped_and_printable_ascii_only(saving_state):
+    from src.app.state import NAME_MAX
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.begin_rename(1)
+    while st.dialog.text:
+        st.rename_backspace()
+    for _ in range(NAME_MAX + 10):
+        st.rename_type("a")
+    assert len(st.dialog.text) == NAME_MAX
+    st.rename_backspace()
+    st.rename_type("\t")
+    st.rename_type("é")
+    st.rename_type("\x1b")
+    assert st.dialog.text == "a" * (NAME_MAX - 1)
+
+
+def test_rename_and_arm_cancel_each_other(saving_state):
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.save_slot(1)                          # armed
+    st.begin_rename(1)
+    assert st.dialog.armed is None and st.dialog.renaming == 1
+    st.save_slot(1)                          # arms again, and leaves the field
+    assert st.dialog.renaming is None and st.dialog.armed == 1
+
+
+def test_describe_slot_reads_well(saving_state, store):
+    from src.app.saves import SlotInfo, UNREADABLE_NAME
+    st = saving_state
+    assert st.describe_slot(None) == "Nothing saved here yet"
+    bad = SlotInfo(1, UNREADABLE_NAME, "", {}, False)
+    assert "can't be read" in st.describe_slot(bad)
+    good = SlotInfo(1, "x", "2026-09-12T14:03",
+                    {"scenario_label": "Solar", "days": 3.2 * 365.25, "bodies": 9}, True)
+    assert st.describe_slot(good) == "Solar  Year 3.2  9 bodies  Sat 12 Sep 14:03"
+    odd = SlotInfo(1, "x", "yesterday", {"scenario_label": "Solar", "days": 0, "bodies": 1}, True)
+    assert st.describe_slot(odd).endswith("yesterday")
+    junk = SlotInfo(1, "x", "2026-09-12T14:03",
+                    {"scenario_label": "Solar", "days": "abc", "bodies": None}, True)
+    text = st.describe_slot(junk)           # must not raise
+    assert text.startswith("Solar") and "?" in text
+
+
+def test_restart_closes_nothing_but_loading_resets_the_tool(saving_state):
+    from src.app.tools import FlyTool
+    st = saving_state
+    st.set_tool(FlyTool)
+    st.open_saves()
+    st.save_slot(1)
+    old_tool = st.tool
+    st.load_slot(1)
+    assert isinstance(st.tool, FlyTool) and st.tool is not old_tool

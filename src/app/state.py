@@ -6,13 +6,16 @@ start referring to a different planet.  Every read goes through index_of.
 """
 
 import math
+from datetime import datetime
 
 import pygame
 
-from .. import explain, units
+from .. import explain, save, units
 from ..body import KIND_CRAFT
 from ..render import scale
+from ..render.camera import MAX_ZOOM, MIN_ZOOM
 from ..render.effects import EffectField
+from .saves import SLOTS, SlotInfo, UNREADABLE_NAME
 
 #: Days of simulation per second of real time, coarsest last.
 TIME_SCALES = (
@@ -42,6 +45,44 @@ DEFAULT_HINT = "Click a body to inspect it  -  wheel zooms  -  ? for controls"
 #: it must behave identically at one hour a second and at ten years a second,
 #: the same argument render/effects.py makes about particle velocities.
 SETTLE_MS = 350
+
+#: Which modal is up.  ``"start"`` is the opening New / Load / Quit menu,
+#: ``"load"`` the slot list reached from it (load only, Back), ``"saves"``
+#: the in-game list with Load, Save and Rename per slot.
+DIALOG_START = "start"
+DIALOG_LOAD = "load"
+DIALOG_SAVES = "saves"
+
+#: Longest name a slot can have.  Wide enough for "Jupiter eats everything",
+#: narrow enough that the name row still fits beside three buttons at the
+#: smallest window (tests/test_layout.py).
+NAME_MAX = 24
+
+
+class DialogState:
+    """What the open dialog knows: which one it is, the listed slots, and the
+    two things a slot can be in the middle of -- an armed overwrite, or a
+    name being typed.  Only one slot can be in either state at once, and
+    starting one ends the other."""
+
+    def __init__(self, kind, slots):
+        self.kind = kind
+        self.slots = slots
+        #: Slot whose Save button reads "Overwrite?" and is waiting for the
+        #: second press, or None.
+        self.armed = None
+        #: Slot whose name is a text field right now, or None.
+        self.renaming = None
+        self.text = ""
+        #: Whether the sim was paused before the in-game dialog opened, so
+        #: closing it puts time back how it was.
+        self.resume_paused = False
+        #: Whether the Save button can do anything.  ``store.writable()``
+        #: creates ``saves/`` if it can, so this is computed once, in
+        #: ``open_saves`` -- never every frame in ``ui.py`` -- or the start
+        #: menu's Load list (which has no Save button at all) would create
+        #: the folder just by being opened.  False for the start dialogs.
+        self.can_save = False
 
 
 class ExplainRecorder:
@@ -171,7 +212,7 @@ class ExplainRecorder:
 
 
 class AppState:
-    def __init__(self, sim, camera, view):
+    def __init__(self, sim, camera, view, store=None):
         self.sim = sim
         self.camera = camera
         self.view = view
@@ -212,6 +253,12 @@ class AppState:
         #: Which arrangement Restart loads.  sim.reset() used to hard-code the
         #: solar system, so there was no way to reach any other.
         self.scenario = SCENARIOS[0]
+        #: Where saves go, or None when there is nowhere (tests).  With no
+        #: store every Save button is disabled and every slot lists empty.
+        self.store = store
+        #: The open modal, or None.  While one is up, ``ui.build`` lays out
+        #: only it and ``input.handle_event`` routes everything to it.
+        self.dialog = None
 
     # --- time -------------------------------------------------------------------
 
@@ -417,6 +464,257 @@ class AppState:
         self.selected_id = None
         self.camera.follow_id = None
         self.body_list_offset = 0
+
+    # --- the start menu and the saves dialog ------------------------------------
+
+    def _list_slots(self):
+        return [None] * SLOTS if self.store is None else self.store.list()
+
+    def open_start(self):
+        """The opening menu.  Time is frozen behind it until New or Load."""
+        self.dialog = DialogState(DIALOG_START, [])
+        self.sim.paused = True
+
+    def start_new(self):
+        self.dialog = None
+        self.sim.paused = False
+
+    def quit_now(self):
+        """Quit from the start menu: nothing has happened yet, so no arming."""
+        self.running = False
+
+    def open_load(self):
+        self.dialog = DialogState(DIALOG_LOAD, self._list_slots())
+
+    def open_saves(self):
+        """The in-game list.  Pauses, remembering whether it was, so what he
+        saves is exactly what is on screen."""
+        if self.dialog is not None:
+            return
+        d = DialogState(DIALOG_SAVES, self._list_slots())
+        d.resume_paused = self.sim.paused
+        d.can_save = self.store is not None and self.store.writable()
+        self.sim.paused = True
+        self.dialog = d
+        self.cancel_quit()
+
+    def toggle_saves(self):
+        """The S key and the disk button: open the list, or put it away."""
+        if self.dialog is None:
+            self.open_saves()
+        elif self.dialog.kind == DIALOG_SAVES:
+            self.close_dialog()
+
+    def close_dialog(self):
+        """Esc and the close button.  The in-game list restores the pause
+        state it found; the load list goes back to the start menu; the start
+        menu has no way out but its own three buttons."""
+        d = self.dialog
+        if d is None:
+            return
+        self.rename_cancel()
+        if d.kind == DIALOG_SAVES:
+            self.sim.paused = d.resume_paused
+            self.dialog = None
+        elif d.kind == DIALOG_LOAD:
+            self.open_start()
+
+    def disarm(self):
+        """Any press that is not the second press is an answer of "no"."""
+        if self.dialog is not None:
+            self.dialog.armed = None
+
+    def default_save_name(self):
+        years = self.sim.world.time / units.DAYS_PER_YEAR
+        return "%s Year %.1f" % (self.scenario_label, years)
+
+    def _session(self):
+        camera = self.camera
+        # The dialog pauses the sim mechanically the moment it opens
+        # (open_saves), so sim.paused while it is up is not what he had
+        # running -- it is always True.  What belongs in the save is the
+        # pause state the dialog *found*, so a save made from a running
+        # world loads running.
+        paused = (self.dialog.resume_paused
+                  if self.dialog is not None and self.dialog.kind == DIALOG_SAVES
+                  else self.sim.paused)
+        return save.Session(
+            scenario=self.scenario, time_index=self.time_index,
+            paused=paused, show_trails=self.view.show_trails,
+            real_size=self.view.real_size, show_labels=self.view.show_labels,
+            explain_enabled=self.explain.enabled,
+            show_body_list=self.show_body_list, selected_id=self.selected_id,
+            centre=(float(camera.centre[0]), float(camera.centre[1])),
+            follow_id=camera.follow_id,
+            au_across=camera.width / camera.zoom)
+
+    def _apply_session(self, session):
+        camera = self.camera
+        if session.scenario in SCENARIOS:
+            self.scenario = session.scenario
+        self.time_index = max(0, min(len(TIME_SCALES) - 1, session.time_index))
+        self.view.show_trails = session.show_trails
+        self.view.real_size = session.real_size
+        self.view.show_labels = session.show_labels
+        self.explain.enabled = session.explain_enabled
+        self.show_body_list = session.show_body_list
+        self.selected_id = session.selected_id
+        self.inspector_expanded = False
+        camera.centre[:] = session.centre
+        camera.follow_id = session.follow_id
+        au_across = max(session.au_across, 1e-12)
+        camera.log_zoom = min(max(math.log(camera.width / au_across),
+                                  math.log(MIN_ZOOM)), math.log(MAX_ZOOM))
+
+    def save_slot(self, slot):
+        """Save into ``slot``.  Returns True only when a file was written.
+
+        An empty slot takes one press.  A full one -- readable or not --
+        needs a second press on the same slot while it is armed, and the
+        name it had is kept: the name is his label for that game.
+        """
+        d = self.dialog
+        if d is None or d.kind != DIALOG_SAVES or self.store is None:
+            return False
+        self.rename_cancel()
+        info = d.slots[slot - 1]
+        if info is not None and d.armed != slot:
+            d.armed = slot
+            return False
+        d.armed = None
+        name = info.name if (info is not None and info.readable) \
+            else self.default_save_name()
+        data = save.to_data(self.sim.world, self._session(), name, self.scenario_label)
+        try:
+            self.store.write(slot, data)
+        except OSError:
+            # The folder could have gone read-only, or vanished, between the
+            # dialog opening and this press -- re-list and re-check so a
+            # stale "readable" row and a lit Save button don't linger.
+            d.slots = self.store.list()
+            d.can_save = self.store.writable()
+            return False
+        d.slots = self.store.list()
+        d.can_save = self.store.writable()
+        return True
+
+    def load_slot(self, slot):
+        """Replace the running world with ``slot``.  Returns True on success.
+
+        A file the loader refuses is marked unreadable in the list and the
+        running world is left exactly as it was -- ``save.from_data``
+        validates before it touches anything.
+        """
+        d = self.dialog
+        if d is None or self.store is None:
+            return False
+        if not d.slots:              # the start dialog has no slots to index
+            return False
+        info = d.slots[slot - 1]
+        if info is None or not info.readable:
+            return False
+        self.rename_cancel()
+        d.armed = None
+        try:
+            data = self.store.read(slot)
+            session = save.from_data(data, self.sim.world)
+        except (OSError, ValueError):
+            d.slots[slot - 1] = SlotInfo(slot, UNREADABLE_NAME, "", {}, False)
+            return False
+        self.sim.refresh()
+        self._apply_session(session)
+        # Loading is a restart as far as everything that remembers a body
+        # goes: the report names bodies that no longer exist, the effects are
+        # someone else's impacts, and a tool's target id could collide with
+        # a loaded id by accident.
+        self.explain.clear()
+        self.explain_rect = None
+        self.effects.clear()
+        self.body_list_offset = 0
+        self.quit_armed = False
+        if self.tool is not None:
+            self.set_tool(type(self.tool))
+        self.dialog = None
+        self.sim.paused = session.paused
+        return True
+
+    def begin_rename(self, slot):
+        d = self.dialog
+        if d is None or self.store is None:
+            return
+        if not d.slots:              # the start dialog has no slots to index
+            return
+        info = d.slots[slot - 1]
+        if info is None or not info.readable:
+            return
+        d.armed = None
+        d.renaming = slot
+        d.text = info.name
+
+    def rename_type(self, text):
+        """Append typed characters: printable ASCII, up to NAME_MAX."""
+        d = self.dialog
+        if d is None or d.renaming is None:
+            return
+        for ch in text:
+            if 32 <= ord(ch) <= 126 and len(d.text) < NAME_MAX:
+                d.text += ch
+
+    def rename_backspace(self):
+        d = self.dialog
+        if d is not None and d.renaming is not None:
+            d.text = d.text[:-1]
+
+    def rename_commit(self):
+        """Enter.  Writes the name; an empty one keeps the old name."""
+        d = self.dialog
+        if d is None or d.renaming is None:
+            return
+        slot, d.renaming = d.renaming, None
+        info = d.slots[slot - 1]
+        name = d.text.strip() or (info.name if info is not None else self.default_save_name())
+        d.text = ""
+        try:
+            self.store.rename(slot, name[:NAME_MAX])
+        except (OSError, ValueError):
+            # The file it was renaming could have vanished, or the read that
+            # rename() does internally could now fail -- re-list so the row
+            # reflects that instead of staying "readable" and stale.
+            d.slots = self.store.list()
+            return
+        d.slots = self.store.list()
+
+    def rename_cancel(self):
+        d = self.dialog
+        if d is not None:
+            d.renaming = None
+            d.text = ""
+
+    def describe_slot(self, info):
+        """The dim second line under a slot's name."""
+        if info is None:
+            return "Nothing saved here yet"
+        if not info.readable:
+            return "This file can't be read -- saving over it will fix it"
+        summary = info.summary
+        try:
+            when = datetime.fromisoformat(info.saved_at).strftime("%a %d %b %H:%M")
+        except (TypeError, ValueError):
+            when = info.saved_at
+        # A hand-edited save can put anything in these two fields -- SlotStore
+        # only checks that "summary" is a dict, not what is inside it -- so a
+        # bad value falls back to "?" rather than crashing ui.build the
+        # moment the dialog opens.
+        try:
+            year_text = "%.1f" % (float(summary.get("days", 0.0)) / units.DAYS_PER_YEAR)
+        except (TypeError, ValueError):
+            year_text = "?"
+        try:
+            bodies_text = "%d" % int(summary.get("bodies", 0))
+        except (TypeError, ValueError):
+            bodies_text = "?"
+        return "%s  Year %s  %s bodies  %s" % (
+            str(summary.get("scenario_label", "?")), year_text, bodies_text, when)
 
     def cycle_grid(self, ctx):
         """Step the pixel grid.  Sprites are sized in pixels, so the cache dies.

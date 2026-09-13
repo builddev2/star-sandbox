@@ -11,6 +11,7 @@ python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one
 python -m src.app.main                  # run the app
 python -c "from src.app.main import probe; probe()"   # report what SDL actually gives us
 ./run.command                           # double-clickable launcher; creates .venv on first run
+# saves live in saves/slot{1,2,3}.json beside run.command (gitignored)
 ```
 
 The venv at `.venv/` is created by `run.command`; use `./.venv/bin/python` if the system
@@ -29,9 +30,10 @@ Three layers, enforced by `tests/test_layering.py`:
 | `src/*.py` | physics. Pure numpy. **Must never import pygame** — a subprocess test asserts this. Includes `collisions.py` (detection and outcome resolution) and `destruction.py` (tidal and thermal destruction near a star or a black hole), both emitting the plain-data `ImpactEvent`, `thermal.py` (every body's temperature),
 `maneuver.py` (a craft's flight plan: nodes, burns, closest approach, the Hohmann
 transfer and its launch window, and the gravity assist), and `explain.py` (what an edit
-did and why, as plain data). |
+did and why, as plain data), and `save.py` (a world and a session as plain data, and
+back). |
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
-| `src/app/` | display context, frame loop, input routing, the interface, one class per tool. |
+| `src/app/` | display context, frame loop, input routing, the interface, one class per tool, `saves.py` (the three slot files). |
 
 `App.step_once()` (`src/app/main.py`) is one frame: events (each one put through
 `ctx.map_event` first) → reconcile the window size → rebuild the pixel-sized stack if the
@@ -216,6 +218,24 @@ or fast time scales.
   through a held stepper.
 - **`widgets.overlay_x` is where an overlay starts**, so the Fly readout and
   the explain panel cannot disagree about where the body-list drawer ends.
+- **A dialog owns every event** (`src/app/input.py`). While `state.dialog` is set,
+  `ui.build` lays out only the dialog, mouse events go to `ui.on_event` and keys to
+  `input.dialog_key`, and nothing reaches a tool or a global key -- the throw tool
+  would otherwise fire through the slot list, and a name being typed would toggle
+  trails on every `T`. Cmd+Q and Cmd+F are the two exceptions.
+- **`save.from_data` validates before it mutates.** Every record is parsed and
+  checked first and the world is cleared only once all of them are good, so a
+  refused file leaves the running world exactly as it was. Kind is loaded as
+  saved, never re-derived from mass (a hole and a craft are one-way); temperature
+  is loaded as saved and **not** settled (it is state, and a planet he heated on
+  purpose must still be hot). `sim.refresh()` follows, as after any membership
+  change. `World.rekey` is how the loader restores ids and the id counter.
+- **The camera is saved as `au_across`, never `log_zoom`.** `log_zoom` is pixels
+  per AU, so the same save would show a different stretch of sky in a different
+  window.
+- **A save file is written whole or not at all** (`app/saves.py`): `slotN.json.tmp`
+  then `os.replace`. A file that cannot be read lists as unreadable with Load and
+  Rename disabled; Save stays enabled because overwriting is the way out.
 
 ### Design decisions worth knowing before changing them
 

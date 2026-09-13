@@ -32,6 +32,8 @@ from ..render.widgets import (Control, Metrics, draw_button, draw_panel,
                               draw_tooltip, slider_track)
 from . import tools as tools_module
 from .config import WINDOW_FRACTIONS
+from .saves import SLOTS
+from .state import DIALOG_LOAD, DIALOG_SAVES, DIALOG_START, NAME_MAX
 
 #: Milliseconds a stepper is held before it starts repeating, and the gap
 #: between repeats after that.  A deliberate single click never repeats, while
@@ -152,6 +154,12 @@ class UiLayer:
         #: makes the help modal: a click anywhere else puts it away, the way
         #: every dialog a child has ever met behaves.
         self.modal = None
+        #: Whether ``modal`` is the help panel (click-away closes it) or a
+        #: dialog (click-away only disarms an overwrite).
+        self._modal_is_help = False
+        #: (x, y, text, colour) lines drawn inside the modal, after the
+        #: panels and before the controls -- the slot descriptions.
+        self.labels = []
         self._modal_control = None
         self._pressed = None
         self._press_on_ui = False
@@ -167,6 +175,16 @@ class UiLayer:
         self.metrics = m
         self.controls = []
         self.panels = []
+        self.labels = []
+        self.modal = None
+        self._modal_control = None
+        self._modal_is_help = False
+
+        if state.dialog is not None:
+            # A dialog is the only thing on screen: nothing else is built, so
+            # nothing else can be clicked, and the layout test checks only it.
+            self._build_dialog(state, m)
+            return self.controls
 
         self._build_bottom_hotbar(state, m, ctx)
         self._build_view_buttons(state, m, ctx)
@@ -181,16 +199,129 @@ class UiLayer:
 
     def _build_help(self, state, m):
         """The close button on the help panel, and the panel's own footprint."""
-        self.modal = None
-        self._modal_control = None
         if not state.help_visible or self.hud is None:
             return
         self.modal = self.hud.help_rect(m.width, m.height)
+        self._modal_is_help = True
         self._modal_control = Control("view.help", icon="close", compact=True,
                                       tooltip="Close  [Esc]")
         self._place([(self._modal_control,
                       pygame.Rect(self.modal.right - m.icon_btn_w - m.gap,
                                   self.modal.y + m.gap, m.icon_btn_w, m.btn_h))])
+
+    # --- the start menu and the slot list ---------------------------------------
+
+    def _build_dialog(self, state, m):
+        if state.dialog.kind == DIALOG_START:
+            self._build_start(state, m)
+        else:
+            self._build_slots(state, m)
+
+    def _centred_panel(self, m, title, inner_w, inner_h):
+        """A modal panel sized to its contents and clamped to the window.
+
+        ``header`` is exactly one button row tall -- the close button (or a
+        start-menu title with no close button at all) sits in it -- so the
+        first content row never lands under, or overlapping, that button.
+        """
+        header = m.btn_h + 2 * m.gap
+        panel_w = min(m.width - 2 * m.pad, inner_w + 2 * m.pad)
+        panel_h = min(m.height - 2 * m.pad, header + inner_h + 2 * m.pad)
+        rect = pygame.Rect((m.width - panel_w) // 2, (m.height - panel_h) // 2,
+                           panel_w, panel_h)
+        self.modal = self._panel(rect, title)
+        return rect
+
+    def _build_start(self, state, m):
+        rows = [
+            Control("start.new", label="New", hotkey="N",
+                    tooltip="Start a fresh solar system"),
+            Control("start.load", label="Load", hotkey="L",
+                    tooltip="Pick up a saved game"),
+            Control("start.quit", label="Quit", hotkey="Q", danger=True,
+                    tooltip="Close the sandbox"),
+        ]
+        btn_w = max(m.button_width(c) for c in rows) + 4 * m.pad
+        title = "STAR SANDBOX"
+        inner_w = max(btn_w, m.font.width(title)) + 2 * m.pad
+        inner_h = len(rows) * (m.btn_h + m.gap) + m.pad
+        rect = self._centred_panel(m, title, inner_w, inner_h)
+        btn_w = min(btn_w, rect.width - 2 * m.pad)
+        x = rect.x + (rect.width - btn_w) // 2
+        header = m.btn_h + 2 * m.gap
+        y = rect.y + header + m.pad
+        for control in rows:
+            self._place([(control, pygame.Rect(x, y, btn_w, m.btn_h))])
+            y += m.btn_h + m.gap
+
+    def _build_slots(self, state, m):
+        """Three rows: name (or the field being typed into), the buttons the
+        slot offers, and a dim line saying what is in it."""
+        d = state.dialog
+        loading = d.kind == DIALOG_LOAD
+        # ``store.writable()`` creates the saves directory if it can, so it
+        # is called once, in ``AppState.open_saves()``, and cached on the
+        # dialog as ``can_save`` -- not here, every frame the dialog is up,
+        # or the start menu's Load list (no Save button, ``can_save`` stays
+        # False) would create the folder just by being opened.
+        can_save = d.can_save
+        char = m.font.width("X")
+        row_h = m.btn_h + m.line + m.gap
+        widest_buttons = (m.button_width(Control("x", label="Load"))
+                          + m.button_width(Control("x", label="Overwrite?"))
+                          + m.button_width(Control("x", label="Rename")) + 2 * m.gap)
+        inner_w = char * (NAME_MAX + 3) + 2 * m.pad + m.gap + widest_buttons
+        inner_h = SLOTS * (row_h + m.gap) + m.pad
+        rect = self._centred_panel(m, "LOAD A GAME" if loading else "SAVED GAMES",
+                                   inner_w, inner_h)
+        close = Control("dialog.close", icon="close", compact=True,
+                        tooltip="Back to the start menu  [Esc]" if loading
+                        else "Close  [Esc]")
+        self._place([(close, pygame.Rect(rect.right - m.icon_btn_w - m.gap,
+                                         rect.y + m.gap, m.icon_btn_w, m.btn_h))])
+        x0 = rect.x + m.pad
+        inner = rect.width - 2 * m.pad
+        header = m.btn_h + 2 * m.gap
+        y = rect.y + header + m.pad
+        for slot, info in enumerate(d.slots, start=1):
+            buttons = []
+            if info is not None:
+                buttons.append(Control("slot.load", label="Load", payload=slot,
+                                       enabled=info.readable,
+                                       tooltip="Load this game"))
+            if not loading:
+                armed = d.armed == slot
+                if can_save:
+                    tip = ("Click again to save over this game" if armed
+                           else "Save the game into this slot")
+                else:
+                    tip = "No saves folder to write to"
+                buttons.append(Control("slot.save",
+                                       label="Overwrite?" if armed else "Save",
+                                       payload=slot, danger=armed, active=armed,
+                                       enabled=can_save, tooltip=tip))
+                if info is not None:
+                    buttons.append(Control("slot.rename", label="Rename",
+                                           payload=slot, enabled=info.readable,
+                                           active=d.renaming == slot,
+                                           tooltip="Give this game a name"))
+            widths = [m.button_width(c) for c in buttons]
+            name_w = max(char * 4, inner - sum(widths) - m.gap * len(buttons))
+            if d.renaming == slot:
+                name = Control("slot.name", label=d.text, text_field=True,
+                               payload=slot,
+                               tooltip="Type a name -- Enter keeps it, Esc cancels")
+            else:
+                text = "%d  %s" % (slot, "Empty" if info is None else info.name)
+                name = Control("slot.name", label=text, readout=True, payload=slot)
+            self._place([(name, pygame.Rect(x0, y, name_w, m.btn_h))])
+            x = x0 + name_w + m.gap
+            for control, w in zip(buttons, widths):
+                self._place([(control, pygame.Rect(x, y, w, m.btn_h))])
+                x += w + m.gap
+            self.labels.append((x0 + m.pad, y + m.btn_h + m.gap // 2,
+                                state.describe_slot(info), palette.TEXT_DIM))
+            y += row_h + m.gap
 
     def _panel(self, rect, title=None):
         self.panels.append((rect, title))
@@ -328,6 +459,12 @@ class UiLayer:
             quit_w = m.icon_btn_w
         x = m.width - m.gap - quit_w
         self._place([(quit_control, pygame.Rect(x, y, quit_w, m.btn_h))])
+        x -= m.gap * 3
+
+        saves = Control("game.saves", icon="save", hotkey="S", compact=True,
+                        tooltip="Save or load a game")
+        x -= m.icon_btn_w
+        self._place([(saves, pygame.Rect(x, y, m.icon_btn_w, m.btn_h))])
         x -= m.gap * 3
 
         flags = {
@@ -573,7 +710,7 @@ class UiLayer:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self.mouse = event.pos
             control = self.control_at(event.pos)
-            if self.modal is not None and control is not self._modal_control:
+            if self._modal_is_help and control is not self._modal_control:
                 # Anything outside the help panel puts the help away and is
                 # spent doing so, rather than also doing whatever it hit.
                 state.help_visible = False
@@ -596,6 +733,12 @@ class UiLayer:
                 return True
             # A press that misses the quit button is an answer of "no" too.
             state.cancel_quit()
+            if state.dialog is not None:
+                # Off every button while a dialog is up: an answer of "no" to
+                # a waiting Overwrite?, and never a pan of the world behind.
+                state.disarm()
+                self._press_on_ui = True
+                return True
             if self.over_panel(event.pos):
                 self._press_on_ui = True
                 return True
@@ -616,9 +759,12 @@ class UiLayer:
                 return True
             return on_ui
 
-        if event.type == pygame.MOUSEWHEEL and self.over_panel(self.mouse):
-            state.scroll_body_list(-event.y)
-            return True
+        if event.type == pygame.MOUSEWHEEL:
+            if state.dialog is not None:
+                return True
+            if self.over_panel(self.mouse):
+                state.scroll_body_list(-event.y)
+                return True
 
         return False
 
@@ -655,6 +801,37 @@ class UiLayer:
         # Doing anything else at all is an answer of "no" to a waiting quit.
         if cid != "app.quit":
             state.cancel_quit()
+
+        # Doing anything but the second press is an answer of "no" to a
+        # waiting Overwrite? as well.
+        if cid != "slot.save":
+            state.disarm()
+
+        if cid == "game.saves":
+            state.toggle_saves()
+            return True
+        if cid == "start.new":
+            state.start_new()
+            return True
+        if cid == "start.load":
+            state.open_load()
+            return True
+        if cid == "start.quit":
+            state.quit_now()
+            return True
+        if cid == "dialog.close":
+            state.close_dialog()
+            return True
+        if cid == "slot.load":
+            return state.load_slot(payload)
+        if cid == "slot.save":
+            state.save_slot(payload)
+            return True
+        if cid == "slot.rename":
+            state.begin_rename(payload)
+            return True
+        if cid == "slot.name":
+            return False
 
         if cid == "app.quit":
             state.request_quit()
@@ -766,11 +943,28 @@ class UiLayer:
 
     def draw(self, surface, state):
         """Panels first, then every control, then the help, then one tooltip."""
+        if state.dialog is not None:
+            # The world is dimmed under a dialog, the way it is under the help:
+            # one thing to deal with, and nothing behind it is clickable.
+            veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+            veil.fill((0, 0, 0, 128))
+            surface.blit(veil, (0, 0))
+
         for rect, title in self.panels:
             draw_panel(surface, rect)
             if title:
                 self.font.draw(surface, rect.x + self.metrics.pad,
                                rect.y + self.metrics.gap, title, palette.TEXT_DIM)
+
+        if self.labels:
+            previous = surface.get_clip()
+            clip = self.modal if self.modal is not None else previous
+            surface.set_clip(clip.clip(previous) if previous else clip)
+            try:
+                for x, y, text, colour in self.labels:
+                    self.font.draw(surface, x, y, text, colour)
+            finally:
+                surface.set_clip(previous)
 
         hovered = self.control_at(self.mouse)
         self._set_cursor(hovered is not None)
@@ -781,7 +975,7 @@ class UiLayer:
                         hovered=control is hovered,
                         pressed=control is self._pressed)
 
-        if self.modal is not None:
+        if self._modal_is_help:
             # Dim everything else so the help reads as one thing to deal with,
             # then put the panel and its close button on top of the dimming.
             veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)

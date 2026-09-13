@@ -145,6 +145,9 @@ BY_KEY = {m.key: m for m in MATERIALS}
 BY_KEY[SINGULARITY.key] = SINGULARITY
 BY_KEY[SPACECRAFT.key] = SPACECRAFT
 
+#: What a save names when its material key is one this build no longer has.
+ROCK = BY_KEY["rock"]
+
 #: Density is clamped to this range when the child drags the slider.  The floor is about
 #: as puffy as a real planet gets; the ceiling is approaching degenerate matter.
 MIN_DENSITY_GCM3 = 0.05

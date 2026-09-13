@@ -15,11 +15,93 @@ import pytest
 
 
 @pytest.fixture
-def app():
+def app(tmp_path):
     from src.app.main import App
-    instance = App(fullscreen=False)
+    instance = App(fullscreen=False, saves_dir=str(tmp_path / "saves"))
+    # The real app boots onto the start menu; most of these tests want a
+    # running world, so press New.
+    instance.state.start_new()
     yield instance
     pygame.quit()
+
+
+def test_the_app_boots_onto_the_start_menu(tmp_path):
+    from src.app.main import App
+    instance = App(fullscreen=False, saves_dir=str(tmp_path / "saves"))
+    try:
+        assert instance.state.dialog is not None
+        assert instance.state.dialog.kind == "start"
+        assert instance.state.sim.paused
+        for _ in range(5):
+            instance.step_once()
+        assert instance.state.sim.world.time == 0.0
+        assert {c.id for c in instance.ui.controls} == {"start.new", "start.load", "start.quit"}
+    finally:
+        pygame.quit()
+
+
+def test_new_from_the_menu_starts_time(app):
+    app.state.open_start()
+    app.step_once()
+    app.ui.perform(next(c for c in app.ui.controls if c.id == "start.new"), app.state)
+    for _ in range(5):
+        app.step_once()
+    assert app.state.sim.world.time > 0.0
+
+
+def test_save_then_load_through_real_frames(app):
+    state = app.state
+    for _ in range(10):
+        app.step_once()
+    state.toggle_saves()
+    app.step_once()
+    assert state.sim.paused
+    app.ui.perform(next(c for c in app.ui.controls
+                        if c.id == "slot.save" and c.payload == 1), state)
+    app.step_once()
+    saved_time = state.sim.world.time
+    state.close_dialog()
+    for _ in range(10):
+        app.step_once()
+    assert state.sim.world.time > saved_time
+    state.toggle_saves()
+    app.step_once()
+    app.ui.perform(next(c for c in app.ui.controls
+                        if c.id == "slot.load" and c.payload == 1), state)
+    assert state.dialog is None
+    assert state.sim.world.time == saved_time
+    for _ in range(5):
+        app.step_once()
+    assert state.sim.world.time > saved_time
+
+
+def test_load_from_the_start_menu(app):
+    state = app.state
+    state.toggle_saves()
+    app.step_once()
+    state.save_slot(2)
+    state.close_dialog()
+    state.open_start()
+    app.step_once()
+    state.open_load()
+    app.step_once()
+    ids = {c.id for c in app.ui.controls}
+    assert "slot.load" in ids and "slot.save" not in ids
+    app.ui.perform(next(c for c in app.ui.controls
+                        if c.id == "slot.load" and c.payload == 2), state)
+    assert state.dialog is None
+    for _ in range(5):
+        app.step_once()
+
+
+def test_frames_run_while_renaming(app):
+    state = app.state
+    state.toggle_saves()
+    state.save_slot(3)
+    state.begin_rename(3)
+    for _ in range(5):
+        app.step_once()
+    assert state.dialog.renaming == 3
 
 
 def test_a_hundred_frames_run_without_raising(app):
@@ -113,11 +195,24 @@ def _release(pos):
     return pygame.event.Event(pygame.MOUSEBUTTONUP, pos=pos, button=1)
 
 
-def test_the_buttons_are_laid_out_before_the_first_event(app):
-    """A click in the opening frame has to land on something."""
-    assert app.ui.controls
-    assert app.ui.control_at(next(c for c in app.ui.controls
-                                  if c.id == "time.pause").rect.center) is not None
+def test_the_buttons_are_laid_out_before_the_first_event(tmp_path):
+    """A click in the opening frame has to land on something.
+
+    The opening frame is now the start menu, not the game HUD, so this builds
+    its own App rather than going through the ``app`` fixture -- that fixture
+    presses New before yielding, which would make this test pass even if
+    ``__init__`` never built anything, because the very next ``step_once`` (in
+    the test body, or in any other test) rebuilds the interface regardless.
+    """
+    from src.app.main import App
+    instance = App(fullscreen=False, saves_dir=str(tmp_path / "saves"))
+    try:
+        assert instance.ui.controls
+        for cid in ("start.new", "start.load", "start.quit"):
+            control = next(c for c in instance.ui.controls if c.id == cid)
+            assert instance.ui.control_at(control.rect.center) is not None
+    finally:
+        pygame.quit()
 
 
 def test_pressing_every_button_in_the_real_app_keeps_it_running(app):

@@ -49,6 +49,7 @@ KEY_HELP = (
     ("G", "pixel grid size"),
     ("Del", "delete the selected body"),
     ("F5", "start the solar system over"),
+    ("S", "save or load a game"),
     ("W", "window size -- two thirds, half, a third"),
     ("Cmd+F", "fullscreen"),
     ("?", "this help"),
