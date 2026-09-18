@@ -38,9 +38,9 @@ def test_draw_returns_the_advance_and_marks_pixels():
     assert pygame.transform.average_color(surface)[:3] != palette.SPACE[:3]
 
 
-def test_text_is_not_antialiased():
-    """Antialiased glyphs blur against the pixel grid.  Every drawn pixel must be
-    either the background or exactly the text colour."""
+def test_text_is_antialiased():
+    """Glyph edges blend into the background: at least one drawn pixel is
+    neither the background nor exactly the text colour."""
     from src.render.pixelfont import PixelFont
     font = PixelFont(14)
     surface = pygame.Surface((160, 34))
@@ -48,7 +48,21 @@ def test_text_is_not_antialiased():
     font.draw(surface, 1, 1, "AVW", (255, 255, 255))
     colours = {surface.get_at((x, y))[:3]
                for x in range(160) for y in range(34)}
-    assert colours <= {(0, 0, 0), (255, 255, 255)}, sorted(colours)
+    assert colours - {(0, 0, 0), (255, 255, 255)}, sorted(colours)
+
+
+def test_the_bundled_face_is_used_and_sized_in_points():
+    from src.render.pixelfont import FONT_PATH, PixelFont
+    assert FONT_PATH.exists()
+    assert 13 <= PixelFont(11).height <= 16
+    assert PixelFont(22).height >= 2 * PixelFont(11).height - 2
+
+
+def test_a_missing_font_file_falls_back_to_the_built_in_face_at_the_same_height(tmp_path):
+    from src.render.pixelfont import PixelFont
+    real = PixelFont(11).height
+    fallback = PixelFont(11, path=tmp_path / "nope.ttf").height
+    assert abs(fallback - real) <= 2
 
 
 def test_repeated_renders_are_cached():
