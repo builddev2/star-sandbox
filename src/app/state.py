@@ -215,6 +215,8 @@ class AppState:
     def __init__(self, sim, camera, view, store=None):
         self.sim = sim
         self.camera = camera
+        #: Pixels per point the camera was last laid out for; see on_resize.
+        self._density = None
         self.view = view
         self.effects = EffectField()
         #: The "what changed" report, and the burst that produces it.
@@ -743,5 +745,16 @@ class AppState:
         self.on_resize(ctx)
 
     def on_resize(self, ctx):
+        """Take the buffer's new size.
+
+        ``log_zoom`` is pixels per AU.  A window resize keeps it -- a bigger
+        window shows more sky, which is what a resize means.  A change of
+        pixel *density* is different: the window is the same physical size
+        with twice (or half) the pixels in it, so the zoom scales with the
+        density and the stretch of sky across the window is unchanged.
+        """
+        if self._density is not None and ctx.s != self._density:
+            self.camera.log_zoom += math.log(ctx.s / self._density)
+        self._density = ctx.s
         self.camera.width = ctx.width
         self.camera.height = ctx.height

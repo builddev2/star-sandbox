@@ -189,6 +189,24 @@ def test_the_density_can_be_changed_live(app):
         assert app.ctx.surface.get_size() == (app.ctx.width, app.ctx.height)
 
 
+def test_the_app_opens_with_the_default_view_at_native_density(tmp_path):
+    """At 2 pixels per point the opening view is still DEFAULT_AU_ACROSS wide."""
+    from src.app.main import App
+    from src.render.camera import Camera
+    instance = App(fullscreen=False, saves_dir=str(tmp_path / "saves"))
+    try:
+        instance.ctx._pixels_per_point = 2
+        instance.ctx.set_grid(2)
+        instance.state.on_resize(instance.ctx)
+        instance._build_render_stack()
+        instance.step_once()
+        across = instance.camera.width / instance.camera.zoom
+        assert across == pytest.approx(Camera.DEFAULT_AU_ACROSS)
+    finally:
+        instance.ctx.close()
+        pygame.quit()
+
+
 def test_a_frame_at_native_retina_density_agrees_with_itself(app):
     """The buffer, the texture and the camera must all be the window times two,
     or present() raises when the upload does not fit."""

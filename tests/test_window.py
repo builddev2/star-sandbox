@@ -341,3 +341,39 @@ def test_close_destroys_the_window_and_can_be_called_twice(ctx):
     ctx.close()
     ctx.close()
     assert ctx._window is None
+
+
+def test_a_density_toggle_keeps_the_same_stretch_of_sky(retina):
+    """G doubles the pixels in the window, not the window: the AU across it
+    must not change, and the world point under the centre must not move."""
+    from src.app.input import handle_event
+    from src.app.state import AppState
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.sim import Simulation
+    state = AppState(Simulation(), Camera(retina.width, retina.height), ViewSettings())
+    state.on_resize(retina)                       # baseline, as App.__init__ does
+    across = state.camera.width / state.camera.zoom
+    centre = state.camera.screen_to_world(state.camera.width / 2, state.camera.height / 2)
+    handle_event(_key(pygame.K_g), state, retina)  # 2 -> 1
+    assert retina.s == 1
+    assert state.camera.width / state.camera.zoom == pytest.approx(across)
+    assert state.camera.screen_to_world(state.camera.width / 2, state.camera.height / 2) == pytest.approx(centre)
+    handle_event(_key(pygame.K_g), state, retina)  # 1 -> 2
+    assert retina.s == 2
+    assert state.camera.width / state.camera.zoom == pytest.approx(across)
+
+
+def test_a_window_resize_still_keeps_pixels_per_au(ctx):
+    """A bigger window shows more sky; only a density change rescales."""
+    from src.app.state import AppState
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.sim import Simulation
+    state = AppState(Simulation(), Camera(ctx.width, ctx.height), ViewSettings())
+    state.on_resize(ctx)
+    zoom = state.camera.zoom
+    ctx.resize((1000, 700))
+    state.on_resize(ctx)
+    assert state.camera.zoom == pytest.approx(zoom)
+    assert (state.camera.width, state.camera.height) == (1000, 700)

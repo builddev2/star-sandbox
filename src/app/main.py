@@ -53,6 +53,7 @@ class App:
         self._build_render_stack()
         self.store = SlotStore(default_directory() if saves_dir is None else saves_dir)
         self.state = AppState(Simulation(), self.camera, ViewSettings(), store=self.store)
+        self.state.on_resize(self.ctx)
         self.state.set_tool(SelectTool)
         # Opens onto New / Load / Quit, with the solar system frozen behind it.
         self.state.open_start()
