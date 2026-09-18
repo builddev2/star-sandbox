@@ -40,7 +40,7 @@ Measured on the 16" MacBook Pro (macOS 26, 3456x2234 panel), 2026-09-18.
   `aalines`); `aapolygon` and `aaellipse` do not.
 - **The default font is secretly small.**  `pygame.font.Font(None, 18)` scales
   the built-in face by 0.6875, giving a 12 px line.  Atkinson Hyperlegible
-  Regular at size 12 gives a 15 px line and is *narrower* (528 px against 623 for
+  Regular at size 11 gives a 14 px line and is *narrower* (490 px against 623 for
   the status-bar hint), so the interface's smallest window does not grow.
 
 ## 1. Display and resolution
@@ -107,9 +107,10 @@ size from the font, and every world pixel constant scales by
 size with twice the pixels and the drawn-radius floors are the same physical
 size too.
 
-**Text size.**  `TARGET_TEXT_POINTS` becomes 12 and is documented as the font's
+**Text size.**  `TARGET_TEXT_POINTS` becomes 11 and is documented as the font's
 point size at `s = 1` (the old 18 was a default-font size that rendered at 12
-px).  `MIN_FONT_PX` goes; nothing shrinks the font any more.
+px; Atkinson at 11 renders 14 px and narrower).  `MIN_FONT_PX` goes; nothing
+shrinks the font any more.
 
 **`G` in the interface.**  `hud.KEY_HELP` reads `("G", "resolution")`; the
 `view.grid` control's tooltip reads "Retina / standard resolution"; it is
@@ -227,8 +228,11 @@ look that is not in `LOOKS` draws as if `look` were `None`.
   `saturn`, Uranus `uranus`, Neptune `neptune`, Moon `moon`; the Galilean moons
   and Titan `None` (their materials already read right).  `World.add` gains
   `look=None`.
-- Anything the child throws, and every merge, graze, fragment and tidal
-  debris, has `look = None` and draws from its material.
+- Anything the child throws, and every body `World.add` creates for a
+  collision or a tidal disruption -- fragments, ejecta, a new remnant -- has
+  `look = None` and draws from its material.  A body that *survives* an
+  accretion keeps its own `Body` and so keeps its look: Earth swallowing a
+  comet is still Earth.
 - `edits.set_material` and `cycle_material` set `look = None` before writing:
   the material is now what the body is made of.  A locked material refuses the
   whole call, look included, as today.
@@ -288,8 +292,8 @@ interface stay -- the docstring promised the implementation could be swapped
 without touching a caller.  `PixelFont(px)` loads `assets/fonts/
 AtkinsonHyperlegible-Regular.ttf` (OFL; `assets/fonts/OFL.txt` alongside) at
 point size `px`, antialiased; if the file is missing it falls back to
-`pygame.font.Font(None, round(px / 0.6875))` so the fallback renders at the
-same height.  The module docstring is rewritten: it explains the fallback and
+`pygame.font.Font(None, round(px * 1.9))`, which renders at the same line
+height (measured: 11 -> 14 px bundled, 21 -> 13 px built-in).  The module docstring is rewritten: it explains the fallback and
 why antialiasing is now on.
 
 ### 3.4 Effects (`render/effects.py`)
@@ -371,7 +375,7 @@ dummy driver.  Rewritten or new:
 - `Starfield(640, 360).sky.get_size() == (640, 360)`; the count scales with
   area within the floor and cap; a `draw` covers every pixel of a blank surface
   with something non-`SPACE` at least once (the blits wrap).
-- `PixelFont(12).height` is between 13 and 17 (the bundled face) and a
+- `PixelFont(11).height` is between 13 and 16 (the bundled face) and a
   rendered glyph contains a pixel that is neither the text colour nor
   transparent (antialiasing is on).  With the font path monkeypatched away,
   the fallback's height is within 3 px of the bundled face's.
