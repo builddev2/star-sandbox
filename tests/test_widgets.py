@@ -7,6 +7,8 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import pygame
 import pytest
 
+from src.app import config
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _pygame():
@@ -19,7 +21,8 @@ def _pygame():
 @pytest.fixture
 def font():
     from src.render.pixelfont import PixelFont
-    return PixelFont(18)
+    # The size the interface actually renders at one pixel per point.
+    return PixelFont(config.font_px(1))
 
 
 def _ink(surface, palette_space=None):
