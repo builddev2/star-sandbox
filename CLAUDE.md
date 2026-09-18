@@ -15,7 +15,9 @@ python -c "from src.app.main import probe; probe()"   # report what SDL actually
 ```
 
 The venv at `.venv/` is created by `run.command`; use `./.venv/bin/python` if the system
-Python lacks pygame/numpy.
+Python lacks pygame/numpy. The dependency is **pygame-ce** (`import pygame` is unchanged);
+it cannot share a venv with the original `pygame`, so `run.command` uninstalls that first
+whenever it finds it.
 
 Tests that touch pygame set `os.environ.setdefault("SDL_VIDEODRIVER", "dummy")` at module
 top, before importing pygame. Any new render/app test must do the same or it will try to
