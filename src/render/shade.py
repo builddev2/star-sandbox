@@ -135,14 +135,27 @@ def sphere_size(px, atmosphere):
 
 def _geometry(px, pad):
     """Per-pixel distance, unit-sphere coordinates and coverage alpha for a
-    disc of radius ``px`` centred in a square with ``pad`` extra pixels."""
+    disc of radius ``px`` centred in a square with ``pad`` extra pixels.
+
+    ``u, v`` (and so ``z``) are held at the direction's last *fully covered*
+    pixel from ``px - 0.5`` outward, rather than following the true (clamped)
+    radius out to the disc edge and beyond: the true radius drives ``z`` to 0
+    at ``r == px``, so the antialiased rim pixel's limb term would go to 0
+    and every coverage pixel would render black under its partial alpha,
+    with an atmosphere's Fresnel rim making that a near-opaque dark ring
+    between the disc and its halo.  Taking the last full pixel's shading
+    instead means the rim, and the halo beyond it, are lit like the disc
+    edge they sit against.
+    """
     half = px + pad
     coords = np.arange(2 * half + 1, dtype=np.float64) - half
     xs, ys = np.meshgrid(coords, coords)
     r = np.hypot(xs, ys)
     alpha = np.clip(px + 0.5 - r, 0.0, 1.0)
-    u = np.clip(xs / px, -1.0, 1.0)
-    v = np.clip(ys / px, -1.0, 1.0)
+    inner = np.minimum(r, px - 0.5)
+    safe_r = np.where(r > 0, r, 1.0)
+    u = np.where(r > 0, xs / safe_r * inner / px, 0.0)
+    v = np.where(r > 0, ys / safe_r * inner / px, 0.0)
     z = np.sqrt(np.clip(1.0 - u * u - v * v, 0.0, 1.0))
     return r, u, v, z, alpha
 
@@ -245,13 +258,13 @@ def sphere(px, lit_angle, tones, style, seed, atmosphere=None):
     shade_px = shade_radius(px)
     pad = int(math.ceil(ATMOSPHERE_HALO * shade_px)) + 1 if atmosphere else 0
     r, u, v, z, alpha = _geometry(shade_px, pad)
-    rgb = _albedo(u, v, z, style, tones, seed) * _lighting(u, v, z, lit_angle)[..., None]
+    light = _lighting(u, v, z, lit_angle)
+    rgb = _albedo(u, v, z, style, tones, seed) * light[..., None]
 
     if atmosphere is not None:
         atm = _rgb(atmosphere)
         # A Fresnel rim on the disc, brighter on the day side.
         fresnel = np.power(1.0 - z, 3.0)
-        light = _lighting(u, v, z, lit_angle)
         day = 0.15 + 0.85 * np.clip(light, 0, 1)
         rgb = rgb + atm[None, None, :] * (ATMOSPHERE_STRENGTH * fresnel * day * alpha)[..., None]
         # A soft halo just outside the rim, carried in alpha, brighter toward
@@ -262,7 +275,13 @@ def sphere(px, lit_angle, tones, style, seed, atmosphere=None):
         lx, ly = math.cos(lit_angle), -math.sin(lit_angle)
         side = 0.35 + 0.65 * np.clip((u * lx + v * ly) * 0.5 + 0.5, 0, 1)
         halo = halo * side
-        rgb = np.where((alpha > 0)[..., None], rgb, atm[None, None, :])
+        # Blend toward the atmosphere colour by the halo's weight wherever
+        # the disc's own coverage is below 1, so a pixel with no disc
+        # coverage at all (alpha == 0) comes out exactly atm, not the
+        # leftover (and possibly near-black) rgb computed above.
+        denom = np.maximum(np.maximum(alpha, halo), 1e-6)
+        w = (halo / denom) * (alpha < 1)
+        rgb = rgb + (atm[None, None, :] - rgb) * w[..., None]
         alpha = np.maximum(alpha, halo)
 
     surface = to_surface(rgb, alpha)

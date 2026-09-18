@@ -75,6 +75,17 @@ def test_the_rim_is_antialiased():
     assert surf.get_at((40, 40))[3] == 0
 
 
+def test_the_rim_pixel_takes_the_disc_edge_shading():
+    """The antialiased rim pixel must not be black under its partial alpha:
+    it should read close to the last fully-covered pixel's shading, not the
+    near-zero limb value a naive clamp-to-edge geometry would give it."""
+    px = 40
+    surf = shade.sphere(px, 0.0, TONES, "cratered", seed=1)
+    inner = _lum(_at(surf, px - 2, 0))
+    rim = _lum(_at(surf, px, 0))
+    assert rim >= inner * 0.5
+
+
 def test_a_one_pixel_body_is_still_a_sprite():
     for px in (1, 2, 3):
         surf = shade.sphere(px, 0.0, TONES, "cratered", seed=1)
@@ -123,10 +134,15 @@ def test_every_style_renders_at_every_size(style, px):
 
 
 def test_a_style_has_texture():
-    """Two pixels at the same lighting must differ, or the albedo is flat."""
-    surf = shade.sphere(60, 0.0, TONES, "cratered", seed=7)
-    ring = [_at(surf, 0, dy)[:3] for dy in range(-40, 41, 5)]
-    assert len(set(ring)) > 3
+    """The albedo itself -- before lighting is applied -- must vary across
+    the disc for every real style, and be perfectly flat for an unknown
+    one."""
+    _, u, v, z, _ = shade._geometry(40, 0)
+    for style in STYLES:
+        albedo = shade._albedo(u, v, z, style, TONES, seed=7)
+        assert albedo.std(axis=(0, 1)).max() > 5, style
+    flat = shade._albedo(u, v, z, "nonsense", TONES, seed=7)
+    assert flat.std(axis=(0, 1)).max() == 0
 
 
 def test_the_same_seed_gives_the_same_picture_and_a_different_seed_does_not():
@@ -159,3 +175,14 @@ def test_the_atmosphere_tints_the_limb():
     bare = shade.sphere(px, 0.0, TONES, "cratered", seed=1)
     hazy = shade.sphere(px, 0.0, TONES, "cratered", seed=1, atmosphere=(120, 170, 255))
     assert _at(hazy, 37, 0)[2] > _at(bare, 37, 0)[2] + 10, "the rim should go blue"
+
+
+def test_the_atmosphere_rim_pixel_is_not_a_dark_ring():
+    """The pixel straight at the disc edge must not be a near-black ring
+    sitting between the lit disc and the halo."""
+    px = 40
+    bare = shade.sphere(px, 0.0, TONES, "cratered", seed=1)
+    hazy = shade.sphere(px, 0.0, TONES, "cratered", seed=1, atmosphere=(120, 170, 255))
+    rim = _at(hazy, px, 0)
+    assert _lum(rim) > 20
+    assert rim[2] > _at(bare, px, 0)[2]
