@@ -174,7 +174,7 @@ or fast time scales.
 - Angles are radians everywhere except the source data tables in `src/scenarios.py`.
 - Pixel-size constants scale by `internal_height / scale.REF_HEIGHT` (360); interface sizes
   come from `widgets.Metrics`, which derives every one of them from the font. Neither may
-  hard-code a pixel count, because the `G` grid switch changes both.
+  hard-code a pixel count, because the `G` density toggle changes both.
 - **Nothing may cache a size across frames.** The window is resizable, so the buffer can
   change shape at any frame boundary. `ui.build` already runs from the current size every
   frame; anything else sized in pixels (font, camera, starfield, sprite cache) is rebuilt
@@ -332,30 +332,26 @@ or fast time scales.
   direction — the same trade `scale._floor` already makes.
 - **Spin and disk live on `Body`, not in World's arrays**, because the O(n^2) force
   kernel never reads them — the same reason `rings` and `seed` live there.
-- **`DEFAULT_S = 1`** (`app/config.py`). SDL reports logical points, never device pixels,
-  so one internal pixel per point renders as an exact 2×2 block on Retina. The display is
-  opened twice — a fullscreen window is shorter than the desktop by the menu-bar strip,
-  and sizing the buffer to the desktop leaves SDL scaling by a non-integer factor that
-  smears the pixel grid. See that module's docstring for the measured numbers.
-- **The window is `RESIZABLE`, and the upscale is ours, not SDL's** (`app/config.py`).
-  `pygame.SCALED` pins the window's *minimum* size to the buffer, so a desktop-sized
-  buffer made the window un-shrinkable — and a second `set_mode` with `SCALED` raises
-  "failed to create renderer" on the cocoa driver, which `_open` caught and turned into
-  "keep the display we had", so the fullscreen toggle and the grid switch silently did
-  nothing. A plain `RESIZABLE` window has neither problem. `DisplayContext.present` does
-  the coarse-grid upscale itself, by exactly `s`, and `map_event` / `to_internal` do the
-  mouse translation `SCALED` used to do for us.
-- **Nothing may touch `pygame._sdl2.video.Window`.** It is the only way to move, minimise
-  or set a minimum size on a window in pygame 2.6, and the object
-  `Window.from_display_module()` returns destroys the real SDL window when it is
-  garbage-collected — the program then segfaults some frames later, inside
-  `pygame.event.get`, a long way from the call that did it.
-- **The interface has a smallest buffer it fits in, and a coarser grid is a divisor**
-  (`config.MIN_INTERNAL`, `min_internal`, `grid_fits`). So which pixel grids are on offer
-  is a property of the *window*: `ctx.usable_grids` drops the coarse ones in a narrow
-  window, `cycle_grid` steps through only those, and shrinking the window steps `s` back
-  down rather than laying controls out off the edge. `tests/test_layout.py` builds every
-  panel of every tool at the floor and fails if anything lands outside.
+- **`s` is internal pixels per point, and only `native` or 1 is ever offered** (`app/config.py`).
+  The renderer reports the display's density (`coordinates_from_window`); the software
+  surface is `window * s`, uploaded into a streaming `Texture` every frame. `G` toggles
+  native and 1 -- half the pixels is the escape hatch when the physics budget is saturated
+  at fullscreen. Text is sized in points; `font_px` multiplies by `s`. See the module
+  docstring for the measured numbers.
+- **The window is a `pygame.Window(allow_high_dpi=True)`, never `display.set_mode`.**
+  Only a `Renderer` reaches device pixels; a window surface is in points on every
+  platform, which is why the original pygame (no high-DPI flag at all) was replaced by
+  pygame-ce. A resize arrives as `WINDOWSIZECHANGED` (`event.x`, `event.y`), not
+  `VIDEORESIZE`; `step_once` also polls `ctx.size_changed()` once a frame for the
+  resizes no event announces.
+- **Nothing may call `pygame.Window.from_display_module()`.** The object it returns
+  destroys the real SDL window when it is garbage-collected, and the program segfaults
+  some frames later inside `pygame.event.get`. `DisplayContext` creates the one `Window`
+  for the process, keeps it for its whole life and destroys it in `close()`;
+  `tests/test_layering.py` greps `src/` for the forbidden call.
+- **The interface has a smallest window it fits in, in points** (`config.MIN_INTERNAL`,
+  `min_internal(s)` scales it by the density). `tests/test_layout.py` builds every panel
+  of every tool at the floor at both densities and fails if anything lands outside.
 - **Body colours live on `Material`, not in `render/palette.py`**, because they are a
   property of the substance rather than of the theme.
 - **A control is a description, not a widget object** (`render/widgets.py`). One `Control`
