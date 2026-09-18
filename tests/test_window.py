@@ -1,13 +1,14 @@
-"""The window: resizing it, the size presets, and the grid that lives inside it.
+"""The window: resizing it, the size presets, and the pixels inside it.
 
-The bug these exist for was invisible from inside the program.  ``SCALED``
-pinned the window's minimum size to a desktop-sized buffer, so the window could
-not be made smaller than the whole screen -- and every second ``set_mode``
-raised ``failed to create renderer``, which ``config._open`` caught and turned
-into "keep the display we had".  The fullscreen toggle and the grid switch both
-appeared to work and did nothing at all.  So these tests check the *outcome* --
-the buffer, the window, the coordinates -- and never merely that a call
-returned.
+The bug the old version of these existed for was invisible from inside the
+program: ``SCALED`` pinned the window's minimum size to the buffer and every
+second ``set_mode`` failed silently.  The lesson survives the move to
+``pygame.Window``: check the *outcome* -- the buffer, the window, the
+coordinates -- and never merely that a call returned.
+
+The dummy driver reports one pixel per point.  Tests that need a Retina
+display say so with ``pixels_per_point=2``, which is what the constructor
+offers in place of measuring.
 """
 
 import os
@@ -18,10 +19,9 @@ import pygame
 import pytest
 
 from src.app import config
-from src.app.config import (DisplayContext, GRID_CHOICES, MIN_WINDOW,
-                            WINDOW_FRACTIONS, clamp_window, font_px,
-                            grid_fits, internal_size, min_internal,
-                            preset_size)
+from src.app.config import (DisplayContext, MIN_WINDOW, WINDOW_FRACTIONS,
+                            clamp_window, font_px, internal_size,
+                            min_internal, preset_size)
 
 #: A 16" MacBook Pro, the machine the measurements in config.py come from.
 LAPTOP = (1728, 1117)
@@ -32,6 +32,17 @@ def ctx():
     pygame.display.init()
     context = DisplayContext(size=(800, 600))
     yield context
+    context.close()
+    pygame.display.quit()
+
+
+@pytest.fixture
+def retina():
+    """A context that believes the display has two pixels per point."""
+    pygame.display.init()
+    context = DisplayContext(size=(800, 600), pixels_per_point=2)
+    yield context
+    context.close()
     pygame.display.quit()
 
 
@@ -62,21 +73,6 @@ def test_clamp_holds_a_window_between_the_floor_and_the_screen():
     assert clamp_window((10, 10)) == MIN_WINDOW
     assert clamp_window((9999, 9999), LAPTOP) == LAPTOP
     assert clamp_window((900, 700), LAPTOP) == (900, 700)
-
-
-def test_a_coarser_grid_needs_fewer_internal_pixels_but_never_more():
-    for finer, coarser in zip(GRID_CHOICES, GRID_CHOICES[1:]):
-        assert min_internal(coarser) <= min_internal(finer)
-
-
-def test_the_finest_grid_fits_wherever_the_window_is_legal():
-    assert grid_fits(MIN_WINDOW[0], MIN_WINDOW[1], 1)
-
-
-def test_a_coarse_grid_does_not_fit_a_small_window():
-    """It is a divisor: a third of a small window is a very small buffer."""
-    assert not grid_fits(MIN_WINDOW[0], MIN_WINDOW[1], GRID_CHOICES[-1])
-    assert grid_fits(LAPTOP[0], LAPTOP[1], GRID_CHOICES[-1])
 
 
 # --- the window itself -----------------------------------------------------------
@@ -135,119 +131,105 @@ def test_fullscreen_and_back_returns_to_the_size_it_left(ctx):
     assert ctx.window == before
 
 
-# --- the grid inside the window ---------------------------------------------------
+def test_size_changed_notices_a_resize_the_context_was_not_told_about(ctx):
+    """The once-a-frame safety poll: a maximise or a macOS tile reaches the
+    window without an event we listen for."""
+    assert not ctx.size_changed()
+    ctx._window.size = (900, 650)
+    pygame.event.pump()
+    assert ctx.size_changed()
+    ctx.resize()
+    assert not ctx.size_changed()
+    assert ctx.window == (900, 650)
 
-def test_the_default_grid_draws_straight_into_the_window(ctx):
-    """No copy and no upscale in the common case: the window is the surface."""
+
+# --- pixels per point ----------------------------------------------------------------
+
+def test_the_dummy_driver_has_one_pixel_per_point(ctx):
+    assert ctx.native == 1
     assert ctx.s == 1
-    assert ctx.surface is ctx.display
-    assert ctx.origin == (0, 0)
-    assert ctx.upscale == 1.0
+    assert ctx.usable_grids == (1,)
+    assert ctx.surface.get_size() == ctx.window
 
 
-def test_a_coarser_grid_draws_into_its_own_smaller_buffer(ctx):
-    ctx.resize((1000, 700))
-    ctx.set_grid(2)
-    assert ctx.s == 2
-    assert ctx.surface is not ctx.display
-    assert ctx.surface.get_size() == internal_size(1000, 700, 2)
-    assert ctx.upscale == 2.0
+def test_a_retina_display_opens_at_native_density(retina):
+    assert retina.native == 2
+    assert retina.s == 2
+    assert retina.usable_grids == (2, 1)
+    assert (retina.width, retina.height) == internal_size(800, 600, 2)
+    assert retina.surface.get_size() == (1600, 1200)
+    assert (retina.texture.width, retina.texture.height) == (1600, 1200)
 
 
-def test_the_upscale_is_always_an_exact_integer(ctx):
-    """A fractional one is what smears the pixel grid it exists to preserve."""
-    ctx.resize((1001, 701))
-    for s in GRID_CHOICES:
-        if not grid_fits(1001, 701, s):
-            continue
-        ctx.set_grid(s)
-        assert ctx.upscale == float(s)
-        assert ctx.width * s <= ctx.window[0]
-        assert ctx.height * s <= ctx.window[1]
-        assert ctx.window[0] - ctx.width * s < s
-        assert ctx.window[1] - ctx.height * s < s
+def test_standard_density_is_the_escape_hatch(retina):
+    """Half the pixels for when the physics budget is saturated at fullscreen."""
+    retina.set_grid(1)
+    assert retina.s == 1
+    assert retina.surface.get_size() == (800, 600)
+    assert (retina.texture.width, retina.texture.height) == (800, 600)
+    assert retina.upscale == 1.0
 
 
-def test_a_window_too_small_for_a_grid_refuses_it(ctx):
-    ctx.resize(MIN_WINDOW)
-    ctx.set_grid(GRID_CHOICES[-1])
-    assert ctx.s in ctx.usable_grids
-    assert grid_fits(ctx.window[0], ctx.window[1], ctx.s)
+def test_a_density_the_display_does_not_have_is_refused(retina):
+    retina.set_grid(3)
+    assert retina.s == 2
+    retina.set_grid(1)
+    retina.set_grid(7)
+    assert retina.s == 2, "refused, and back to native rather than left wherever it was"
 
 
-def test_shrinking_the_window_steps_the_grid_back_down(ctx):
-    ctx.resize((1024, 768))
-    ctx.set_grid(GRID_CHOICES[-1])
-    coarse = ctx.s
-    ctx.resize(MIN_WINDOW)
-    assert ctx.s < coarse
-    assert ctx.width >= min_internal(ctx.s)[0]
+def test_a_resize_rebuilds_the_texture_to_match(retina):
+    retina.resize((900, 650))
+    assert retina.surface.get_size() == (1800, 1300)
+    assert (retina.texture.width, retina.texture.height) == (1800, 1300)
 
 
-def test_the_finest_grid_is_always_on_offer(ctx):
-    ctx.resize(MIN_WINDOW)
-    assert ctx.usable_grids[0] == GRID_CHOICES[0]
+def test_present_runs_after_every_kind_of_change(retina):
+    retina.present()
+    retina.resize((640, 480))
+    retina.present()
+    retina.set_grid(1)
+    retina.present()
+    retina.toggle_fullscreen()
+    retina.present()
+
+
+def test_the_font_and_the_floor_follow_the_density(retina):
+    assert retina.font_px == 2 * font_px(1)
+    assert min_internal(retina.s) == (2 * MIN_WINDOW[0], 2 * MIN_WINDOW[1])
 
 
 # --- window points to internal pixels ----------------------------------------------
 
-def test_at_the_default_grid_a_click_needs_no_translation(ctx):
+def test_at_one_pixel_per_point_a_click_needs_no_translation(ctx):
     assert ctx.to_internal((37, 41)) == (37, 41)
 
 
-def test_a_coarser_grid_divides_the_click_by_the_grid(ctx):
-    ctx.resize((1000, 700))
-    ctx.set_grid(2)
-    ox, oy = ctx.origin
-    assert ctx.to_internal((ox + 100, oy + 50)) == (50, 25)
+def test_at_two_pixels_per_point_a_click_is_doubled(retina):
+    assert retina.to_internal((100, 50)) == (200, 100)
 
 
-def test_a_click_in_the_letterbox_lands_outside_the_buffer(ctx):
-    """Clamping it would slide it onto whichever control sits at the edge.
-
-    1022 and 767 are both two more than a multiple of three, which is what
-    leaves a letterbox to click in: the buffer is blown up by exactly three and
-    the two spare points along each edge are painted black rather than drawn
-    into.
-    """
-    ctx.resize((1022, 767))
-    ctx.set_grid(3)
-    assert ctx.s == 3, "this window was meant to be big enough for the coarse grid"
-    assert ctx.origin != (0, 0)
-    x, y = ctx.to_internal((0, 0))
-    assert x < 0 and y < 0
+def test_a_mouse_event_is_translated_on_its_way_in(retina):
+    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": (60, 80), "button": 1})
+    assert retina.map_event(event).pos == (120, 160)
 
 
-def test_a_mouse_event_is_translated_on_its_way_in(ctx):
-    ctx.resize((1000, 700))
-    ctx.set_grid(2)
-    ox, oy = ctx.origin
-    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN,
-                               {"pos": (ox + 60, oy + 80), "button": 1})
-    assert ctx.map_event(event).pos == (30, 40)
-
-
-def test_a_translated_event_keeps_everything_else_it_carried(ctx):
-    ctx.resize((1000, 700))
-    ctx.set_grid(2)
+def test_a_translated_event_keeps_everything_else_it_carried(retina):
     event = pygame.event.Event(pygame.MOUSEMOTION,
                                {"pos": (100, 100), "rel": (4, 8), "buttons": (1, 0, 0)})
-    mapped = ctx.map_event(event)
+    mapped = retina.map_event(event)
     assert mapped.buttons == (1, 0, 0)
-    assert mapped.rel == (2, 4)
+    assert mapped.rel == (8, 16)
 
 
-def test_an_event_with_no_position_passes_straight_through(ctx):
-    ctx.resize((1000, 700))
-    ctx.set_grid(2)
+def test_an_event_with_no_position_passes_straight_through(retina):
     event = pygame.event.Event(pygame.KEYDOWN, {"key": pygame.K_SPACE, "mod": 0})
+    assert retina.map_event(event) is event
+
+
+def test_at_one_pixel_per_point_an_event_is_not_copied(ctx):
+    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": (60, 80), "button": 1})
     assert ctx.map_event(event) is event
-
-
-def test_the_font_grows_back_as_the_grid_coarsens(ctx):
-    """Apparent text size is what stays constant, not the pixel count."""
-    for s in GRID_CHOICES:
-        assert font_px(s) * s >= config.TARGET_TEXT_POINTS - 2
 
 
 # --- the keys ---------------------------------------------------------------------
@@ -268,6 +250,22 @@ def test_w_steps_the_window_size(ctx):
     handle_event(_key(pygame.K_w), state, ctx)
     assert ctx.window != before
     assert (state.camera.width, state.camera.height) == (ctx.width, ctx.height)
+
+
+def test_g_toggles_the_density_on_a_retina_display(retina):
+    from src.app.input import handle_event
+    from src.app.state import AppState
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.sim import Simulation
+
+    state = AppState(Simulation(), Camera(retina.width, retina.height), ViewSettings())
+    handle_event(_key(pygame.K_g), state, retina)
+    assert retina.s == 1
+    assert (state.camera.width, state.camera.height) == (800, 600)
+    handle_event(_key(pygame.K_g), state, retina)
+    assert retina.s == 2
+    assert (state.camera.width, state.camera.height) == (1600, 1200)
 
 
 def test_command_w_asks_to_quit_rather_than_resizing(ctx):
@@ -295,3 +293,9 @@ def test_a_drag_is_not_capped_at_the_primary_display(ctx):
     huge = (ctx.desktop[0] + 400, ctx.desktop[1] + 300)
     ctx.resize(huge)
     assert ctx.window_size == huge
+
+
+def test_close_destroys_the_window_and_can_be_called_twice(ctx):
+    ctx.close()
+    ctx.close()
+    assert ctx._window is None
