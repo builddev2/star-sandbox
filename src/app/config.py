@@ -268,8 +268,11 @@ class DisplayContext:
         """Change the pixel density live.  Callers must clear any sprite cache.
 
         Only the display's native density and 1 are ever on offer; anything
-        else is refused and lands on native.
+        else is refused and lands on native.  ``native`` is re-measured first,
+        because the window may have moved to a display with a different
+        density since the last ``_adopt``.
         """
+        self.native = self._measure_native()
         self.s = s if s in self.usable_grids else self.usable_grids[0]
         self._adopt()
 
