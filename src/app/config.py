@@ -276,6 +276,17 @@ class DisplayContext:
         self.s = s if s in self.usable_grids else self.usable_grids[0]
         self._adopt()
 
+    def refresh_density(self):
+        """Re-measure the display's density and return the grids on offer.
+
+        For callers that choose a grid *before* calling ``set_grid``: the
+        window may have moved to a display of a different density since the
+        last ``_adopt``, and a choice made against the stale list would be
+        refused.
+        """
+        self.native = self._measure_native()
+        return self.usable_grids
+
     def resize(self, size=None):
         """Take a new window size from the window manager.
 

@@ -717,14 +717,15 @@ class AppState:
             str(summary.get("scenario_label", "?")), year_text, bodies_text, when)
 
     def cycle_grid(self, ctx):
-        """Step the pixel grid.  Sprites are sized in pixels, so the cache dies.
+        """Toggle the pixel density.  Sprites are sized in pixels, so the cache dies.
 
-        Cycles the grids this window is actually big enough for, which in a
-        third-of-the-screen window is fewer than in a fullscreen one.
+        Cycles what the display actually offers: its native density and 1.
+        On a display with one pixel per point there is nothing to cycle and
+        the button is disabled.
         """
         if ctx is None:
             return
-        choices = ctx.usable_grids
+        choices = ctx.refresh_density()
         here = choices.index(ctx.s) if ctx.s in choices else -1
         ctx.set_grid(choices[(here + 1) % len(choices)])
         self.on_resize(ctx)

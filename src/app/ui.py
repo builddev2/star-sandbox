@@ -79,7 +79,7 @@ VIEW_BUTTONS = (
     ("view.sizes", "sizes", "", "R", "Real sizes -- everything becomes a dot"),
     ("view.labels", "labels", "", "L", "Name labels"),
     ("view.explain", "explain", "", "Y", "Explain what an edit did"),
-    ("view.grid", "grid", "", "G", "Chunkier pixels"),
+    ("view.grid", "grid", "", "G", "Standard or Retina resolution"),
     ("view.window", "window", "", "W", "Window size"),
     ("view.fullscreen", "fullscreen", "", "Cmd+F", "Fullscreen"),
     ("view.help", "", "?", "?", "Every keyboard shortcut"),

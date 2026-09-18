@@ -178,6 +178,44 @@ def test_a_density_the_display_does_not_have_is_refused(retina):
     assert retina.s == 2, "refused, and back to native rather than left wherever it was"
 
 
+def test_cycle_grid_sees_a_density_change_on_the_first_press(retina):
+    """A window dragged to a display of a different density must not need a
+    wasted G press before the toggle works."""
+    from src.app.state import AppState
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.sim import Simulation
+    state = AppState(Simulation(), Camera(retina.width, retina.height), ViewSettings())
+    retina.set_grid(1)
+    retina._pixels_per_point = 3          # the window "moved" to a 3x display
+    state.cycle_grid(retina)
+    assert retina.native == 3
+    assert retina.s == 3
+
+
+def test_cycle_grid_toggles_on_first_press_after_moving_to_a_denser_display(ctx):
+    """The regression the fix above guards against, at the density where it
+    actually bites: a window that arrives at 1x with only one grid on offer
+    (the button greyed out) moves to a 2x display.  ``set_grid``'s own
+    fallback-to-native happens to paper over the stale-choices bug whenever
+    the stale target is refused outright (as in the test above, 2->3); it
+    does not paper over the bug here, because 1 is still a legal choice at
+    native 2 -- so a stale read of ``usable_grids`` silently keeps ``s`` at 1
+    instead of stepping it to the new native, and ``G`` looks like it did
+    nothing.
+    """
+    from src.app.state import AppState
+    from src.render.camera import Camera
+    from src.render.draw import ViewSettings
+    from src.sim import Simulation
+    ctx.set_grid(1)
+    ctx._pixels_per_point = 2             # the window "moved" to a 2x display
+    state = AppState(Simulation(), Camera(ctx.width, ctx.height), ViewSettings())
+    state.cycle_grid(ctx)
+    assert ctx.native == 2
+    assert ctx.s == 2, "a stale read of usable_grids left s stuck at 1"
+
+
 def test_a_resize_rebuilds_the_texture_to_match(retina):
     retina.resize((900, 650))
     assert retina.surface.get_size() == (1800, 1300)

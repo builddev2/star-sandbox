@@ -48,9 +48,7 @@ def display():
 
 def cases():
     for window in WINDOWS:
-        for s in config.GRID_CHOICES:
-            if not config.grid_fits(window[0], window[1], s):
-                continue
+        for s in (1, 2):
             for tool in TOOLS:
                 yield window, s, tool
 
@@ -117,7 +115,7 @@ def test_no_two_controls_overlap(window, s, tool):
 
 def test_the_help_panel_never_outgrows_the_window():
     """It is the one panel sized by its contents rather than by the window."""
-    for s in config.GRID_CHOICES:
+    for s in (1, 2):
         hud = Hud(PixelFont(config.font_px(s)))
         internal = config.min_internal(s)
         rect = hud.help_rect(*internal)
@@ -145,7 +143,7 @@ def test_the_edit_panel_stays_clear_of_the_transport_bar():
     from src import edits
     from src.render.widgets import Metrics
 
-    for s in config.GRID_CHOICES:
+    for s in (1, 2):
         internal = config.min_internal(s)
         font = PixelFont(config.font_px(s))
         metrics = Metrics(font, *internal)
@@ -204,7 +202,7 @@ def test_the_explain_panel_fits_at_every_window_size():
     def find(ui, cid):
         return next((c for c in ui.controls if c.id == cid), None)
 
-    for s in config.GRID_CHOICES:
+    for s in (1, 2):
         width, height = config.min_internal(s)
         font = PixelFont(config.font_px(s))
         panel = ExplainPanel(font)
@@ -294,11 +292,9 @@ def build_dialog(size, s, dialog, store):
 
 
 @pytest.mark.parametrize("window", WINDOWS)
-@pytest.mark.parametrize("s", config.GRID_CHOICES)
+@pytest.mark.parametrize("s", (1, 2))
 @pytest.mark.parametrize("dialog", DIALOGS)
 def test_the_dialogs_fit_inside_the_window(window, s, dialog, store):
-    if not config.grid_fits(window[0], window[1], s):
-        pytest.skip("grid does not fit")
     ui, screen = build_dialog(window, s, dialog, store)
     assert ui.modal is not None and screen.contains(ui.modal)
     outside = sorted({c.id for c in ui.controls if not screen.contains(c.rect)})

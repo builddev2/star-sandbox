@@ -46,7 +46,7 @@ KEY_HELP = (
     ("R", "real sizes (everything is a dot)"),
     ("L", "name labels"),
     ("Y", "explanations on and off"),
-    ("G", "pixel grid size"),
+    ("G", "resolution -- Retina or standard"),
     ("Del", "delete the selected body"),
     ("F5", "start the solar system over"),
     ("S", "save or load a game"),

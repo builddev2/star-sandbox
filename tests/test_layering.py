@@ -32,3 +32,28 @@ def test_physics_layer_never_imports_pygame():
 def test_every_physics_module_imports():
     for name in PHYSICS_MODULES:
         importlib.import_module(name)
+
+
+def test_nothing_calls_from_display_module():
+    """``pygame.Window.from_display_module()`` hands back an object that
+    destroys the real window when it is garbage-collected; the program then
+    segfaults some frames later, far from the call that did it.
+
+    Checked as an actual call, not a text search: ``src/app/config.py``'s own
+    module docstring names the method to document why it is forbidden, which
+    a plain substring search would misreport as an offender.
+    """
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "src"
+    offenders = []
+    for path in root.rglob("*.py"):
+        if "from_display_module" not in path.read_text():
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "from_display_module"):
+                offenders.append(path)
+    assert offenders == []
