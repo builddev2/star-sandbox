@@ -13,7 +13,7 @@ from ..render.pixelfont import PixelFont
 from ..render.sprites import SpriteCache
 from ..render.starfield import Starfield
 from ..sim import Simulation
-from .config import DEFAULT_S, open_display
+from .config import open_display
 from .input import handle_event
 from .saves import SlotStore, default_directory
 from .state import AppState
@@ -27,17 +27,18 @@ def probe(fullscreen=False):
     ctx = open_display(fullscreen=fullscreen)
     info = {
         "desktop_size": pygame.display.get_desktop_sizes(),
-        "window_size": pygame.display.get_window_size(),
+        "window_size": ctx.window,
         "driver": pygame.display.get_driver(),
-        "default_S": DEFAULT_S,
+        "pixels_per_point": ctx.native,
+        "s": ctx.s,
         "buffer": (ctx.width, ctx.height),
-        "upscale": ctx.upscale,
         "font_px": ctx.font_px,
         "resizable": ctx.resizable,
         "window_preset": ctx.window_size_label,
     }
     for key, value in info.items():
         print("%-16s %s" % (key, value))
+    ctx.close()
     pygame.quit()
     return info
 
@@ -86,7 +87,7 @@ class App:
         # Safety net for a resize that reached us through a path we do not
         # listen for -- a maximise, a macOS tile, a window moved by script.
         # One cheap SDL call a frame, and a no-op whenever nothing moved.
-        if pygame.display.get_window_size() != self.ctx.window:
+        if self.ctx.size_changed():
             self.ctx.resize()
             self.state.on_resize(self.ctx)
         if (self.ctx.width, self.ctx.height) != was:
@@ -144,6 +145,7 @@ class App:
     def run(self):
         while self.state.running:
             self.step_once()
+        self.ctx.close()
         pygame.quit()
         return 0
 

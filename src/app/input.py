@@ -23,10 +23,11 @@ def handle_event(event, state, ctx, ui=None):
 
     # Before the interface, not after: every control was laid out against the
     # old size, and one of them would otherwise get a click meant for a rectangle
-    # that has already moved.
-    if event.type == pygame.VIDEORESIZE:
+    # that has already moved.  A pygame.Window reports its new size as
+    # WINDOWSIZECHANGED (``x``, ``y``); VIDEORESIZE never fires for it.
+    if event.type == pygame.WINDOWSIZECHANGED:
         if ctx is not None:
-            ctx.resize(event.size)
+            ctx.resize((event.x, event.y))
             state.on_resize(ctx)
         return
 

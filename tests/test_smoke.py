@@ -22,6 +22,7 @@ def app(tmp_path):
     # running world, so press New.
     instance.state.start_new()
     yield instance
+    instance.ctx.close()
     pygame.quit()
 
 
@@ -37,6 +38,7 @@ def test_the_app_boots_onto_the_start_menu(tmp_path):
         assert instance.state.sim.world.time == 0.0
         assert {c.id for c in instance.ui.controls} == {"start.new", "start.load", "start.quit"}
     finally:
+        instance.ctx.close()
         pygame.quit()
 
 
@@ -174,15 +176,32 @@ def test_a_smashed_solar_system_keeps_rendering(app):
     assert world.n > 0
 
 
-def test_the_grid_can_be_changed_live(app):
-    from src.app.config import GRID_CHOICES
-    for grid in GRID_CHOICES:
-        app.ctx.set_grid(grid)
+def test_the_density_can_be_changed_live(app):
+    for s in (1, 2, 1):
+        app.ctx._pixels_per_point = 2
+        app.ctx.set_grid(s)
         app.state.on_resize(app.ctx)
         app._build_render_stack()
         for _ in range(3):
             app.step_once()
+        assert app.ctx.s == s
         assert app.camera.width == app.ctx.width
+        assert app.ctx.surface.get_size() == (app.ctx.width, app.ctx.height)
+
+
+def test_a_frame_at_native_retina_density_agrees_with_itself(app):
+    """The buffer, the texture and the camera must all be the window times two,
+    or present() raises when the upload does not fit."""
+    app.ctx._pixels_per_point = 2
+    app.ctx.set_grid(2)
+    app.state.on_resize(app.ctx)
+    app._build_render_stack()
+    for _ in range(3):
+        app.step_once()
+    w, h = app.ctx.window
+    assert (app.ctx.width, app.ctx.height) == (2 * w, 2 * h)
+    assert (app.ctx.texture.width, app.ctx.texture.height) == (2 * w, 2 * h)
+    assert (app.camera.width, app.camera.height) == (2 * w, 2 * h)
 
 
 # --- the interface, driven the way a mouse drives it ------------------------------
@@ -339,8 +358,7 @@ def test_the_app_survives_a_real_collision(app):
 # --- resizing the real window ------------------------------------------------------
 
 def _resize(size):
-    return pygame.event.Event(pygame.VIDEORESIZE, {"size": size, "w": size[0],
-                                                   "h": size[1]})
+    return pygame.event.Event(pygame.WINDOWSIZECHANGED, {"x": size[0], "y": size[1]})
 
 
 def test_resizing_the_window_carries_through_the_whole_frame_loop(app):
