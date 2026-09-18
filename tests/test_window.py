@@ -186,12 +186,16 @@ def test_a_resize_rebuilds_the_texture_to_match(retina):
 
 def test_present_runs_after_every_kind_of_change(retina):
     retina.present()
+    assert (retina.texture.width, retina.texture.height) == retina.surface.get_size()
     retina.resize((640, 480))
     retina.present()
+    assert (retina.texture.width, retina.texture.height) == retina.surface.get_size()
     retina.set_grid(1)
     retina.present()
+    assert (retina.texture.width, retina.texture.height) == retina.surface.get_size()
     retina.toggle_fullscreen()
     retina.present()
+    assert (retina.texture.width, retina.texture.height) == retina.surface.get_size()
 
 
 def test_the_font_and_the_floor_follow_the_density(retina):
