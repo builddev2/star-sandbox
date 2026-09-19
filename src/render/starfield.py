@@ -29,6 +29,8 @@ MAX_STARS = 3000
 #: The haze is rendered at this fraction of the buffer and scaled up: at
 #: 3456x2168 a full-resolution fbm is a quarter of a second per resize.
 HAZE_SCALE = 4
+#: Caps the haze at ~36 above SPACE (22 * max(1.0, 0.95, 0.9) headroom), so a
+#: haze pixel never crosses the 60 threshold the tests gate a star pixel on.
 HAZE_BRIGHTNESS = 22
 
 

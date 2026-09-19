@@ -21,6 +21,20 @@ def _ink(surface, background):
                if surface.get_at((x, y))[:3] != background[:3])
 
 
+def _stars(surface):
+    """Count pixels bright enough to be a star, not the Milky Way haze.
+
+    The haze tops out at ~36 per channel (``HAZE_BRIGHTNESS``); gating at 60
+    excludes it, so this only counts pixels a star actually touched -- unlike
+    ``_ink`` against ``palette.SPACE``, which the haze alone can satisfy.
+    """
+    width, height = surface.get_size()
+    return sum(1
+               for x in range(width)
+               for y in range(height)
+               if max(surface.get_at((x, y))[:3]) > 60)
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _pygame():
     pygame.init()
@@ -158,15 +172,17 @@ def test_starfield_draws_stars():
     surface.fill(palette.SPACE)
     Starfield(320, 200, count=200).draw(surface, Camera(320, 200))
     # Every requested star must land on screen, give or take overlaps.
-    assert _ink(surface, palette.SPACE) > 150
+    assert _stars(surface) > 150
 
 
 def test_starfield_wraps_seamlessly_when_panning():
     """The sky tiles modulo the screen, so panning any distance keeps the same
-    number of stars visible rather than sliding them off the edge."""
+    number of stars visible rather than sliding them off the edge, and the
+    visible pixels must be the sky rolled by the parallax shift -- not merely
+    some other blit of it."""
     from src.render import palette
     from src.render.camera import Camera
-    from src.render.starfield import Starfield
+    from src.render.starfield import PARALLAX, Starfield
     field = Starfield(320, 200, count=200)
     counts = []
     cam = Camera(320, 200)
@@ -175,7 +191,12 @@ def test_starfield_wraps_seamlessly_when_panning():
         surface = pygame.Surface((320, 200))
         surface.fill(palette.SPACE)
         field.draw(surface, cam)
-        counts.append(_ink(surface, palette.SPACE))
+        counts.append(_stars(surface))
+
+        shift = cam.centre * cam.zoom * PARALLAX
+        expected = np.roll(np.roll(pygame.surfarray.array3d(field.sky), -int(shift[0]), axis=0),
+                           int(shift[1]), axis=1)
+        assert np.array_equal(pygame.surfarray.array3d(surface), expected)
     assert min(counts) > 150, counts
 
 
@@ -212,9 +233,11 @@ def test_stars_come_in_more_than_one_colour_and_brightness():
     Starfield(320, 200, count=300).draw(surface, Camera(320, 200))
     colours = {surface.get_at((x, y))[:3] for x in range(320) for y in range(200)}
     bright = [c for c in colours if max(c) > 200]
+    dim = [c for c in colours if 60 < max(c) < 150]
     warm = [c for c in colours if c[0] > c[2] + 20 and max(c) > 60]
     cool = [c for c in colours if c[2] > c[0] + 20 and max(c) > 60]
     assert bright, "no bright star"
+    assert dim, "no dim star"
     assert warm and cool, "a real sky has both red and blue stars"
 
 
