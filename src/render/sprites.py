@@ -23,7 +23,6 @@ import pygame
 
 from .. import units
 from . import palette, shade
-from .shade import GLOW_SCALE  # noqa: F401 -- read by tests
 
 #: Lighting directions the cache distinguishes.
 LIT_BUCKETS = 16
@@ -400,11 +399,19 @@ class SpriteCache:
         sprite.  Bases live in a small side table so a zoom notch re-uses the
         rung it already has instead of re-shading a screen-filling planet.
         """
+        if px <= shade.LADDER_START:
+            # Below the ladder the base *is* the sprite, and the LRU already
+            # holds it: storing it here too would fill the side table with
+            # tiny sprites and evict the big bases the table exists to keep.
+            return make(px)
         rung = shade.shade_radius(px)
         base = self._bases.get(key + (rung,))
         if base is None:
             base = make(rung)
             if len(self._bases) >= self.BASE_LIMIT:
+                # FIFO by design: the table only ever holds big (ladder-rung)
+                # bases, of which there are few, so 48 slots is ample and
+                # which one is dropped first barely matters.
                 self._bases.pop(next(iter(self._bases)))
             self._bases[key + (rung,)] = base
         if rung == px:

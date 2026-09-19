@@ -313,6 +313,13 @@ def test_two_sizes_on_one_rung_share_the_shaded_base(cache):
     gas = materials.get("gas")
     cache.get(gas, seed=1, px=300, lit_angle=0.0, is_star=False)
     bases = len(cache._bases)
+    assert bases == 1, "the rung's base must be kept"
     cache.get(gas, seed=1, px=int(300 * 1.18), lit_angle=0.0, is_star=False)
     assert shade.shade_radius(300) == shade.shade_radius(int(300 * 1.18))
     assert len(cache._bases) == bases
+
+
+def test_a_small_sprite_never_enters_the_ladder_table(cache):
+    from src import materials
+    cache.get(materials.get("rock"), seed=1, px=12, lit_angle=0.0, is_star=False)
+    assert len(cache._bases) == 0
