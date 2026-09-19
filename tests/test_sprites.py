@@ -87,7 +87,16 @@ def test_lighting_makes_one_side_brighter(cache):
 
 def test_the_corona_reads_warm_not_grey(cache):
     """The Sun's corona used to read grey-white; the disc colour handed to
-    shade.star is warmed toward an ember orange before shading."""
+    shade.star is warmed toward an ember orange before shading.  A ratio, not
+    a fixed-point gap: the warm cast now fades with distance from the Sun's
+    colour class (see test_a_blue_giant_stays_blue), so at 5778 K -- quantised
+    to a glow_k of 5800, giving warmth 0.48 of the full cast -- the corona
+    pixel measures red/blue = 1.303, clearing 1.3 by well under 10% margin.
+    Lowered to 1.2 per the fix-2 report's instruction; even that is an 8.6%
+    margin, not the full 10% asked for, because a Sun-temperature star's
+    Planck colour is already close to white and there is only so much cast a
+    fading blend can add without also colouring a blue giant -- see the fix-2
+    report for the numbers."""
     from src import materials
     px = 30
     surf = cache.get(materials.get("hydrogen"), seed=1, px=px, lit_angle=0.0,
@@ -95,7 +104,22 @@ def test_the_corona_reads_warm_not_grey(cache):
     c = surf.get_width() // 2
     r = int(1.4 * px)
     p = surf.get_at((c + r, c))
-    assert p[0] > p[2] + 15
+    assert p[0] > 1.2 * p[2]
+
+
+def test_a_blue_giant_stays_blue(cache):
+    """The warm cast is for the Sun's colour class only: it must fade out
+    well before a blue giant, or every hot star reads tan.  Checked on both
+    the disc (0.9 px) and the corona (1.4 px), on the +x axis."""
+    from src import materials
+    px = 30
+    surf = cache.get(materials.get("hydrogen"), seed=1, px=px, lit_angle=0.0,
+                     is_star=True, temperature=20000.0)
+    c = surf.get_width() // 2
+    disc = surf.get_at((c + int(0.9 * px), c))
+    corona = surf.get_at((c + int(1.4 * px), c))
+    assert disc[2] > disc[0]
+    assert corona[2] > corona[0]
 
 
 def test_stars_are_larger_than_their_disc_because_of_the_glow(cache):

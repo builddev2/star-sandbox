@@ -347,6 +347,18 @@ def _blend_toward(tone, target, weight):
                  for k in range(3))
 
 
+#: The ember-orange cast a star's corona is warmed toward.
+STAR_WARM_TINT = (255, 200, 120)
+#: How far toward STAR_WARM_TINT a Sun-class star's colour is blended, at full warmth.
+STAR_WARM_WEIGHT = 0.65
+#: Above this temperature the warm cast is entirely faded out -- a blue giant must stay
+#: blue, so the cast belongs to the Sun's colour class only, not every star.
+STAR_WARM_UNTIL_K = 7000.0
+#: The cast fades linearly over this many kelvin below STAR_WARM_UNTIL_K, so it is at
+#: full strength by 4500 K (7000 - 2500) and gone by 7000 K.
+STAR_WARM_FADE_K = 2500.0
+
+
 #: How a named body wants to be drawn: tones, style and atmosphere colour.
 #: For "terrestrial" the tones mean (ocean, land, cloud).  A body whose look
 #: is not here draws from its material.
@@ -383,13 +395,11 @@ def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0, look=None):
         mid = _blend_toward(mid, target, weight)
         light = _blend_toward(light, target, weight)
     if is_star:
-        # The corona reads grey-white off the raw disc colour; warm it
-        # toward an ember orange so it does not look like smoke.  0.35 was
-        # too faint to move the corona pixel measurably (a Sun-temperature
-        # star is already warm-white on the Planck locus, so a small nudge
-        # barely showed above the corona's own dimming); 0.65 gives a
-        # corona that reads amber rather than grey.
-        warm = _blend_toward(light, (255, 200, 120), 0.65)
+        # A warm cast for the Sun's colour class only: the Planck colour of a
+        # 5800 K star is nearly white and reads grey against the sky, but a
+        # blue giant must stay blue, so the cast fades out by 7000 K.
+        warmth = min(1.0, max(0.0, (STAR_WARM_UNTIL_K - glow_k) / STAR_WARM_FADE_K))
+        warm = _blend_toward(light, STAR_WARM_TINT, STAR_WARM_WEIGHT * warmth)
         return shade.star(px, warm, seed)
     return shade.sphere(px, lit_angle, (dark, mid, light), style, seed, atmosphere)
 
