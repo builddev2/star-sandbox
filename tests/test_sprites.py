@@ -167,6 +167,24 @@ def test_rings_are_cached(cache):
     assert a is b
 
 
+def test_rings_on_one_rung_share_the_shaded_base(cache):
+    from src import materials
+    from src.render import shade
+    tones = materials.get("gas").tones
+    cache.get_rings(300, tones, seed=1, lit_angle=0.0)
+    assert len(cache._bases) == 1
+    cache.get_rings(int(300 * 1.18), tones, seed=1, lit_angle=0.0)
+    assert shade.shade_radius(300) == shade.shade_radius(int(300 * 1.18))
+    assert len(cache._bases) == 1
+
+
+def test_scaled_rings_are_the_size_asked_for(cache):
+    from src import materials
+    from src.render.sprites import ring_size
+    back, front = cache.get_rings(300, materials.get("gas").tones, seed=1, lit_angle=0.0)
+    assert back.get_size() == front.get_size() == (ring_size(300), ring_size(300))
+
+
 # --- thermal glow -------------------------------------------------------------
 
 def test_blackbody_colour_runs_red_through_white_up_the_planck_locus():

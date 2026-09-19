@@ -362,13 +362,11 @@ def ring_size(px):
     return 2 * (int(math.ceil(max(1, int(px)) * RING_OUTER)) + 2) + 1
 
 
-def ring_surfaces(px, tones, seed, lit_angle):
-    """A flat ring system as two surfaces, ``(back, front)``: the half drawn
-    behind the planet and the half drawn in front of it, so the disc can sit
-    between them.  The planet's shadow is cut across the back half along the
-    anti-star direction.  Shaded at the ladder rung like a sphere."""
-    px = max(1, int(px))
-    rung = shade.shade_radius(px)
+def _ring_surfaces_at(rung, tones, seed, lit_angle):
+    """Both ring halves shaded at exactly ``rung`` pixels -- the ladder rung,
+    built once and reused for every ``px`` that maps to it, the same way
+    ``_make_body`` is built once per rung for the sphere ladder."""
+    rung = max(1, int(rung))
     half = int(math.ceil(rung * RING_OUTER)) + 2
     coords = np.arange(2 * half + 1, dtype=np.float64) - half
     xs, ys = np.meshgrid(coords, coords)
@@ -398,6 +396,19 @@ def ring_surfaces(px, tones, seed, lit_angle):
     front_alpha = alpha * (ys >= 0)
     back = shade.to_surface(back_rgb, back_alpha)
     front = shade.to_surface(rgb, front_alpha)
+    return back, front
+
+
+def ring_surfaces(px, tones, seed, lit_angle):
+    """A flat ring system as two surfaces, ``(back, front)``: the half drawn
+    behind the planet and the half drawn in front of it, so the disc can sit
+    between them.  The planet's shadow is cut across the back half along the
+    anti-star direction.  Shaded at the ladder rung like a sphere, then
+    scaled to ``px`` -- see ``_ring_surfaces_at`` for the rung-level build
+    that ``SpriteCache.get_rings`` reuses across every ``px`` on one rung."""
+    px = max(1, int(px))
+    rung = shade.shade_radius(px)
+    back, front = _ring_surfaces_at(rung, tones, seed, lit_angle)
     size = ring_size(px)
     if back.get_width() != size:
         back = pygame.transform.smoothscale(back, (size, size))
@@ -444,6 +455,10 @@ class SpriteCache:
         the surface it returns.  Below ``LADDER_START`` the base *is* the
         sprite.  Bases live in a small side table so a zoom notch re-uses the
         rung it already has instead of re-shading a screen-filling planet.
+
+        ``make`` may return one surface or a tuple of surfaces sharing one
+        rung (rings' back and front halves) -- either way the same shape
+        comes back, each element scaled to ``size(px)``.
         """
         if px <= shade.LADDER_START:
             # Below the ladder the base *is* the sprite, and the LRU already
@@ -463,6 +478,8 @@ class SpriteCache:
         if rung == px:
             return base
         side = size(px)
+        if isinstance(base, tuple):
+            return tuple(pygame.transform.smoothscale(b, (side, side)) for b in base)
         return pygame.transform.smoothscale(base, (side, side))
 
     def get(self, material, seed, px, lit_angle, is_star,
@@ -490,7 +507,13 @@ class SpriteCache:
         return self._store(key, surface)
 
     def get_rings(self, px, tones, seed, lit_angle):
-        """Both halves of a ring system, cached under one key."""
+        """Both halves of a ring system, cached under one key.
+
+        Routed through ``_scaled`` like every other big sprite: without it a
+        ring system was rebuilt from scratch (fbm over a 1777x1777 grid at
+        rung 384) on every distinct ``px``, instead of sharing the one base
+        its rung already has.
+        """
         px = max(1, int(px))
         bucket = int(round(lit_angle / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
         key = ("rings", tuple(tones), int(seed), px, bucket)
@@ -498,7 +521,11 @@ class SpriteCache:
         if hit is not None:
             return hit
         angle = bucket * 2 * math.pi / LIT_BUCKETS
-        return self._store(key, ring_surfaces(px, tones, seed, angle))
+        surface = self._scaled(
+            ("rings", tuple(tones), int(seed), bucket), px,
+            lambda r: _ring_surfaces_at(r, tones, seed, angle),
+            ring_size)
+        return self._store(key, surface)
 
     def get_black_hole(self, seed, px, spin, disk):
         """A black hole sprite, cached like any other.
