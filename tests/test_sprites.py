@@ -382,3 +382,38 @@ def test_a_small_sprite_never_enters_the_ladder_table(cache):
     from src import materials
     cache.get(materials.get("rock"), seed=1, px=12, lit_angle=0.0, is_star=False)
     assert len(cache._bases) == 0
+
+
+# --- supersampling ----------------------------------------------------------------
+
+def test_the_black_hole_is_supersampled_and_lands_at_its_own_size(cache):
+    from src.render import sprites
+    px = 12
+    big = sprites._make_black_hole(px * sprites.SUPERSAMPLE, 0.5, 0.8, 1,
+                                   ss=sprites.SUPERSAMPLE)
+    small = cache.get_black_hole(seed=1, px=px, spin=0.5, disk=0.8)
+    assert small.get_width() < big.get_width()
+    assert small.get_width() % 2 == 1, "an odd side keeps the centre on a pixel"
+    c = small.get_width() // 2
+    assert small.get_at((c, c))[:3] == (0, 0, 0)
+
+
+def test_a_supersampled_rim_is_antialiased(cache):
+    """Somewhere on the photon ring there is a pixel that is neither black nor
+    the full ring colour -- the whole point of shading at 2x."""
+    px = 14
+    surf = cache.get_black_hole(seed=1, px=px, spin=0.0, disk=0.0)
+    c = surf.get_width() // 2
+    shades = {sum(surf.get_at((c + dx, c + dy))[:3]) for dx in range(-px - 2, px + 3)
+              for dy in range(-px - 2, px + 3)}
+    partial = [s for s in shades if 40 < s < 700]
+    assert partial, "every rim pixel is either black or full: no antialiasing happened"
+
+
+def test_the_craft_is_supersampled_but_keeps_its_hull_colours(cache):
+    from src.render.sprites import _CRAFT_HULL, _CRAFT_TILE
+    sprite = cache.get_craft(14, 0.0)
+    seen = {sprite.get_at((x, y))[:3] for x in range(sprite.get_width())
+            for y in range(sprite.get_height()) if sprite.get_at((x, y))[3] > 200}
+    assert _CRAFT_HULL in seen
+    assert _CRAFT_TILE in seen

@@ -28,6 +28,45 @@ from . import palette, shade
 #: Lighting directions the cache distinguishes.
 LIT_BUCKETS = 16
 
+#: The black hole and the craft are drawn from ellipses and polygons, which
+#: pygame cannot antialias; they are drawn at this multiple of their size and
+#: scaled down instead.
+SUPERSAMPLE = 2
+
+
+def _downsample(surface, ss):
+    """Scale a supersampled sprite back down, keeping an odd side so the
+    centre stays on a pixel.
+
+    ``_make_black_hole`` and ``_make_craft`` always hand back an odd-sized
+    canvas (so their own centre sits on a pixel), which means the naive
+    target -- half the size, rounded to the nearest odd number -- is never
+    an exact ``1/ss`` of the source.  Measured: at any ratio other than a
+    clean ``1/ss``, pygame-ce's ``smoothscale`` stops taking the exact
+    box-filter path and instead erodes a flat interior region by a few
+    levels in every channel, alpha included -- a solid, fully-opaque
+    surface comes back as ``(240, 243, 248, 253)`` instead of
+    ``(242, 245, 250, 255)``. That is invisible as antialiasing but it is
+    exactly what breaks a black hole's centre-must-be-opaque invariant and
+    a craft's exact hull/tile colours, so the source is padded by a sliver
+    of transparent pixels first -- up to the next multiple of ``ss`` -- so
+    the scale pygame actually performs is always the exact, lossless
+    ``1/ss`` it has a fast path for.
+    """
+    w, h = surface.get_size()
+    pad_w, pad_h = (-w) % ss, (-h) % ss
+    if pad_w or pad_h:
+        padded = pygame.Surface((w + pad_w, h + pad_h), pygame.SRCALPHA)
+        padded.blit(surface, (0, 0))
+        surface, (w, h) = padded, padded.get_size()
+    small = pygame.transform.smoothscale(surface, (w // ss, h // ss))
+    sw, sh = small.get_size()
+    tw, th = sw - (1 - sw % 2), sh - (1 - sh % 2)
+    if (tw, th) != (sw, sh):
+        small = small.subsurface((0, 0, tw, th)).copy()
+    return small
+
+
 #: Below this a body's own thermal emission is far too faint to see against the
 #: light it reflects; by GLOW_FULL_K there is nothing else left to see.  Real
 #: numbers: iron starts to visibly glow around 800 K and is white by 3000 K.
@@ -115,7 +154,7 @@ def _draw_ellipse_ring(surface, colour, alpha, centre, rx, ry, width):
                         max(1, int(width)))
 
 
-def _make_black_hole(px, spin, disk, seed):
+def _make_black_hole(px, spin, disk, seed, ss=1):
     """A black hole, painted back to front.
 
     Blitted **normally, never with BLEND_ADD**.  A star's sprite is additive
@@ -128,7 +167,7 @@ def _make_black_hole(px, spin, disk, seed):
     spin = min(max(float(spin), 0.0), units.MAX_SPIN)
     disk = min(max(float(disk), 0.0), 1.0)
 
-    detailed = px >= BH_DETAIL_PX
+    detailed = px >= BH_DETAIL_PX * ss
     outer = int(px * BH_DISK_OUTER) + 2
     jet = int(px * BH_JET_LENGTH * spin) if (detailed and disk > 0.0) else 0
     half = max(outer, jet)
@@ -192,7 +231,7 @@ def _make_black_hole(px, spin, disk, seed):
 
     # 6. The photon ring, right at the shadow's edge.
     pygame.draw.circle(surface, _PHOTON_RING + (255,), centre, px,
-                       1 if detailed else 0)
+                       ss if detailed else 0)
     if not detailed:
         # Too small for a one-pixel outline to survive; draw the rim as a
         # filled disc and punch the shadow back out of it.
@@ -222,7 +261,7 @@ _CRAFT_TRIM = (0xB8, 0xBE, 0xC8)
 _CRAFT_GLASS = (0x6C, 0xC4, 0xE8)
 
 
-def _make_craft(px, heading):
+def _make_craft(px, heading, ss=1):
     """A shuttle orbiter, nose along ``heading``.
 
     Drawn nose-along-+x from polygons and then rotated, which is both cheaper
@@ -246,7 +285,7 @@ def _make_craft(px, heading):
     centre = margin
     surface = pygame.Surface((size, size), pygame.SRCALPHA)
 
-    if px < CRAFT_DETAIL_PX:
+    if px < CRAFT_DETAIL_PX * ss:
         pygame.draw.circle(surface, _CRAFT_HULL, (centre, centre),
                            max(1, px // 2))
         return surface
@@ -276,9 +315,9 @@ def _make_craft(px, heading):
         point(1.00, -0.10), point(0.86, -0.26), point(-0.86, -0.30),
         point(-0.95, 0.0), point(-0.90, -0.02), point(0.90, -0.02),
     ])
-    if px >= CRAFT_DETAIL_PX + 4:
+    if px >= (CRAFT_DETAIL_PX + 4) * ss:
         pygame.draw.line(surface, _CRAFT_GLASS,
-                         point(0.80, 0.16), point(0.62, 0.20), 1)
+                         point(0.80, 0.16), point(0.62, 0.20), ss)
 
     if heading:
         surface = pygame.transform.rotate(surface, math.degrees(heading))
@@ -543,8 +582,10 @@ class SpriteCache:
         hit = self._hit(key)
         if hit is not None:
             return hit
-        surface = _make_black_hole(px, spin_bucket / 8.0 * units.MAX_SPIN,
-                                   disk_bucket / 8.0, seed)
+        surface = _downsample(
+            _make_black_hole(px * SUPERSAMPLE, spin_bucket / 8.0 * units.MAX_SPIN,
+                             disk_bucket / 8.0, seed, ss=SUPERSAMPLE),
+            SUPERSAMPLE)
         return self._store(key, surface)
 
     def get_craft(self, px, heading):
@@ -561,5 +602,8 @@ class SpriteCache:
         hit = self._hit(key)
         if hit is not None:
             return hit
-        surface = _make_craft(px, bucket * 2 * math.pi / LIT_BUCKETS)
+        surface = _downsample(
+            _make_craft(px * SUPERSAMPLE, bucket * 2 * math.pi / LIT_BUCKETS,
+                        ss=SUPERSAMPLE),
+            SUPERSAMPLE)
         return self._store(key, surface)
