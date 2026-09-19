@@ -111,10 +111,7 @@ class WorldRenderer:
                 # precisely so everything does that at once.
                 px = max(px, scale.craft_floor_px(height))
 
-            if px < 2.0:
-                if 0 <= int(x) < width and 0 <= int(y) < height:
-                    surface.set_at((int(x), int(y)), body.material.tones[2])
-            elif px > MAX_SPRITE_HEIGHTS * height:
+            if px > MAX_SPRITE_HEIGHTS * height:
                 # Bigger than the screen: no sprite could add detail, and
                 # allocating one this large would fail outright.  A hole this
                 # close fills the view with its own shadow, which is correct.
@@ -140,7 +137,8 @@ class WorldRenderer:
                     surface.blit(rings, rings.get_rect(center=(int(x), int(y))))
                 sprite = self.cache.get(body.material, body.seed, int(px),
                                         nearest_star_angle(world, i), is_star,
-                                        float(world.temperature[i]))
+                                        float(world.temperature[i]),
+                                        look=body.look)
                 rect = sprite.get_rect(center=(int(x), int(y)))
                 surface.blit(sprite, rect,
                              special_flags=pygame.BLEND_ADD if is_star else 0)

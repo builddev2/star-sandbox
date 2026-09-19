@@ -1,44 +1,32 @@
-"""Procedurally drawn pixel bodies.
+"""Procedurally drawn bodies.
 
 Nothing here is authored art.  The child creates bodies at arbitrary radii out of
 arbitrary materials, so there is no sprite sheet that could cover the space --
-every disc is generated on demand and cached.
-
-Shading is three offset circles rather than per-pixel lighting: a dark base, a
-mid-tone circle pushed toward the light, and a small light-tone highlight pushed
-further.  Three draw calls instead of tens of thousands of Python-level pixel
-operations, which matters because a zoom can request a 300px body.
+every disc is generated on demand and cached.  The pixels come from
+``render/shade.py``; this module decides *what* to shade (tones, style,
+atmosphere -- from the material, or from the body's look) and owns the cache.
 
 The lighting direction is bucketed to 16 compass points.  A continuous angle
 would miss the cache on every frame the camera moves, which would mean
-regenerating every sprite, every frame.
+regenerating every sprite, every frame.  Temperature, spin, disk and heading
+are bucketed for the same reason.
+
+Big sprites are shaded once per rung of ``shade``'s size ladder and scaled to
+each size asked for (``SpriteCache._scaled``); the scaled sprites live in the
+LRU and the shaded bases in a small side table.
 """
 
 import math
 from collections import OrderedDict
 
-import numpy as np
 import pygame
 
 from .. import units
-from . import palette
+from . import palette, shade
+from .shade import GLOW_SCALE  # noqa: F401 -- read by tests
 
 #: Lighting directions the cache distinguishes.
 LIT_BUCKETS = 16
-
-#: How far the mid-tone and highlight circles shift toward the light, as a
-#: fraction of the radius.
-MID_OFFSET = 0.22
-HIGHLIGHT_OFFSET = 0.50
-HIGHLIGHT_SCALE = 0.62
-
-#: Below this many pixels there is no room for texture; draw a flat dot.
-DETAIL_THRESHOLD = 4
-#: Glow radius as a multiple of a star's disc radius.
-GLOW_SCALE = 2.2
-#: Peak brightness of the halo just outside the disc, as a fraction of the
-#: star's own colour.  Additive, so this is how much it lifts the background.
-GLOW_STRENGTH = 0.55
 
 #: Below this a body's own thermal emission is far too faint to see against the
 #: light it reflects; by GLOW_FULL_K there is nothing else left to see.  Real
@@ -297,63 +285,6 @@ def _make_craft(px, heading):
     return surface
 
 
-def _shade(tone, factor):
-    return tuple(max(0, min(255, int(c * factor))) for c in tone)
-
-
-def _draw_detail(surface, material, rng, px, centre):
-    """Style-specific surface texture, drawn inside the disc."""
-    dark, mid, light = material.tones
-    style = material.style
-
-    if style == "cratered":
-        for _ in range(int(rng.integers(3, 9))):
-            angle = float(rng.random()) * 2 * math.pi
-            distance = float(rng.random()) ** 0.5 * px * 0.78
-            radius = max(1, int(px * float(rng.uniform(0.08, 0.20))))
-            x = int(centre + math.cos(angle) * distance)
-            y = int(centre + math.sin(angle) * distance)
-            pygame.draw.circle(surface, _shade(dark, 1.15), (x, y), radius)
-
-    elif style == "banded":
-        y = -px
-        while y < px:
-            thickness = max(1, int(px * float(rng.uniform(0.10, 0.22))))
-            half = int(math.sqrt(max(0.0, px * px - y * y)))
-            tone = _shade(mid, float(rng.uniform(0.78, 1.22)))
-            pygame.draw.rect(surface, tone,
-                             (centre - half, centre + y, 2 * half, thickness))
-            y += thickness + max(1, int(px * float(rng.uniform(0.04, 0.12))))
-
-    elif style == "cracked":
-        for _ in range(int(rng.integers(2, 6))):
-            angle = float(rng.random()) * 2 * math.pi
-            length = px * float(rng.uniform(0.5, 1.4))
-            x0 = centre + math.cos(angle) * px * 0.6
-            y0 = centre + math.sin(angle) * px * 0.6
-            x1 = x0 - math.cos(angle + 0.7) * length
-            y1 = y0 - math.sin(angle + 0.7) * length
-            pygame.draw.line(surface, light, (int(x0), int(y0)), (int(x1), int(y1)), 1)
-
-    elif style == "turbulent":
-        for _ in range(int(rng.integers(6, 14))):
-            angle = float(rng.random()) * 2 * math.pi
-            distance = float(rng.random()) ** 0.5 * px * 0.8
-            radius = max(1, int(px * float(rng.uniform(0.10, 0.26))))
-            x = int(centre + math.cos(angle) * distance)
-            y = int(centre + math.sin(angle) * distance)
-            tone = light if rng.random() < 0.5 else _shade(mid, 0.85)
-            pygame.draw.circle(surface, tone, (x, y), radius)
-
-
-def _mask_to_circle(surface, px, centre):
-    """Clip everything to the disc, so no detail can spill past the silhouette."""
-    mask = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-    mask.fill((0, 0, 0, 0))
-    pygame.draw.circle(mask, (255, 255, 255, 255), (centre, centre), px)
-    surface.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-
-
 def glow_fraction(kelvin):
     """How far a body has gone from its own colours to its blackbody glow, 0..1."""
     if kelvin <= GLOW_MIN_K:
@@ -374,10 +305,32 @@ def _blend_toward(tone, target, weight):
                  for k in range(3))
 
 
-def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0):
-    px = max(1, int(px))
-    dark, mid, light = material.tones
+#: How a named body wants to be drawn: tones, style and atmosphere colour.
+#: For "terrestrial" the tones mean (ocean, land, cloud).  A body whose look
+#: is not here draws from its material.
+LOOKS = {
+    "mercury": (((70, 70, 74), (128, 128, 132), (196, 196, 200)), "cratered", None),
+    "venus": (((150, 120, 60), (214, 190, 120), (246, 232, 190)), "banded", (232, 214, 160)),
+    "terrestrial": (((16, 52, 120), (86, 118, 62), (240, 244, 250)), "terrestrial", (120, 170, 255)),
+    "mars": (((92, 40, 22), (176, 92, 54), (232, 190, 160)), "cratered", (220, 170, 130)),
+    "moon": (((60, 60, 64), (118, 118, 122), (186, 186, 190)), "cratered", None),
+    "jupiter": (((120, 70, 40), (214, 178, 132), (244, 232, 210)), "banded", (200, 180, 150)),
+    "saturn": (((150, 120, 70), (214, 190, 130), (240, 226, 190)), "banded", (210, 190, 150)),
+    "uranus": (((90, 170, 180), (150, 220, 230), (210, 240, 245)), "banded", (150, 220, 230)),
+    "neptune": (((22, 40, 120), (56, 96, 200), (140, 180, 240)), "banded", (90, 130, 230)),
+}
 
+
+def appearance(material, look):
+    """What to shade: ``(tones, style, atmosphere)`` for a material and a look."""
+    if look in LOOKS:
+        return LOOKS[look]
+    return material.tones, material.style, None
+
+
+def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0, look=None):
+    tones, style, atmosphere = appearance(material, look)
+    dark, mid, light = tones
     if glow_k > 0.0:
         # Its own light, mixed into the light it reflects.  Applied before the
         # star branch as well as after it, so a red dwarf really is red and a
@@ -387,50 +340,9 @@ def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0):
         dark = _blend_toward(dark, target, weight)
         mid = _blend_toward(mid, target, weight)
         light = _blend_toward(light, target, weight)
-
     if is_star:
-        size = int(px * GLOW_SCALE) * 2 + 1
-        centre = size // 2
-        surface = pygame.Surface((size, size), pygame.SRCALPHA)
-
-        # The glow is blitted with BLEND_ADD, and **BLEND_ADD ignores alpha** --
-        # it adds raw channel values.  So the falloff has to live in the colour
-        # itself; encoding it as alpha produces a solid white disc that swallows
-        # everything within a couple of AU of the star.
-        steps = max(6, px)
-        for k in range(steps, 0, -1):
-            fraction = k / steps
-            radius = int(px + (px * (GLOW_SCALE - 1.0)) * fraction)
-            falloff = (1.0 - fraction) ** 2.2 * GLOW_STRENGTH
-            pygame.draw.circle(surface, _shade(light, falloff) + (255,),
-                               (centre, centre), radius)
-
-        pygame.draw.circle(surface, tuple(light) + (255,), (centre, centre), px)
-        pygame.draw.circle(surface, (255, 255, 255, 255), (centre, centre),
-                           max(1, int(px * 0.72)))
-        return surface
-
-    size = px * 2 + 1
-    centre = px
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-
-    pygame.draw.circle(surface, dark, (centre, centre), px)
-    if px >= 2:
-        dx = math.cos(lit_angle) * px * MID_OFFSET
-        dy = -math.sin(lit_angle) * px * MID_OFFSET
-        pygame.draw.circle(surface, mid, (int(centre + dx), int(centre + dy)), px)
-
-    if px >= DETAIL_THRESHOLD:
-        rng = np.random.default_rng(seed if seed else 1)
-        _draw_detail(surface, material, rng, px, centre)
-        hx = math.cos(lit_angle) * px * HIGHLIGHT_OFFSET
-        hy = -math.sin(lit_angle) * px * HIGHLIGHT_OFFSET
-        pygame.draw.circle(surface, light,
-                           (int(centre + hx), int(centre + hy)),
-                           max(1, int(px * (1.0 - HIGHLIGHT_SCALE))))
-
-    _mask_to_circle(surface, px, centre)
-    return surface
+        return shade.star(px, light, seed)
+    return shade.sphere(px, lit_angle, (dark, mid, light), style, seed, atmosphere)
 
 
 def ring_surface(px, tones):
@@ -451,15 +363,20 @@ def ring_surface(px, tones):
 class SpriteCache:
     """LRU of rendered bodies, keyed by everything that changes the pixels."""
 
+    #: Shaded bases held in the side table (see ``_scaled``).
+    BASE_LIMIT = 48
+
     def __init__(self, limit=512):
         self.limit = limit
         self._entries = OrderedDict()
+        self._bases = {}
 
     def __len__(self):
         return len(self._entries)
 
     def clear(self):
         self._entries.clear()
+        self._bases.clear()
 
     def _hit(self, key):
         """The sprite cached under ``key``, freshened, or None."""
@@ -475,18 +392,48 @@ class SpriteCache:
             self._entries.popitem(last=False)
         return surface
 
+    def _scaled(self, key, px, make, size):
+        """A sprite at ``px`` from a base shaded at the ladder rung.
+
+        ``make(radius)`` shades at that radius; ``size(radius)`` is the side of
+        the surface it returns.  Below ``LADDER_START`` the base *is* the
+        sprite.  Bases live in a small side table so a zoom notch re-uses the
+        rung it already has instead of re-shading a screen-filling planet.
+        """
+        rung = shade.shade_radius(px)
+        base = self._bases.get(key + (rung,))
+        if base is None:
+            base = make(rung)
+            if len(self._bases) >= self.BASE_LIMIT:
+                self._bases.pop(next(iter(self._bases)))
+            self._bases[key + (rung,)] = base
+        if rung == px:
+            return base
+        side = size(px)
+        return pygame.transform.smoothscale(base, (side, side))
+
     def get(self, material, seed, px, lit_angle, is_star,
-            temperature=units.CMB_TEMPERATURE_K):
+            temperature=units.CMB_TEMPERATURE_K, look=None):
         px = max(1, int(px))
         bucket = int(round(lit_angle / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
         heat = glow_key(temperature)
-        key = (material.key, seed, px, bucket, bool(is_star), heat)
+        look = look if look in LOOKS else None
+        key = (material.key, seed, px, bucket, bool(is_star), heat, look)
         hit = self._hit(key)
         if hit is not None:
             return hit
         angle = bucket * 2 * math.pi / LIT_BUCKETS
-        surface = _make_body(material, seed, px, angle, is_star,
-                             heat * GLOW_TEMP_STEP)
+        glow = heat * GLOW_TEMP_STEP
+        atmosphere = appearance(material, look)[2]
+        if is_star:
+            size = shade.star_size
+        else:
+            def size(radius):
+                return shade.sphere_size(radius, atmosphere)
+        surface = self._scaled(
+            (material.key, seed, bucket, bool(is_star), heat, look), px,
+            lambda radius: _make_body(material, seed, radius, angle, is_star, glow, look),
+            size)
         return self._store(key, surface)
 
     def get_black_hole(self, seed, px, spin, disk):

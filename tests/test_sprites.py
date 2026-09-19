@@ -77,14 +77,12 @@ def test_different_materials_look_different(cache):
 
 
 def test_lighting_makes_one_side_brighter(cache):
-    """Bodies shade away from the star, so the lit limb must be brighter."""
     from src import materials
-    px = 16
+    px = 30
     surf = cache.get(materials.get("rock"), seed=1, px=px, lit_angle=0.0, is_star=False)
-    # lit_angle 0 means the light comes from +x, so the right limb is lit.
-    right = sum(surf.get_at((px + int(px * 0.85), px))[:3])
-    left = sum(surf.get_at((px - int(px * 0.85), px))[:3])
-    assert right > left
+    lit = surf.get_at((px + 18, px))
+    dark = surf.get_at((px - 18, px))
+    assert sum(lit[:3]) > sum(dark[:3]) * 1.5
 
 
 def test_stars_are_larger_than_their_disc_because_of_the_glow(cache):
@@ -108,7 +106,8 @@ def test_tiny_bodies_still_produce_a_surface(cache):
     for px in (0, 1, 2):
         surf = cache.get(materials.get("rock"), seed=1, px=px,
                          lit_angle=0.0, is_star=False)
-        assert surf.get_width() >= 1
+        assert surf.get_width() == max(1, px) * 2 + 1
+        assert surf.get_at((max(1, px), max(1, px)))[3] == 255
 
 
 def test_every_material_renders_at_every_useful_size(cache):
@@ -255,3 +254,65 @@ def test_the_heading_bucket_is_rounded_not_truncated():
     # Just under half a step rounds back to bucket 0; just over rounds to 1.
     assert cache.get_craft(14, step * 0.49) is cache.get_craft(14, 0.0)
     assert cache.get_craft(14, step * 0.51) is not cache.get_craft(14, 0.0)
+
+
+# --- looks -----------------------------------------------------------------------
+
+def test_a_look_changes_the_picture_and_the_cache_key(cache):
+    from src import materials
+    rock = materials.get("rock")
+    plain = cache.get(rock, seed=1, px=20, lit_angle=0.0, is_star=False)
+    earth = cache.get(rock, seed=1, px=20, lit_angle=0.0, is_star=False, look="terrestrial")
+    assert earth is not plain
+    assert pygame.image.tobytes(earth, "RGBA") != pygame.image.tobytes(plain, "RGBA")
+    # Earth's disc is wider than a bare rock's: the atmosphere pads it.
+    assert earth.get_width() > plain.get_width()
+
+
+def test_an_unknown_look_draws_from_the_material(cache):
+    from src import materials
+    rock = materials.get("rock")
+    a = cache.get(rock, seed=1, px=20, lit_angle=0.0, is_star=False, look="nonsense")
+    b = cache.get(rock, seed=1, px=20, lit_angle=0.0, is_star=False)
+    assert pygame.image.tobytes(a, "RGBA") == pygame.image.tobytes(b, "RGBA")
+
+
+def test_every_look_renders():
+    from src import materials
+    from src.render.sprites import LOOKS, SpriteCache
+    cache = SpriteCache()
+    for look in LOOKS:
+        surf = cache.get(materials.get("rock"), seed=3, px=16, lit_angle=0.5,
+                         is_star=False, look=look)
+        assert surf.get_at((surf.get_width() // 2, surf.get_height() // 2))[3] == 255
+
+
+def test_earth_is_blue(cache):
+    from src import materials
+    px = 40
+    surf = cache.get(materials.get("rock"), seed=3, px=px, lit_angle=0.0,
+                     is_star=False, look="terrestrial")
+    c = surf.get_width() // 2
+    blues = sum(1 for dx in range(-30, 31, 4) for dy in range(-30, 31, 4)
+                if (lambda p: p[2] > p[0] + 20)(surf.get_at((c + dx, c + dy))))
+    assert blues > 60, "most of a shaded Earth should be ocean"
+
+
+# --- the ladder ------------------------------------------------------------------
+
+def test_a_big_sprite_is_the_size_it_was_asked_for(cache):
+    from src import materials
+    surf = cache.get(materials.get("gas"), seed=1, px=500, lit_angle=0.0, is_star=False)
+    assert surf.get_size() == (1001, 1001)
+
+
+def test_two_sizes_on_one_rung_share_the_shaded_base(cache):
+    """A zoom notch must not re-shade a 400 px planet."""
+    from src import materials
+    from src.render import shade
+    gas = materials.get("gas")
+    cache.get(gas, seed=1, px=300, lit_angle=0.0, is_star=False)
+    bases = len(cache._bases)
+    cache.get(gas, seed=1, px=int(300 * 1.18), lit_angle=0.0, is_star=False)
+    assert shade.shade_radius(300) == shade.shade_radius(int(300 * 1.18))
+    assert len(cache._bases) == bases

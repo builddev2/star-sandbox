@@ -293,3 +293,14 @@ def test_the_craft_render_floor_scales_with_the_buffer():
     small = _craft_ink(360)
     large = _craft_ink(1080)
     assert large > small * 2, "craft did not grow with the buffer (%d -> %d)" % (small, large)
+
+
+def test_a_sub_pixel_body_is_a_sprite_not_a_set_at(parts):
+    """The shader draws a soft dot at any size; the old single-pixel branch
+    would leave the disc aliased at exactly the zoom where most bodies live."""
+    renderer, camera, view = parts["renderer"], parts["camera"], parts["view"]
+    renderer.cache.clear()
+    camera.log_zoom = math.log(1e-3)      # everything is far under a pixel true size
+    view.real_size = True                 # so the floor does not rescue them
+    renderer.draw(parts["surface"], parts["sim"], camera, view)
+    assert len(renderer.cache) > 0
