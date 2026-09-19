@@ -85,6 +85,19 @@ def test_lighting_makes_one_side_brighter(cache):
     assert sum(lit[:3]) > sum(dark[:3]) * 1.5
 
 
+def test_the_corona_reads_warm_not_grey(cache):
+    """The Sun's corona used to read grey-white; the disc colour handed to
+    shade.star is warmed toward an ember orange before shading."""
+    from src import materials
+    px = 30
+    surf = cache.get(materials.get("hydrogen"), seed=1, px=px, lit_angle=0.0,
+                     is_star=True, temperature=5778.0)
+    c = surf.get_width() // 2
+    r = int(1.4 * px)
+    p = surf.get_at((c + r, c))
+    assert p[0] > p[2] + 15
+
+
 def test_stars_are_larger_than_their_disc_because_of_the_glow(cache):
     from src import materials
     hydrogen = materials.get("hydrogen")

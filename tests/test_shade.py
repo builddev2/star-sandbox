@@ -123,6 +123,69 @@ def test_the_limb_is_darker_than_the_centre():
     assert _lum(_at(surf, 0, 38)) < _lum(_at(surf, 0, 4))
 
 
+# --- size-dependent ambient: a small dot has no room for a night side ------------
+
+def test_a_tiny_dot_has_no_dark_side():
+    """At px=5 there is no room for a terminator: the darkest pixel inside
+    the disc must still read as a coloured dot, not a half-missing one.
+
+    Shaded with the "nonsense" (flat-albedo) style rather than a textured
+    one: this is a claim about the *lighting* model, and a textured style's
+    own crater floors and rim highlights would swing brightest/darkest by
+    more than the ambient term ever could, at any AMBIENT_SMALL -- confirmed
+    by measurement, not assumed (see the task report)."""
+    px = 5
+    surf = shade.sphere(px, 0.0, TONES, "nonsense", seed=1)
+    limit = 0.8 * px
+    lums = [_lum(_at(surf, dx, dy))
+            for dx in range(-px, px + 1) for dy in range(-px, px + 1)
+            if dx * dx + dy * dy < limit * limit]
+    darkest, brightest = min(lums), max(lums)
+    assert darkest >= 0.30 * brightest
+
+
+def test_a_big_body_still_keeps_a_real_night_side():
+    """At px=40 the size-dependent ambient must have ramped back down to the
+    ordinary AMBIENT: the dark side stays dark.  Same flat style as the tiny
+    dot above, so the two tests measure the same thing at two sizes."""
+    px = 40
+    surf = shade.sphere(px, 0.0, TONES, "nonsense", seed=1)
+    limit = 0.9 * px
+    lums = [_lum(_at(surf, dx, dy))
+            for dx in range(-px, px + 1) for dy in range(-px, px + 1)
+            if dx * dx + dy * dy < limit * limit]
+    darkest, brightest = min(lums), max(lums)
+    assert darkest < 0.20 * brightest
+
+
+# --- Jupiter's bands and Earth's oceans -------------------------------------------
+
+def test_jupiter_bands_are_clearly_visible():
+    from src.render.sprites import LOOKS
+    tones, style, _ = LOOKS["jupiter"]
+    px = 200
+    surf = shade.sphere(px, 0.0, tones, style, seed=3)
+    x = -0.3 * px
+    lums = [_lum(_at(surf, x, y)) for y in range(int(-0.8 * px), int(0.8 * px) + 1, 4)]
+    assert min(lums) > 0
+    assert max(lums) / min(lums) >= 1.35
+
+
+def test_earth_is_mostly_ocean():
+    from src.render.sprites import LOOKS
+    tones, style, _ = LOOKS["terrestrial"]
+    ocean, land, _ = tones
+    px = 120
+    r, u, v, z, _ = shade._geometry(px, 0)
+    albedo = shade._albedo(u, v, z, style, tones, seed=3)
+    ocean_arr, land_arr = np.asarray(ocean, dtype=np.float64), np.asarray(land, dtype=np.float64)
+    dist_ocean = np.linalg.norm(albedo - ocean_arr, axis=-1)
+    dist_land = np.linalg.norm(albedo - land_arr, axis=-1)
+    disc = r < 0.9 * px
+    fraction = float(((dist_ocean < dist_land) & disc).sum()) / float(disc.sum())
+    assert 0.55 <= fraction <= 0.80
+
+
 # --- styles and sizes ---------------------------------------------------------------
 
 @pytest.mark.parametrize("style", STYLES)

@@ -31,6 +31,13 @@ import pygame
 LIGHT_TILT = 40.0
 #: Night-side floor, as a fraction of full light.  Never black.
 AMBIENT = 0.08
+#: Night-side floor for a dot too small to show a night side at all: below a
+#: few pixels there is no room for a terminator, so a half-lit disc just reads
+#: as a partly missing dot.  Ramped down to AMBIENT between SMALL_AMBIENT_LO
+#: and SMALL_AMBIENT_HI pixels so a real planet still keeps its night.
+AMBIENT_SMALL = 0.45
+SMALL_AMBIENT_LO = 4.0
+SMALL_AMBIENT_HI = 16.0
 #: Terminator softness: n.L runs from this to the next value while the light
 #: fades in.
 TERMINATOR_LO = -0.08
@@ -92,6 +99,12 @@ def fbm(xs, ys, seed, octaves=4, cells=4, gain=0.5):
 
 def _smoothstep(lo, hi, x):
     t = np.clip((x - lo) / (hi - lo), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def _smoothstep_scalar(lo, hi, x):
+    """``_smoothstep`` for a single python float, not an array."""
+    t = min(1.0, max(0.0, (x - lo) / (hi - lo)))
     return t * t * (3 - 2 * t)
 
 
@@ -160,10 +173,15 @@ def _geometry(px, pad):
     return r, u, v, z, alpha
 
 
-def _lighting(u, v, z, lit_angle):
+def _lighting(u, v, z, lit_angle, ambient=AMBIENT):
     """Diffuse light per pixel, 0..1, with the terminator softened and the
-    night side held at AMBIENT.  ``v`` grows downward on screen while the
-    world's y grows upward, hence the minus."""
+    night side held at ``ambient``.  ``v`` grows downward on screen while the
+    world's y grows upward, hence the minus.
+
+    ``ambient`` is a per-call parameter, not always the module constant: a
+    dot a few pixels across has no room to show a night side at all, so
+    ``sphere`` raises it toward ``AMBIENT_SMALL`` for a small sprite -- see
+    that constant's docstring."""
     tilt = math.radians(LIGHT_TILT)
     lx = math.cos(lit_angle) * math.cos(tilt)
     ly = -math.sin(lit_angle) * math.cos(tilt)
@@ -171,7 +189,7 @@ def _lighting(u, v, z, lit_angle):
     ndotl = u * lx + v * ly + z * lz
     diffuse = _smoothstep(TERMINATOR_LO, TERMINATOR_HI, ndotl) * np.clip(ndotl, 0, 1)
     limb = np.power(z, LIMB_POWER)
-    return (AMBIENT + (1.0 - AMBIENT) * diffuse) * limb
+    return (ambient + (1.0 - ambient) * diffuse) * limb
 
 
 def _albedo(u, v, z, style, tones, seed):
@@ -198,17 +216,21 @@ def _albedo(u, v, z, style, tones, seed):
 
     if style == "banded":
         warp = (fbm(lon, lat, seed + 3, octaves=3, cells=3) - 0.5) * 0.12
-        profile = fbm(np.zeros_like(lat), lat * 0.5 + warp, seed, octaves=4, cells=6)
+        profile = fbm(np.zeros_like(lat), lat * 2.0 + warp, seed, octaves=4, cells=6)
         turb = fbm(lon * 2.0, lat * 2.0 + warp, seed + 11, octaves=3, cells=8)
         t = np.clip(profile * 0.8 + turb * 0.2, 0, 1)
+        # Contrast-stretch about the midpoint: the raw fbm average hugs 0.5
+        # too tightly for the bands to read at a glance.
+        t = np.clip((t - 0.5) * 2.2 + 0.5, 0, 1)
         colour = _lerp3(dark, mid, _smoothstep(0.25, 0.55, t))
         upper = _lerp3(mid, light, _smoothstep(0.55, 0.85, t))
         colour = colour + (upper - colour) * _smoothstep(0.5, 0.6, t)[..., None]
-        # One storm oval.
+        # One storm oval, saturated toward the dark tone (rust on Jupiter)
+        # rather than washed toward the light one.
         rng = np.random.default_rng(seed + 5)
         sx, sy = rng.uniform(-0.6, 0.6), rng.uniform(-0.5, 0.5)
         d = np.hypot((u - sx) / 0.22, (v - sy) / 0.12)
-        storm_tone = _rgb(light) * 0.6 + _rgb(dark) * 0.4
+        storm_tone = _rgb(dark) * 0.75 + _rgb(light) * 0.25
         return _toward(colour, storm_tone, _smoothstep(1.0, 0.6, d))
 
     if style == "cracked":
@@ -225,8 +247,12 @@ def _albedo(u, v, z, style, tones, seed):
     if style == "terrestrial":
         ocean, land, cloud = tones
         height = fbm(lon, lat, seed, octaves=5, cells=4)
-        landmask = _smoothstep(0.5, 0.56, height)
-        mountain = _smoothstep(0.66, 0.78, height)
+        # 0.56..0.62 (the brief's number) still measured 55% ocean, a hair
+        # under the target floor; nudged up another 0.02 per the brief's own
+        # fallback ("if Earth still reads mostly green, raise the land
+        # threshold by 0.02").
+        landmask = _smoothstep(0.58, 0.64, height)
+        mountain = _smoothstep(0.70, 0.80, height)
         colour = _lerp3(ocean, land, landmask)
         colour = _toward(colour, _rgb(land) * 0.55, mountain * landmask)
         shallow = _smoothstep(0.44, 0.5, height) * (1 - landmask)
@@ -258,7 +284,13 @@ def sphere(px, lit_angle, tones, style, seed, atmosphere=None):
     shade_px = shade_radius(px)
     pad = int(math.ceil(ATMOSPHERE_HALO * shade_px)) + 1 if atmosphere else 0
     r, u, v, z, alpha = _geometry(shade_px, pad)
-    light = _lighting(u, v, z, lit_angle)
+    # A 6-px dot has no room for a night side -- it must read as a coloured
+    # dot, not a half-lit smudge -- so small sprites get a much higher floor,
+    # ramped back down to AMBIENT by SMALL_AMBIENT_HI px where a real night
+    # side has room to read.
+    ambient = AMBIENT + (AMBIENT_SMALL - AMBIENT) * (
+        1.0 - _smoothstep_scalar(SMALL_AMBIENT_LO, SMALL_AMBIENT_HI, shade_px))
+    light = _lighting(u, v, z, lit_angle, ambient)
     rgb = _albedo(u, v, z, style, tones, seed) * light[..., None]
 
     if atmosphere is not None:

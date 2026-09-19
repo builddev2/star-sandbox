@@ -356,7 +356,7 @@ LOOKS = {
     "terrestrial": (((16, 52, 120), (86, 118, 62), (240, 244, 250)), "terrestrial", (120, 170, 255)),
     "mars": (((92, 40, 22), (176, 92, 54), (232, 190, 160)), "cratered", (220, 170, 130)),
     "moon": (((60, 60, 64), (118, 118, 122), (186, 186, 190)), "cratered", None),
-    "jupiter": (((120, 70, 40), (214, 178, 132), (244, 232, 210)), "banded", (200, 180, 150)),
+    "jupiter": (((140, 70, 40), (222, 184, 140), (250, 240, 220)), "banded", (200, 180, 150)),
     "saturn": (((150, 120, 70), (214, 190, 130), (240, 226, 190)), "banded", (210, 190, 150)),
     "uranus": (((90, 170, 180), (150, 220, 230), (210, 240, 245)), "banded", (150, 220, 230)),
     "neptune": (((22, 40, 120), (56, 96, 200), (140, 180, 240)), "banded", (90, 130, 230)),
@@ -383,7 +383,14 @@ def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0, look=None):
         mid = _blend_toward(mid, target, weight)
         light = _blend_toward(light, target, weight)
     if is_star:
-        return shade.star(px, light, seed)
+        # The corona reads grey-white off the raw disc colour; warm it
+        # toward an ember orange so it does not look like smoke.  0.35 was
+        # too faint to move the corona pixel measurably (a Sun-temperature
+        # star is already warm-white on the Planck locus, so a small nudge
+        # barely showed above the corona's own dimming); 0.65 gives a
+        # corona that reads amber rather than grey.
+        warm = _blend_toward(light, (255, 200, 120), 0.65)
+        return shade.star(px, warm, seed)
     return shade.sphere(px, lit_angle, (dark, mid, light), style, seed, atmosphere)
 
 
