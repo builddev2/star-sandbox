@@ -262,12 +262,30 @@ or fast time scales.
 - **An impact heats what survives it** (`thermal.IMPACT_HEAT_FRACTION`). 30% of the
   Q_R `collisions.py` already computes, over the material's specific heat. A
   Moon-forming impact puts ~1900 K into the remnant, which is what really happened.
+- **Every planet, moon and star is a per-pixel shaded sphere** (`render/shade.py`, pure
+  numpy). Lambert lighting from the nearest star with the light **tilted 40° toward the
+  viewer** -- a true top-down view lit in-plane is a permanent half-moon -- a soft
+  terminator, an ambient night side (8 %, rising to 45 % below ~16 px so a dot stays a
+  coloured dot), limb darkening, and a noise albedo per style
+  (`cratered`, `banded`, `cracked`, `turbulent`, `terrestrial`). Surfaces come from
+  `frombuffer(...).copy()`, never `convert_alpha` (there is no display surface).
+- **Big sprites are shaded at a rung of a 25 % size ladder and scaled** (`shade.shade_radius`,
+  `SpriteCache._scaled`). A zoom notch is 18 %, so a notch re-uses the rung it has instead
+  of re-shading a screen-filling planet; `SHADE_MAX_PX` (384) caps the rung.
+- **A body's look is appearance, not substance** (`Body.look`, `sprites.LOOKS`). The
+  scenario pins one on each named planet so Earth is blue although its material is rock;
+  `edits.set_material` drops it, because the material is then what the body is made of.
+  Nothing inherits it; a body that survives an accretion keeps its own `Body` and so its look.
 - **A hot body's colour comes from the Planck locus, not the palette**
   (`render/palette.blackbody_rgb`). Temperature is quantised to 100 K before it
   reaches the sprite cache key, for the same reason the lighting angle is bucketed
-  to 16 points: a body cooling continuously would miss the cache every frame. The
-  blend runs before the star branch too, so a red dwarf is red and a blue giant is
-  blue off the same helper.
+  to 16 points. The blend runs before the star branch too, so a red dwarf is red and a
+  blue giant is blue off the same helper -- `shade.star` takes the blended colour.
+- **The black hole and the craft are supersampled** (`sprites.SUPERSAMPLE`): drawn from
+  ellipses and polygons pygame cannot antialias, at 2x, and `smoothscale`d down to an odd
+  side so the centre stays on a pixel. Still blitted normally, never `BLEND_ADD`.
+- **Rings are two surfaces** (`sprites.ring_surfaces`): the far half behind the disc with
+  the planet's shadow cut across it, the near half in front.
 - **Velocity Verlet, not RK4** (`integrator.py`). Symplectic: bounded oscillatory energy
   error rather than the secular inward spiral RK4 gives over thousands of orbits. dt is
   restricted to `DT_BASE / 2**k` — a continuously varying dt destroys symplecticity — and
