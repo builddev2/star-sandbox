@@ -171,6 +171,9 @@ def _make_black_hole(px, spin, disk, seed, ss=1):
     outer = int(px * BH_DISK_OUTER) + 2
     jet = int(px * BH_JET_LENGTH * spin) if (detailed and disk > 0.0) else 0
     half = max(outer, jet)
+    # Round up to a multiple of ss so the photon ring's stroke width lands on
+    # whole downsampled pixels instead of straddling a box-filter cell.
+    half = -(-half // ss) * ss
     size = half * 2 + 1
     centre = (half, half)
     surface = pygame.Surface((size, size), pygame.SRCALPHA)
@@ -235,7 +238,7 @@ def _make_black_hole(px, spin, disk, seed, ss=1):
     if not detailed:
         # Too small for a one-pixel outline to survive; draw the rim as a
         # filled disc and punch the shadow back out of it.
-        pygame.draw.circle(surface, _PHOTON_RING + (255,), centre, px + 1)
+        pygame.draw.circle(surface, _PHOTON_RING + (255,), centre, px + ss)
         pygame.draw.circle(surface, (0, 0, 0, 255), centre, px)
     return surface
 

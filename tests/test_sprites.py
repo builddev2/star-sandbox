@@ -396,6 +396,21 @@ def test_the_black_hole_is_supersampled_and_lands_at_its_own_size(cache):
     assert small.get_width() % 2 == 1, "an odd side keeps the centre on a pixel"
     c = small.get_width() // 2
     assert small.get_at((c, c))[:3] == (0, 0, 0)
+    assert abs(small.get_width()
+               - sprites._make_black_hole(px, 0.5, 0.8, 1).get_width()) <= 2
+
+
+def test_a_tiny_hole_s_rim_scales_with_the_supersample(cache):
+    """The non-detailed branch's filled-disc rim is a one-pixel stroke that
+    must scale by ss like every other stroke width -- at px+1 from centre,
+    on at least one axis pixel, the rim is still full brightness."""
+    for px in (2, 3, 4):
+        surf = cache.get_black_hole(seed=1, px=px, spin=0.0, disk=0.0)
+        c = surf.get_width() // 2
+        r = px + 1
+        sums = [sum(surf.get_at((c + dx, c + dy))[:3])
+                for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r))]
+        assert max(sums) > 600, (px, sums)
 
 
 def test_a_supersampled_rim_is_antialiased(cache):
