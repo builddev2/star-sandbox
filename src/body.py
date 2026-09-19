@@ -72,7 +72,7 @@ class Body:
 
     __slots__ = ("id", "name", "kind", "material", "trail", "born_day",
                  "event_id", "no_collide_until", "seed", "rings", "spin", "disk",
-                 "locked_fields", "plan", "fuel_dv")
+                 "look", "locked_fields", "plan", "fuel_dv")
 
     def __init__(self, body_id, name, material, kind=KIND_PLANET, born_day=0.0, seed=0):
         self.id = body_id
@@ -95,6 +95,16 @@ class Body:
         #: Feeding rate, 0 .. 1, driving how bright and how wide the accretion
         #: disk is drawn.  0 is a starved hole: shadow and photon ring only.
         self.disk = 0.0
+        #: How this body wants to be drawn -- "terrestrial", "mars", ... --
+        #: or None to draw from its material.  Pinned by the scenario on the
+        #: named planets; ``edits.set_material`` drops it, because the
+        #: material is then what the body is made of.  Appearance only, on
+        #: the Body beside ``rings`` and ``spin`` because the force kernel
+        #: never reads it.  Nothing inherits it: a fragment, a remnant made
+        #: by ``world.add`` and a thrown comet all arrive with None.  A body
+        #: that *survives* an accretion keeps its own ``Body`` and so keeps
+        #: its look -- Earth swallowing a comet is still Earth.
+        self.look = None
         #: Fields the child has pinned, named the way ``edits.edit_fields``
         #: names them.  On the Body rather than in World's arrays for the same
         #: reason ``spin`` and ``disk`` are: the O(n^2) force kernel never reads

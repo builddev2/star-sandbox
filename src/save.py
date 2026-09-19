@@ -84,6 +84,7 @@ def to_data(world, session, name, scenario_label, now=None):
             "rings": bool(b.rings),
             "spin": float(b.spin),
             "disk": float(b.disk),
+            "look": b.look,
             "locked_fields": sorted(b.locked_fields),
             "fuel_dv": float(b.fuel_dv),
             "plan": [{"due_time": float(n.due_time), "prograde": float(n.prograde),
@@ -136,6 +137,7 @@ def _parse_body(rec):
             "rings": bool(rec["rings"]),
             "spin": float(rec["spin"]),
             "disk": float(rec["disk"]),
+            "look": None if rec.get("look") is None else str(rec["look"]),
             "locked_fields": frozenset(str(f) for f in rec["locked_fields"]),
             "fuel_dv": float(rec["fuel_dv"]),
             "plan": tuple(Maneuver(float(n["due_time"]), float(n["prograde"]),
@@ -208,6 +210,7 @@ def from_data(data, world):
         body.rings = p["rings"]
         body.spin = p["spin"]
         body.disk = p["disk"]
+        body.look = p["look"]
         body.locked_fields = p["locked_fields"]
         body.fuel_dv = p["fuel_dv"]
         body.plan = p["plan"]

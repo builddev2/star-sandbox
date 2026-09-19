@@ -259,6 +259,9 @@ def set_material(world, index, material):
     body = world.bodies[index]
     if is_locked(body, "material"):
         return
+    # The material is now what the body is made of; a pinned look is a claim
+    # about a body that no longer exists.
+    body.look = None
     body.material = material
     world.radius[index] = units.radius_from_mass_density(
         float(world.mass[index]), material.density)

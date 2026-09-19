@@ -16,34 +16,34 @@ from . import edits, materials, orbits, units
 from .body import KIND_STAR
 from .world import World
 
-# name, a(AU), e, lon_peri(deg), mean_lon(deg), mass(Msun), radius(km), material
+# name, a(AU), e, lon_peri(deg), mean_lon(deg), mass(Msun), radius(km), material, look
 PLANETS = (
     ("Mercury", 0.38709927, 0.20563593, 77.45779628, 252.25032350,
-     1.66013e-7, 2439.7, "iron"),
+     1.66013e-7, 2439.7, "iron", "mercury"),
     ("Venus", 0.72333566, 0.00677672, 131.60246718, 181.97909950,
-     2.44784e-6, 6051.8, "rock"),
+     2.44784e-6, 6051.8, "rock", "venus"),
     ("Earth", 1.00000261, 0.01671123, 102.93768193, 100.46457166,
-     3.0034896e-6, 6371.0, "rock"),
+     3.0034896e-6, 6371.0, "rock", "terrestrial"),
     ("Mars", 1.52371034, 0.09339410, -23.94362959, -4.55343205,
-     3.22716e-7, 3389.5, "rock"),
+     3.22716e-7, 3389.5, "rock", "mars"),
     ("Jupiter", 5.20288700, 0.04838624, 14.72847983, 34.39644051,
-     9.5457937e-4, 69911.0, "gas"),
+     9.5457937e-4, 69911.0, "gas", "jupiter"),
     ("Saturn", 9.53667594, 0.05386179, 92.59887831, 49.95424423,
-     2.85885e-4, 58232.0, "gas"),
+     2.85885e-4, 58232.0, "gas", "saturn"),
     ("Uranus", 19.18916464, 0.04725744, 170.95427630, 313.23810451,
-     4.36625e-5, 25362.0, "ice"),
+     4.36625e-5, 25362.0, "ice", "uranus"),
     ("Neptune", 30.06992276, 0.00859048, 44.96476227, -55.12002969,
-     5.15139e-5, 24622.0, "ice"),
+     5.15139e-5, 24622.0, "ice", "neptune"),
 )
 
-# parent, name, a(AU), e, phase(deg), mass(Msun), radius(km), material
+# parent, name, a(AU), e, phase(deg), mass(Msun), radius(km), material, look
 MOONS = (
-    ("Earth", "Moon", 0.00256955, 0.0549, 210.0, 3.6923e-8, 1737.4, "rock"),
-    ("Jupiter", "Io", 0.00281869, 0.0041, 30.0, 4.4919e-8, 1821.6, "rock"),
-    ("Jupiter", "Europa", 0.00448595, 0.0094, 150.0, 2.4139e-8, 1560.8, "rock_ice"),
-    ("Jupiter", "Ganymede", 0.00715525, 0.0013, 260.0, 7.4525e-8, 2634.1, "rock_ice"),
-    ("Jupiter", "Callisto", 0.01258520, 0.0074, 20.0, 5.4110e-8, 2410.3, "rock_ice"),
-    ("Saturn", "Titan", 0.00816766, 0.0288, 95.0, 6.7649e-8, 2574.7, "rock_ice"),
+    ("Earth", "Moon", 0.00256955, 0.0549, 210.0, 3.6923e-8, 1737.4, "rock", "moon"),
+    ("Jupiter", "Io", 0.00281869, 0.0041, 30.0, 4.4919e-8, 1821.6, "rock", None),
+    ("Jupiter", "Europa", 0.00448595, 0.0094, 150.0, 2.4139e-8, 1560.8, "rock_ice", None),
+    ("Jupiter", "Ganymede", 0.00715525, 0.0013, 260.0, 7.4525e-8, 2634.1, "rock_ice", None),
+    ("Jupiter", "Callisto", 0.01258520, 0.0074, 20.0, 5.4110e-8, 2410.3, "rock_ice", None),
+    ("Saturn", "Titan", 0.00816766, 0.0288, 95.0, 6.7649e-8, 2574.7, "rock_ice", None),
 )
 
 
@@ -69,21 +69,21 @@ def solar_system(world=None, moons=True):
 
     index_by_name = {"Sun": 0}
 
-    for name, a, e, lon_peri, mean_lon, mass, radius_km, mat in PLANETS:
+    for name, a, e, lon_peri, mean_lon, mass, radius_km, mat, look in PLANETS:
         mu = units.G * (1.0 + mass)
         mean_anom = math.radians(mean_lon - lon_peri)
         nu = orbits.true_anomaly_from_mean(mean_anom, e)
         pos, vel = orbits.state_from_elements(mu, a, e, math.radians(lon_peri), nu)
-        world.add(name, materials.get(mat), mass, _km(radius_km), pos, vel)
+        world.add(name, materials.get(mat), mass, _km(radius_km), pos, vel, look=look)
         index_by_name[name] = world.n - 1
 
-    for parent, name, a, e, phase, mass, radius_km, mat in (MOONS if moons else ()):
+    for parent, name, a, e, phase, mass, radius_km, mat, look in (MOONS if moons else ()):
         pi = index_by_name[parent]
         mu = units.G * (world.mass[pi] + mass)
         nu = orbits.true_anomaly_from_mean(math.radians(phase), e)
         rel_pos, rel_vel = orbits.state_from_elements(mu, a, e, 0.0, nu)
         world.add(name, materials.get(mat), mass, _km(radius_km),
-                  world.pos[pi] + rel_pos, world.vel[pi] + rel_vel)
+                  world.pos[pi] + rel_pos, world.vel[pi] + rel_vel, look=look)
         index_by_name[name] = world.n - 1
 
     world.bodies[index_by_name["Saturn"]].rings = True

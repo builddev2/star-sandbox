@@ -50,7 +50,7 @@ class World:
     # --- membership ------------------------------------------------------------------
 
     def add(self, name, material, mass, radius, pos, vel,
-            kind=KIND_PLANET, seed=0, temperature=None):
+            kind=KIND_PLANET, seed=0, temperature=None, look=None):
         """Append a body.  Returns the Body, or None if the world is full.
 
         ``temperature`` defaults to the microwave background, which is where a
@@ -72,6 +72,7 @@ class World:
         self.n += 1
 
         body = Body(self._next_id, name, material, kind, born_day=self.time, seed=seed)
+        body.look = look
         self._next_id += 1
         self.bodies.append(body)
         self._by_id[body.id] = i
