@@ -251,7 +251,14 @@ def set_density(world, index, density):
     world.radius[index] = units.radius_from_mass_density(
         float(world.mass[index]), density)
     # Keep the composition label honest about what it now is.
-    world.bodies[index].material = materials.nearest_by_density(density)
+    new_material = materials.nearest_by_density(density)
+    body = world.bodies[index]
+    if new_material is not body.material:
+        # The material is now what the body is made of; a pinned look is a
+        # claim about a body that no longer exists -- the same rule as
+        # set_material.
+        body.look = None
+    body.material = new_material
 
 
 def set_material(world, index, material):

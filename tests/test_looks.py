@@ -74,6 +74,26 @@ def test_a_mass_edit_leaves_the_look_alone():
     assert world.bodies[earth].look == "terrestrial"
 
 
+def test_a_density_scrub_that_changes_the_material_drops_the_look():
+    world = _world()
+    earth = _index(world, "Earth")
+    before = world.bodies[earth].material
+    # Scrub far enough to land on a different material (rock 3.30 g/cm3 ->
+    # iron 7.87 g/cm3, MAX_DENSITY_GCM3 25.0 -- 1.06**60 clears the midpoint
+    # many times over).
+    for _ in range(60):
+        edits.set_density(world, earth, edits.body_density(world, earth) * 1.06)
+    assert world.bodies[earth].material is not before
+    assert world.bodies[earth].look is None
+
+
+def test_a_density_scrub_that_keeps_the_material_keeps_the_look():
+    world = _world()
+    earth = _index(world, "Earth")
+    edits.set_density(world, earth, world.bodies[earth].material.density * 1.01)
+    assert world.bodies[earth].look == "terrestrial"
+
+
 def _session():
     from src import save
     return save.Session(scenario="solar_system", time_index=5, paused=False,
