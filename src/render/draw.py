@@ -19,7 +19,6 @@ import pygame
 
 from ..body import KIND_BLACK_HOLE, KIND_CRAFT, KIND_STAR
 from . import palette, scale
-from .sprites import ring_surface
 
 #: Trail fade steps.  See the module docstring for why this is not per-segment.
 TRAIL_CHUNKS = 8
@@ -132,16 +131,23 @@ class WorldRenderer:
                 sprite = self.cache.get_craft(int(px), heading)
                 surface.blit(sprite, sprite.get_rect(center=(int(x), int(y))))
             else:
+                angle = nearest_star_angle(world, i)
+                rings = None
                 if body.rings and px >= 4:
-                    rings = ring_surface(int(px), body.material.tones)
-                    surface.blit(rings, rings.get_rect(center=(int(x), int(y))))
+                    rings = self.cache.get_rings(int(px), body.material.tones,
+                                                 body.seed, angle)
+                    back = rings[0]
+                    surface.blit(back, back.get_rect(center=(int(x), int(y))))
                 sprite = self.cache.get(body.material, body.seed, int(px),
-                                        nearest_star_angle(world, i), is_star,
+                                        angle, is_star,
                                         float(world.temperature[i]),
                                         look=body.look)
                 rect = sprite.get_rect(center=(int(x), int(y)))
                 surface.blit(sprite, rect,
                              special_flags=pygame.BLEND_ADD if is_star else 0)
+                if rings is not None:
+                    front = rings[1]
+                    surface.blit(front, front.get_rect(center=(int(x), int(y))))
 
             if selected_id is not None and body.id == selected_id:
                 pygame.draw.circle(surface, palette.SELECT, (int(x), int(y)),

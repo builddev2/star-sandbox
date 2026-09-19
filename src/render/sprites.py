@@ -19,6 +19,7 @@ LRU and the shaded bases in a small side table.
 import math
 from collections import OrderedDict
 
+import numpy as np
 import pygame
 
 from .. import units
@@ -344,19 +345,64 @@ def _make_body(material, seed, px, lit_angle, is_star, glow_k=0.0, look=None):
     return shade.sphere(px, lit_angle, (dark, mid, light), style, seed, atmosphere)
 
 
-def ring_surface(px, tones):
-    """A flat ring system, drawn behind and in front of the planet.  Saturn only."""
+# --- rings ----------------------------------------------------------------------
+
+#: Inner and outer edge of the ring system, the gap, and the vertical squash,
+#: all in planet radii.  Saturn's real rings run 1.24..2.27 radii with the
+#: Cassini division at 1.95; the squash is the same near-edge-on view the
+#: black hole's disk uses.
+RING_INNER = 1.4
+RING_OUTER = 2.3
+RING_GAP = 1.95
+RING_SQUASH = 0.30
+
+
+def ring_size(px):
+    """Side of the square surfaces ``ring_surfaces`` returns."""
+    return 2 * (int(math.ceil(max(1, int(px)) * RING_OUTER)) + 2) + 1
+
+
+def ring_surfaces(px, tones, seed, lit_angle):
+    """A flat ring system as two surfaces, ``(back, front)``: the half drawn
+    behind the planet and the half drawn in front of it, so the disc can sit
+    between them.  The planet's shadow is cut across the back half along the
+    anti-star direction.  Shaded at the ladder rung like a sphere."""
+    px = max(1, int(px))
+    rung = shade.shade_radius(px)
+    half = int(math.ceil(rung * RING_OUTER)) + 2
+    coords = np.arange(2 * half + 1, dtype=np.float64) - half
+    xs, ys = np.meshgrid(coords, coords)
+    # Unsquash: a point on the drawn ellipse maps to a radius in ring units.
+    rr = np.hypot(xs, ys / RING_SQUASH) / rung
+    band = (rr >= RING_INNER) & (rr <= RING_OUTER)
+    t = np.clip((rr - RING_INNER) / (RING_OUTER - RING_INNER), 0, 1)
+    density = shade.fbm(t, np.zeros_like(t), seed + 41, octaves=3, cells=8)
+    alpha = (0.35 + 0.5 * density) * band
+    alpha = alpha * (1.0 - shade._smoothstep(0.06, 0.02, np.abs(rr - RING_GAP)))
+    # Soft edges, one ring-unit-pixel wide.
+    edge = np.minimum(np.clip((rr - RING_INNER) * rung, 0, 1),
+                      np.clip((RING_OUTER - rr) * rung, 0, 1))
+    alpha = alpha * edge
     dark, mid, light = tones
-    outer = max(3, int(px * 2.3))
-    size = outer * 2 + 1
-    centre = outer
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    for radius, tone in ((outer, light), (max(2, int(px * 1.95)), mid),
-                         (max(1, int(px * 1.6)), dark)):
-        rect = pygame.Rect(centre - radius, centre - max(1, int(radius * 0.30)),
-                           radius * 2, max(2, int(radius * 0.60)))
-        pygame.draw.ellipse(surface, tone, rect, max(1, px // 6))
-    return surface
+    rgb = shade._lerp3(mid, light, density)
+
+    # The planet's shadow: a band of the planet's width along the anti-star
+    # direction, on the far side only.
+    lx, ly = -math.cos(lit_angle), math.sin(lit_angle)
+    along = xs * lx + ys * ly
+    across = np.abs(xs * -ly + ys * lx)
+    shadow = (along > 0) * shade._smoothstep(rung * 1.05, rung * 0.9, across)
+    back_rgb = rgb * (1.0 - 0.75 * shadow)[..., None]
+
+    back_alpha = alpha * (ys < 0)
+    front_alpha = alpha * (ys >= 0)
+    back = shade.to_surface(back_rgb, back_alpha)
+    front = shade.to_surface(rgb, front_alpha)
+    size = ring_size(px)
+    if back.get_width() != size:
+        back = pygame.transform.smoothscale(back, (size, size))
+        front = pygame.transform.smoothscale(front, (size, size))
+    return back, front
 
 
 class SpriteCache:
@@ -442,6 +488,17 @@ class SpriteCache:
             lambda radius: _make_body(material, seed, radius, angle, is_star, glow, look),
             size)
         return self._store(key, surface)
+
+    def get_rings(self, px, tones, seed, lit_angle):
+        """Both halves of a ring system, cached under one key."""
+        px = max(1, int(px))
+        bucket = int(round(lit_angle / (2 * math.pi) * LIT_BUCKETS)) % LIT_BUCKETS
+        key = ("rings", tuple(tones), int(seed), px, bucket)
+        hit = self._hit(key)
+        if hit is not None:
+            return hit
+        angle = bucket * 2 * math.pi / LIT_BUCKETS
+        return self._store(key, ring_surfaces(px, tones, seed, angle))
 
     def get_black_hole(self, seed, px, spin, disk):
         """A black hole sprite, cached like any other.

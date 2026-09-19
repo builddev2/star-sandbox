@@ -119,11 +119,52 @@ def test_every_material_renders_at_every_useful_size(cache):
             assert surf.get_width() == px * 2 + 1
 
 
-def test_ring_surface_is_wider_than_the_planet():
+def test_rings_come_in_two_halves_that_bracket_the_planet():
     from src import materials
-    from src.render.sprites import ring_surface
-    rings = ring_surface(10, materials.get("gas").tones)
-    assert rings.get_width() > 21
+    from src.render.sprites import ring_size, ring_surfaces
+    px = 20
+    back, front = ring_surfaces(px, materials.get("gas").tones, seed=1, lit_angle=0.0)
+    assert back.get_size() == front.get_size() == (ring_size(px), ring_size(px))
+    assert back.get_width() > 2 * px + 1
+    c = back.get_width() // 2
+    # The back half is above the centre line and the front half below it.
+    assert any(back.get_at((x, c - 4))[3] > 0 for x in range(back.get_width()))
+    assert all(back.get_at((x, c + 4))[3] == 0 for x in range(back.get_width()))
+    assert any(front.get_at((x, c + 4))[3] > 0 for x in range(front.get_width()))
+    assert all(front.get_at((x, c - 4))[3] == 0 for x in range(front.get_width()))
+
+
+def test_the_ring_has_a_gap():
+    from src import materials
+    from src.render.sprites import RING_GAP, ring_surfaces
+    px = 40
+    back, front = ring_surfaces(px, materials.get("gas").tones, seed=1, lit_angle=0.0)
+    c = front.get_width() // 2
+    # Along the horizontal axis the ring is unsquashed: the gap sits at RING_GAP radii.
+    gap = front.get_at((c + int(px * RING_GAP), c + 1))[3]
+    band = front.get_at((c + int(px * (RING_GAP + 0.15)), c + 1))[3]
+    assert gap < band
+
+
+def test_the_planet_shadows_the_far_half_of_the_ring():
+    """With the light from +x, the anti-star direction is -x: the back half
+    is darker there than where it is lit."""
+    from src import materials
+    from src.render.sprites import ring_surfaces
+    px = 40
+    back, _ = ring_surfaces(px, materials.get("gas").tones, seed=1, lit_angle=0.0)
+    c = back.get_width() // 2
+    y = c - int(px * 0.3 * 1.7)
+    shadowed = sum(back.get_at((c - int(px * 0.3), y))[:3])
+    lit = sum(back.get_at((c + int(px * 1.7), c - 2))[:3])
+    assert shadowed < lit
+
+
+def test_rings_are_cached(cache):
+    from src import materials
+    a = cache.get_rings(12, materials.get("gas").tones, seed=1, lit_angle=0.2)
+    b = cache.get_rings(12, materials.get("gas").tones, seed=1, lit_angle=0.2)
+    assert a is b
 
 
 # --- thermal glow -------------------------------------------------------------
