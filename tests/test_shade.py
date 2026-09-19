@@ -254,6 +254,12 @@ def test_streamers_make_the_corona_uneven_round_the_star():
 def test_the_corona_is_dimmer_than_the_limb_and_fades_to_nothing():
     px = 40
     surf = shade.star(px, (255, 244, 220), seed=3)
-    assert _lum(_at(surf, px - 1, 0)) > _lum(_at(surf, px + 2, 0))
+    angles = np.linspace(0, 2 * math.pi, 48, endpoint=False)
+    worst = max(_lum(_at(surf, int((px + 2) * math.cos(t)), int((px + 2) * math.sin(t))))
+                / max(1.0, _lum(_at(surf, int((px - 1) * math.cos(t)), int((px - 1) * math.sin(t)))))
+                for t in angles)
+    assert worst < 1.0, "somewhere the corona outshines the limb it hugs"
+    profile = [_lum(_at(surf, r, 0)) for r in range(px + 1, px + 8)]
+    assert all(a > b for a, b in zip(profile, profile[1:])), "the corona must fall off, not sit on a shelf: %s" % profile
     edge = int(shade.GLOW_SCALE * px) - 1
     assert _lum(_at(surf, edge, 0)) < 8, "the glow must taper out, not stop at a circle"

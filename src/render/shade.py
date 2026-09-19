@@ -293,13 +293,13 @@ def sphere(px, lit_angle, tones, style, seed, atmosphere=None):
 
 # --- stars --------------------------------------------------------------------
 
-#: Glow radius as a multiple of a star's disc radius, and the corona's peak
-#: brightness just outside the disc as a fraction of the star's colour.
+#: Glow radius as a multiple of a star's disc radius.
 GLOW_SCALE = 2.2
-GLOW_STRENGTH = 0.55
 #: Limb darkening: the edge of the disc is this fraction of the centre.
 STAR_LIMB = 0.4
 GRANULE_CONTRAST = 0.06
+#: Peak corona brightness, as a fraction of the star's colour; below the limb.
+CORONA_PEAK = STAR_LIMB * 0.9
 
 
 def star_size(px):
@@ -342,7 +342,7 @@ def star(px, colour, seed=0):
     # hard-edged circle, with a few soft streamers at seeded angles.
     ratio = shade_px / np.maximum(r, shade_px)
     taper = np.clip((GLOW_SCALE * shade_px - r) / (0.5 * shade_px), 0.0, 1.0)
-    corona = GLOW_STRENGTH * ratio ** 2 * taper
+    corona = ratio ** 2 * taper
     rng = np.random.default_rng(seed + 31)
     angle = np.arctan2(ys, xs)
     streamers = np.zeros_like(r)
@@ -352,9 +352,10 @@ def star(px, colour, seed=0):
         d = np.abs((angle - a0 + math.pi) % (2 * math.pi) - math.pi)
         streamers += np.exp(-(d / width) ** 2)
     corona = corona * (1.0 + 0.3 * streamers) * (1.0 - inside)
-    # The photosphere's edge is the brightest thing in the picture; the
-    # corona hugging it must stay dimmer, however the streamers fall.
-    corona = np.minimum(corona, STAR_LIMB * 0.9)
+    # Scaled so the brightest corona pixel sits just under the limb: the
+    # photosphere's edge stays the brightest thing in the picture, and the
+    # falloff keeps its shape instead of flattening into a shelf.
+    corona = corona * (CORONA_PEAK / max(float(corona.max()), 1e-9))
 
     rgb = disc_rgb + col[None, None, :] * corona[..., None]
     surface = to_surface(rgb, np.ones_like(r))
