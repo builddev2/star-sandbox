@@ -23,7 +23,12 @@ from .ui import UiLayer
 
 def probe(fullscreen=False):
     """Report what SDL actually gives us.  Answers the Retina question."""
-    pygame.init()
+    # Display and font only.  There is no sound in the sandbox, and the
+    # mixer's CoreAudio init can stall for fifteen seconds on a machine whose
+    # audio device is in a bad state -- a fifteen-second boot for a subsystem
+    # nothing here uses.
+    pygame.display.init()
+    pygame.font.init()
     ctx = open_display(fullscreen=fullscreen)
     info = {
         "desktop_size": pygame.display.get_desktop_sizes(),
@@ -45,7 +50,12 @@ def probe(fullscreen=False):
 
 class App:
     def __init__(self, fullscreen=False, saves_dir=None):
-        pygame.init()
+        # Display and font only.  There is no sound in the sandbox, and the
+        # mixer's CoreAudio init can stall for fifteen seconds on a machine whose
+        # audio device is in a bad state -- a fifteen-second boot for a subsystem
+        # nothing here uses.
+        pygame.display.init()
+        pygame.font.init()
         self.ctx = open_display(fullscreen=fullscreen)
         self.clock = pygame.time.Clock()
         self.cache = SpriteCache()

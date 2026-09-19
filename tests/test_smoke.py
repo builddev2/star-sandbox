@@ -42,6 +42,18 @@ def test_the_app_boots_onto_the_start_menu(tmp_path):
         pygame.quit()
 
 
+def test_the_app_does_not_initialise_the_mixer(tmp_path):
+    """The sandbox has no sound, and the mixer's CoreAudio init can stall
+    for fifteen seconds on a machine whose audio device is in a bad state."""
+    from src.app.main import App
+    instance = App(fullscreen=False, saves_dir=str(tmp_path / "saves"))
+    try:
+        assert not pygame.mixer.get_init()
+    finally:
+        instance.ctx.close()
+        pygame.quit()
+
+
 def test_new_from_the_menu_starts_time(app):
     app.state.open_start()
     app.step_once()
