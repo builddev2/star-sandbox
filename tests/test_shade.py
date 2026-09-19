@@ -186,3 +186,40 @@ def test_the_atmosphere_rim_pixel_is_not_a_dark_ring():
     rim = _at(hazy, px, 0)
     assert _lum(rim) > 20
     assert rim[2] > _at(bare, px, 0)[2]
+
+
+# --- stars -----------------------------------------------------------------------
+
+def test_a_star_is_opaque_everywhere_because_it_is_blitted_additively():
+    surf = shade.star(20, (255, 244, 220))
+    assert surf.get_size() == (shade.star_size(20), shade.star_size(20))
+    corner = surf.get_at((0, 0))
+    assert corner[3] == 255
+    assert corner[:3] == (0, 0, 0), "outside the glow the colour is black, so adding it changes nothing"
+
+
+def test_the_centre_is_brighter_than_the_limb_and_the_limb_brighter_than_the_corona():
+    px = 30
+    surf = shade.star(px, (255, 200, 120))
+    centre = _lum(_at(surf, 0, 0))
+    limb = _lum(_at(surf, px - 2, 0))
+    corona = _lum(_at(surf, int(px * 1.5), 0))
+    edge = _lum(_at(surf, int(px * shade.GLOW_SCALE), 0))
+    assert centre > limb > corona > 0
+    assert edge < corona
+
+
+def test_a_cool_star_is_red_and_a_hot_one_is_blue():
+    from src.render.palette import blackbody_rgb
+    cool = shade.star(12, blackbody_rgb(3000.0))
+    hot = shade.star(12, blackbody_rgb(20000.0))
+    c = _at(cool, 9, 0)
+    h = _at(hot, 9, 0)
+    assert c[0] > c[2]
+    assert h[2] > h[0]
+
+
+def test_a_big_star_is_shaded_at_a_rung_and_scaled():
+    surf = shade.star(600, (255, 244, 220))
+    assert surf.get_size() == (shade.star_size(600), shade.star_size(600))
+    assert _lum(_at(surf, 0, 0)) > 200

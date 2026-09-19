@@ -289,3 +289,71 @@ def sphere(px, lit_angle, tones, style, seed, atmosphere=None):
     if surface.get_width() != size:
         surface = pygame.transform.smoothscale(surface, (size, size))
     return surface
+
+
+# --- stars --------------------------------------------------------------------
+
+#: Glow radius as a multiple of a star's disc radius, and the corona's peak
+#: brightness just outside the disc as a fraction of the star's colour.
+GLOW_SCALE = 2.2
+GLOW_STRENGTH = 0.55
+#: Limb darkening: the edge of the disc is this fraction of the centre.
+STAR_LIMB = 0.4
+GRANULE_CONTRAST = 0.06
+
+
+def star_size(px):
+    """Side of the square surface ``star`` returns: disc plus corona."""
+    return 2 * (int(max(1, int(px)) * GLOW_SCALE) + 1) + 1
+
+
+def star(px, colour, seed=0):
+    """A star of radius ``px`` in ``colour``, corona included.
+
+    Blit with ``BLEND_ADD``, which **ignores alpha** and adds raw channel
+    values.  So the falloff lives in the colour itself and the surface is
+    opaque everywhere; encoding the falloff as alpha would produce a solid
+    disc that swallows everything within a couple of AU.
+    """
+    px = max(1, int(px))
+    shade_px = shade_radius(px)
+    half = int(shade_px * GLOW_SCALE) + 1
+    coords = np.arange(2 * half + 1, dtype=np.float64) - half
+    xs, ys = np.meshgrid(coords, coords)
+    r = np.hypot(xs, ys)
+    col = _rgb(colour)
+
+    inside = np.clip(shade_px + 0.5 - r, 0.0, 1.0)
+    z = np.sqrt(np.clip(1.0 - (r / shade_px) ** 2, 0.0, 1.0))
+    limb = STAR_LIMB + (1.0 - STAR_LIMB) * z
+    u = np.clip(xs / shade_px, -1, 1)
+    v = np.clip(ys / shade_px, -1, 1)
+    lon = (np.arctan2(u, np.maximum(z, 1e-6)) / math.pi + 1.0) * 0.5
+    lat = (v + 1.0) * 0.5
+    granules = 1.0 + GRANULE_CONTRAST * (fbm(lon, lat, seed, octaves=3, cells=12) * 2 - 1)
+    disc = limb * granules * inside
+    disc_rgb = col[None, None, :] * disc[..., None]
+    # A white-hot core, so the centre saturates whatever the colour.
+    core = np.clip((0.72 * shade_px - r) / (0.2 * shade_px), 0, 1) * inside
+    disc_rgb = disc_rgb + (255.0 - disc_rgb) * (core * 0.8)[..., None]
+
+    # The corona: an inverse-square falloff outside the disc, with a few soft
+    # streamers at seeded angles.
+    ratio = shade_px / np.maximum(r, shade_px)
+    corona = GLOW_STRENGTH * ratio ** 2 * (r < shade_px * GLOW_SCALE)
+    rng = np.random.default_rng(seed + 31)
+    angle = np.arctan2(ys, xs)
+    streamers = np.zeros_like(r)
+    for _ in range(int(rng.integers(3, 6))):
+        a0 = rng.uniform(-math.pi, math.pi)
+        width = rng.uniform(0.25, 0.5)
+        d = np.abs((angle - a0 + math.pi) % (2 * math.pi) - math.pi)
+        streamers += np.exp(-(d / width) ** 2)
+    corona = corona * (1.0 + 0.3 * streamers) * (1.0 - inside)
+
+    rgb = disc_rgb + col[None, None, :] * corona[..., None]
+    surface = to_surface(rgb, np.ones_like(r))
+    size = star_size(px)
+    if surface.get_width() != size:
+        surface = pygame.transform.smoothscale(surface, (size, size))
+    return surface
