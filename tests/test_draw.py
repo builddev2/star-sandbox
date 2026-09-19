@@ -189,6 +189,46 @@ def test_starfield_is_deterministic():
     assert pygame.image.tostring(a, "RGB") == pygame.image.tostring(b, "RGB")
 
 
+def test_the_sky_is_prerendered_at_the_buffer_size():
+    from src.render.starfield import Starfield
+    field = Starfield(640, 360)
+    assert field.sky.get_size() == (640, 360)
+
+
+def test_the_star_count_scales_with_the_area_between_a_floor_and_a_cap():
+    from src.render.starfield import MAX_STARS, MIN_STARS, star_count
+    assert star_count(640, 360) == 300
+    assert star_count(1280, 720) == 1200
+    assert star_count(64, 36) == MIN_STARS
+    assert star_count(6000, 4000) == MAX_STARS
+
+
+def test_stars_come_in_more_than_one_colour_and_brightness():
+    from src.render import palette
+    from src.render.camera import Camera
+    from src.render.starfield import Starfield
+    surface = pygame.Surface((320, 200))
+    surface.fill(palette.SPACE)
+    Starfield(320, 200, count=300).draw(surface, Camera(320, 200))
+    colours = {surface.get_at((x, y))[:3] for x in range(320) for y in range(200)}
+    bright = [c for c in colours if max(c) > 200]
+    warm = [c for c in colours if c[0] > c[2] + 20 and max(c) > 60]
+    cool = [c for c in colours if c[2] > c[0] + 20 and max(c) > 60]
+    assert bright, "no bright star"
+    assert warm and cool, "a real sky has both red and blue stars"
+
+
+def test_the_haze_lifts_the_background_above_pure_space():
+    """The Milky Way band: somewhere the sky is faintly lighter than SPACE
+    without being a star."""
+    from src.render import palette
+    from src.render.starfield import Starfield
+    sky = Starfield(320, 200).sky
+    faint = sum(1 for x in range(0, 320, 2) for y in range(0, 200, 2)
+                if palette.SPACE[0] < sky.get_at((x, y))[0] < palette.SPACE[0] + 30)
+    assert faint > 500
+
+
 def test_drawing_at_maximum_zoom_does_not_try_to_allocate_the_universe(parts):
     """Holding the scroll wheel reaches 1e12 px/AU, where the Sun's drawn radius
     is 4.6e9 pixels.  Allocating that sprite is an outright crash."""
