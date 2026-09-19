@@ -161,14 +161,25 @@ def test_a_big_body_still_keeps_a_real_night_side():
 # --- Jupiter's bands and Earth's oceans -------------------------------------------
 
 def test_jupiter_bands_are_clearly_visible():
+    """Measures the *albedo* directly, not a lit sphere: sampling a lit disc
+    conflates band contrast with limb darkening, and at px=200 that alone
+    cleared 1.35 (ratio 6.33) even on the pre-tuning code -- so the old
+    lit-sphere version of this test guarded nothing.  Measured on the albedo
+    alone: the pre-tuning bands (old tones, half the frequency, no contrast
+    stretch, the 60/40 storm blend) give 1.259; the tuned code gives 2.245.
+    1.8 is a floor the untuned code fails and the tuned code clears with 25%
+    room -- see the task-12 fix report for both measurements."""
     from src.render.sprites import LOOKS
     tones, style, _ = LOOKS["jupiter"]
     px = 200
-    surf = shade.sphere(px, 0.0, tones, style, seed=3)
-    x = -0.3 * px
-    lums = [_lum(_at(surf, x, y)) for y in range(int(-0.8 * px), int(0.8 * px) + 1, 4)]
+    r, u, v, z, alpha = shade._geometry(px, 0)
+    albedo = shade._albedo(u, v, z, style, tones, seed=3)
+    half = px
+    x = int(-0.3 * px)
+    lums = [_lum(albedo[half + y, half + x])
+            for y in range(int(-0.8 * px), int(0.8 * px) + 1, 4)]
     assert min(lums) > 0
-    assert max(lums) / min(lums) >= 1.35
+    assert max(lums) / min(lums) >= 1.8
 
 
 def test_earth_is_mostly_ocean():
