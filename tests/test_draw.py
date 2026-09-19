@@ -186,8 +186,8 @@ def test_starfield_wraps_seamlessly_when_panning():
     field = Starfield(320, 200, count=200)
     counts = []
     cam = Camera(320, 200)
-    for pan in (0, 500, 5000, 50000):
-        cam.centre[0] = pan
+    for pan in ((0, 0), (500, 0), (0, 700), (5000, -3000), (50000, 12345)):
+        cam.centre[0], cam.centre[1] = pan
         surface = pygame.Surface((320, 200))
         surface.fill(palette.SPACE)
         field.draw(surface, cam)
