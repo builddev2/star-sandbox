@@ -223,3 +223,37 @@ def test_a_big_star_is_shaded_at_a_rung_and_scaled():
     surf = shade.star(600, (255, 244, 220))
     assert surf.get_size() == (shade.star_size(600), shade.star_size(600))
     assert _lum(_at(surf, 0, 0)) > 200
+
+
+def test_the_limb_is_darker_than_the_disc_outside_the_core():
+    """Sampled outside the white-hot core (r > 0.72 px), so the core cannot
+    supply the contrast: this is limb darkening or nothing."""
+    px = 60
+    surf = shade.star(px, (255, 200, 120))
+    assert _lum(_at(surf, int(0.80 * px), 0)) > _lum(_at(surf, int(0.97 * px), 0)) * 1.15
+
+
+def test_granulation_textures_the_disc_and_follows_the_seed():
+    px = 60
+    a = shade.star(px, (200, 180, 120), seed=1)
+    b = shade.star(px, (200, 180, 120), seed=2)
+    ring = [_lum(_at(a, int(0.85 * px * math.cos(t)), int(0.85 * px * math.sin(t))))
+            for t in np.linspace(0, 2 * math.pi, 48, endpoint=False)]
+    assert np.std(ring) > 0.8, "a flat disc has no granulation"
+    assert pygame.image.tobytes(a, "RGBA") != pygame.image.tobytes(b, "RGBA")
+
+
+def test_streamers_make_the_corona_uneven_round_the_star():
+    px = 40
+    surf = shade.star(px, (255, 244, 220), seed=3)
+    ring = [_lum(_at(surf, int(1.5 * px * math.cos(t)), int(1.5 * px * math.sin(t))))
+            for t in np.linspace(0, 2 * math.pi, 48, endpoint=False)]
+    assert max(ring) > min(ring) * 1.08
+
+
+def test_the_corona_is_dimmer_than_the_limb_and_fades_to_nothing():
+    px = 40
+    surf = shade.star(px, (255, 244, 220), seed=3)
+    assert _lum(_at(surf, px - 1, 0)) > _lum(_at(surf, px + 2, 0))
+    edge = int(shade.GLOW_SCALE * px) - 1
+    assert _lum(_at(surf, edge, 0)) < 8, "the glow must taper out, not stop at a circle"

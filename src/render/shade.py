@@ -330,17 +330,19 @@ def star(px, colour, seed=0):
     v = np.clip(ys / shade_px, -1, 1)
     lon = (np.arctan2(u, np.maximum(z, 1e-6)) / math.pi + 1.0) * 0.5
     lat = (v + 1.0) * 0.5
-    granules = 1.0 + GRANULE_CONTRAST * (fbm(lon, lat, seed, octaves=3, cells=12) * 2 - 1)
+    granules = 1.0 - GRANULE_CONTRAST * (1.0 - fbm(lon, lat, seed, octaves=3, cells=12))
     disc = limb * granules * inside
     disc_rgb = col[None, None, :] * disc[..., None]
     # A white-hot core, so the centre saturates whatever the colour.
     core = np.clip((0.72 * shade_px - r) / (0.2 * shade_px), 0, 1) * inside
     disc_rgb = disc_rgb + (255.0 - disc_rgb) * (core * 0.8)[..., None]
 
-    # The corona: an inverse-square falloff outside the disc, with a few soft
-    # streamers at seeded angles.
+    # The corona: an inverse-square falloff outside the disc, tapered to zero
+    # over the outer half-radius so the glow fades rather than stopping at a
+    # hard-edged circle, with a few soft streamers at seeded angles.
     ratio = shade_px / np.maximum(r, shade_px)
-    corona = GLOW_STRENGTH * ratio ** 2 * (r < shade_px * GLOW_SCALE)
+    taper = np.clip((GLOW_SCALE * shade_px - r) / (0.5 * shade_px), 0.0, 1.0)
+    corona = GLOW_STRENGTH * ratio ** 2 * taper
     rng = np.random.default_rng(seed + 31)
     angle = np.arctan2(ys, xs)
     streamers = np.zeros_like(r)
@@ -350,6 +352,9 @@ def star(px, colour, seed=0):
         d = np.abs((angle - a0 + math.pi) % (2 * math.pi) - math.pi)
         streamers += np.exp(-(d / width) ** 2)
     corona = corona * (1.0 + 0.3 * streamers) * (1.0 - inside)
+    # The photosphere's edge is the brightest thing in the picture; the
+    # corona hugging it must stay dimmer, however the streamers fall.
+    corona = np.minimum(corona, STAR_LIMB * 0.9)
 
     rgb = disc_rgb + col[None, None, :] * corona[..., None]
     surface = to_surface(rgb, np.ones_like(r))
