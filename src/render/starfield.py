@@ -32,6 +32,11 @@ HAZE_SCALE = 4
 #: Caps the haze at ~36 above SPACE (22 * max(1.0, 0.95, 0.9) headroom), so a
 #: haze pixel never crosses the 60 threshold the tests gate a star pixel on.
 HAZE_BRIGHTNESS = 22
+#: (m, n) integer frequencies for the haze band's sine, the only ones for
+#: which sin(2*pi*(m*xs + n*ys)) repeats with period 1 in xs and in ys
+#: independently -- picked small so the band still reads as one diagonal
+#: sweep rather than a repeating stripe pattern.
+BAND_FREQUENCIES = ((1, 1), (1, -1), (2, 1), (1, -2), (2, -1), (1, 2))
 
 
 def star_count(width, height):
@@ -53,12 +58,22 @@ class Starfield:
         sky = pygame.Surface((w, h))
         sky.fill(palette.SPACE)
 
-        # The Milky Way: a diagonal band of low-frequency noise.
+        # The Milky Way: a diagonal band of low-frequency noise. The band's
+        # own envelope has to repeat with period exactly 1 over (xs, ys), the
+        # same way `value_noise` wraps its lattice -- draw() blits this same
+        # surface edge-to-edge with itself, so anything that does not close
+        # up leaves a seam at whatever offset the pan/zoom lands on (measured:
+        # a plain "distance from a diagonal line" does not, and one showed up
+        # framing an ordinary planet, not some extreme case). A sinusoid is
+        # only exactly periodic in both directions when its (xs, ys)
+        # frequencies are integers, which forces the band to a handful of
+        # rational diagonals rather than the continuous angle it drew before.
         hw, hh = max(2, w // HAZE_SCALE), max(2, h // HAZE_SCALE)
         xs, ys = np.meshgrid(np.linspace(0, 1, hw), np.linspace(0, 1, hh))
-        angle = rng.uniform(0.4, 1.1)
-        across = (xs - 0.5) * np.sin(angle) - (ys - 0.5) * np.cos(angle)
-        band = np.exp(-(across / 0.18) ** 2)
+        m, n = BAND_FREQUENCIES[rng.integers(len(BAND_FREQUENCIES))]
+        phase = rng.uniform(0.0, 2 * np.pi)
+        across = np.sin(2 * np.pi * (m * xs + n * ys) + phase)
+        band = np.clip(across, 0.0, None) ** 2
         noise = shade.fbm(xs, ys, self.seed + 3, octaves=3, cells=3)
         haze = band * (0.4 + 0.6 * noise) * HAZE_BRIGHTNESS
         rgb = np.empty((hh, hw, 3), dtype=np.float64)

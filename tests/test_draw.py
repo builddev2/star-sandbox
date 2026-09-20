@@ -200,6 +200,29 @@ def test_starfield_wraps_seamlessly_when_panning():
     assert min(counts) > 150, counts
 
 
+def test_the_haze_has_no_seam_where_it_wraps():
+    """The haze's own left/right and top/bottom edges must match, not merely
+    the roll mechanics ``test_starfield_wraps_seamlessly_when_panning``
+    pins.  That test rolls the *same* texture and compares ``draw()``
+    against its own roll, so it would pass even if the texture's own edges
+    did not agree -- which is exactly what a linear "distance from a
+    diagonal line" haze produces: real bug, caught by eye at a normal
+    zoomed-in camera position (e.g. framing a planet), confirmed here by
+    reading the sky surface directly rather than through the roll it is
+    always compared against.
+
+    ``count=0`` isolates the haze from the stars: a lone star near one edge
+    with no mirror at the other is expected statistical noise, not a seam,
+    and would otherwise swamp the tight tolerance a real haze mismatch needs."""
+    from src.render.starfield import Starfield
+    sky = Starfield(640, 360, count=0).sky
+    arr = pygame.surfarray.array3d(sky).astype(int)
+    left, right = arr[0, :, :], arr[-1, :, :]
+    top, bottom = arr[:, 0, :], arr[:, -1, :]
+    assert np.abs(left - right).max() <= 2, "left edge does not match right edge"
+    assert np.abs(top - bottom).max() <= 2, "top edge does not match bottom edge"
+
+
 def test_starfield_is_deterministic():
     from src.render.camera import Camera
     from src.render.starfield import Starfield
