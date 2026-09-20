@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (1253 tests, ~3:40)
+python selftest.py                      # whole suite (1283 tests, ~3:40)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -34,7 +34,7 @@ Three layers, enforced by `tests/test_layering.py`:
 transfer and its launch window, and the gravity assist), and `explain.py` (what an edit
 did and why, as plain data), and `save.py` (a world and a session as plain data, and
 back). |
-| `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
+| `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `shade.py` (per-pixel sphere and star shading), `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool, `saves.py` (the three slot files). |
 
 `App.step_once()` (`src/app/main.py`) is one frame: events (each one put through
@@ -376,7 +376,17 @@ or fast time scales.
   record drives its drawing, its hit-testing and its tooltip, so a button cannot be drawn
   in one place and clickable in another.
 - **Icons are drawn from lines, not typed as glyphs.** The font is whatever SDL supplies
-  and may not have a pause bar or a chevron; a missing glyph would render as a box.
+  and may not have a pause bar or a chevron; a missing glyph would render as a box. Curved
+  strokes use `aacircle`; there is no antialiased arc or ellipse in pygame-ce, so those stay.
+- **The sky is pre-rendered** (`render/starfield.py`): one surface per buffer size, rebuilt
+  by `_build_render_stack`, blitted up to four times at the wrapped parallax offset. Star
+  count scales with area (100..3000), brightness is a power law, colours are half-desaturated
+  blackbody, and a Milky Way haze is rendered at a quarter resolution and scaled.
+- **Text is Atkinson Hyperlegible, antialiased** (`render/pixelfont.py`, OFL, `assets/fonts`),
+  sized in points; the built-in face stands in at the same line height if the file is
+  missing. The class keeps its old name because the interface never changed.
+- **Impact particles are soft additive discs** (`effects._soft_disc`), cached by radius and
+  colour; the wall-clock rule and the velocities are untouched.
 - **Steppers act on press and repeat while held** (`ui.REPEAT_DELAY_MS`). Mass scrubs by
   ratio at 1.06 a notch, so igniting Jupiter is ~80 notches — one per click is unusable.
 

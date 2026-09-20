@@ -506,7 +506,7 @@ def draw_icon(surface, name, rect, colour):
         pygame.draw.arc(surface, colour, pygame.Rect(x, y + 1, w, h), 0.4, 2.6, 1)
         pygame.draw.circle(surface, colour, (rect.right - 3, cy), max(1, r // 3))
     elif name == "sizes":
-        pygame.draw.circle(surface, colour, (cx - r // 2, cy), max(2, r - 1), 1)
+        pygame.draw.aacircle(surface, colour, (cx - r // 2, cy), max(2, r - 1), 1)
         pygame.draw.circle(surface, colour, (cx + r // 2 + 1, cy), 1)
     elif name == "labels":
         pygame.draw.rect(surface, colour, pygame.Rect(x + 1, cy - r + 1, w - 3, 2 * r - 2), 1)
@@ -538,7 +538,7 @@ def draw_icon(surface, name, rect, colour):
             pygame.draw.line(surface, colour, (px, py), (ex, py), 1)
             pygame.draw.line(surface, colour, (px, py), (px, ey), 1)
     elif name == "follow":
-        pygame.draw.circle(surface, colour, (cx, cy), r, 1)
+        pygame.draw.aacircle(surface, colour, (cx, cy), r, 1)
         pygame.draw.line(surface, colour, (cx - r - 1, cy), (cx - r + 1, cy), 1)
         pygame.draw.line(surface, colour, (cx + r - 1, cy), (cx + r + 1, cy), 1)
         pygame.draw.line(surface, colour, (cx, cy - r - 1), (cx, cy - r + 1), 1)
@@ -548,7 +548,7 @@ def draw_icon(surface, name, rect, colour):
         # A magnifier with a plus in it: the universal "get closer to this".
         lens = max(2, r - 1)
         lx, ly = cx - 1, cy - 1
-        pygame.draw.circle(surface, colour, (lx, ly), lens, 1)
+        pygame.draw.aacircle(surface, colour, (lx, ly), lens, 1)
         pygame.draw.line(surface, colour, (lx - lens // 2, ly), (lx + lens // 2, ly), 1)
         pygame.draw.line(surface, colour, (lx, ly - lens // 2), (lx, ly + lens // 2), 1)
         pygame.draw.line(surface, colour, (lx + lens - 1, ly + lens - 1),
@@ -603,7 +603,7 @@ def draw_icon(surface, name, rect, colour):
             pygame.draw.line(surface, colour, (lifted, top),
                              (lifted, top + max(1, (body_box.top - top) // 2)), 1)
     elif name == "circle":
-        pygame.draw.circle(surface, colour, (cx, cy), r, 1)
+        pygame.draw.aacircle(surface, colour, (cx, cy), r, 1)
     elif name == "star":
         pygame.draw.line(surface, colour, (cx - r, cy), (cx + r, cy), 1)
         pygame.draw.line(surface, colour, (cx, cy - r), (cx, cy + r), 1)
@@ -611,11 +611,11 @@ def draw_icon(surface, name, rect, colour):
         pygame.draw.line(surface, colour, (cx - r + 1, cy + r - 1), (cx + r - 1, cy - r + 1), 1)
     elif name == "blackhole":
         radius = max(2, min(rect.width, rect.height) // 2 - 1)
-        pygame.draw.circle(surface, colour, rect.center, radius, 1)
+        pygame.draw.aacircle(surface, colour, rect.center, radius, 1)
         pygame.draw.circle(surface, colour, rect.center, max(1, radius - 2))
     elif name == "target":
-        pygame.draw.circle(surface, colour, (cx, cy), r, 1)
-        pygame.draw.circle(surface, colour, (cx, cy), max(1, r - 2), 1)
+        pygame.draw.aacircle(surface, colour, (cx, cy), r, 1)
+        pygame.draw.aacircle(surface, colour, (cx, cy), max(1, r - 2), 1)
         surface.set_at((cx, cy), colour)
     elif name == "fly":
         # A shuttle in profile: nose right, delta wing back-left, tail fin up.
