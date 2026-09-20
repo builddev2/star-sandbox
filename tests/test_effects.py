@@ -109,3 +109,28 @@ def test_update_and_draw_survive_an_empty_or_full_field_without_raising():
         field.spawn(_event(energy=1.0))
     field.update(0.016)
     field.draw(surface, _camera())
+
+
+def test_a_soft_disc_fades_from_the_centre_to_nothing_and_is_cached():
+    from src.render.effects import _soft_disc
+    disc = _soft_disc(8, (255, 200, 100))
+    assert disc.get_size() == (17, 17)
+    assert disc.get_at((8, 8))[3] == 255
+    assert disc.get_at((0, 0))[3] == 0
+    assert 0 < disc.get_at((8, 3))[3] < 255
+    assert _soft_disc(8, (255, 200, 100)) is disc
+
+
+def test_a_flash_is_soft_not_a_hard_disc():
+    """A flat ``BLEND_ADD`` blit ignores per-pixel alpha and floods the whole
+    disc with one saturated colour; only a handful of screen pixels is not
+    enough room for a gradient either, hence the large impactor here."""
+    from src.render import palette
+    from src.render.effects import EffectField
+    field = EffectField()
+    field.spawn(_event(energy=1e-4, target_radius=1.5e-3, projectile_radius=1.5e-5))
+    surface = pygame.Surface((640, 400))
+    surface.fill(palette.SPACE)
+    field.draw(surface, _camera())
+    colours = {surface.get_at((x, y))[:3] for x in range(280, 360) for y in range(160, 240)}
+    assert len(colours) > 12, "a soft disc has a gradient; a hard one has two colours"

@@ -258,18 +258,17 @@ class EffectField:
                 fade = max(0.0, 1.0 - t)
                 colour = tuple(int(_lerp(p.colour0[i], p.colour1[i], t) * fade)
                                for i in range(3))
-                pygame.draw.circle(surface, colour, (sx, sy), max(1, int(px)), 1)
+                pygame.draw.aacircle(surface, colour, (sx, sy), max(1, int(px)), 1)
             elif p.kind == "spark":
                 fade = max(0.0, 1.0 - t)
                 colour = tuple(int(_lerp(p.colour0[i], p.colour1[i], t) * fade)
                                for i in range(3))
-                if 0 <= sx < surface.get_width() and 0 <= sy < surface.get_height():
-                    surface.set_at((sx, sy), colour)
+                _blit_disc(surface, colour, sx, sy, max(1.0, height / 360.0))
             elif p.kind == "plume":
                 fade = max(0.0, 1.0 - t) * 0.7
                 colour = tuple(int(_lerp(p.colour0[i], p.colour1[i], t) * fade)
                                for i in range(3))
-                pygame.draw.circle(surface, colour, (sx, sy), max(1, int(px)))
+                _blit_disc(surface, colour, sx, sy, px)
             elif p.kind == "flare":
                 fade = max(0.0, 1.0 - t)
                 colour = tuple(int(_lerp(p.colour0[i], p.colour1[i], t) * fade)
@@ -281,12 +280,68 @@ class EffectField:
                                 p.seed - span, p.seed + span, max(1, arc_r // 6))
 
 
+#: Radial-gradient sprites by (radius, colour).  Bounded: a flash cools through
+#: a few dozen colours over its life and the ramp is quantised by int().
+SOFT_DISC_LIMIT = 256
+_SOFT_DISCS = {}
+
+
+def _soft_disc(radius, colour):
+    """An additive blob: alpha ``(1 - r/R) ** 1.5`` from the centre out."""
+    radius = max(1, int(radius))
+    key = (radius, tuple(colour))
+    disc = _SOFT_DISCS.get(key)
+    if disc is None:
+        side = 2 * radius + 1
+        coords = np.arange(side, dtype=np.float64) - radius
+        xs, ys = np.meshgrid(coords, coords)
+        r = np.hypot(xs, ys) / radius
+        alpha = np.clip(1.0 - r, 0.0, 1.0) ** 1.5
+        rgba = np.empty((side, side, 4), dtype=np.uint8)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = colour[0], colour[1], colour[2]
+        rgba[..., 3] = (alpha * 255).astype(np.uint8)
+        disc = pygame.image.frombuffer(rgba.tobytes(), (side, side), "RGBA").copy()
+        if len(_SOFT_DISCS) >= SOFT_DISC_LIMIT:
+            _SOFT_DISCS.clear()
+        _SOFT_DISCS[key] = disc
+    return disc
+
+
+_PREMULTIPLIED_DISCS = {}
+
+
+def _premultiplied_disc(radius, colour):
+    """A copy of ``_soft_disc`` with the fade baked into the colour, not the
+    alpha channel.
+
+    Both of pygame-ce's additive blend flags -- ``BLEND_ADD`` and
+    ``BLEND_RGBA_ADD`` -- add the source's raw RGB regardless of its alpha
+    (measured, not assumed: a disc blitted either way onto a dark surface
+    comes back flat white edge to edge). Scaling the colour by alpha ahead of
+    time, then adding with plain ``BLEND_ADD``, is what actually produces the
+    gradient -- the standard premultiplied-alpha trick for additive
+    blending -- derived from ``_soft_disc`` so the fade shape has one source.
+    """
+    radius = max(1, int(radius))
+    key = (radius, tuple(colour))
+    disc = _PREMULTIPLIED_DISCS.get(key)
+    if disc is None:
+        base = _soft_disc(radius, colour)
+        rgb = pygame.surfarray.pixels3d(base).astype(np.uint16)
+        alpha = pygame.surfarray.pixels_alpha(base).astype(np.uint16)
+        premultiplied = (rgb * alpha[..., None] // 255).astype(np.uint8)
+        disc = pygame.surfarray.make_surface(premultiplied)
+        if len(_PREMULTIPLIED_DISCS) >= SOFT_DISC_LIMIT:
+            _PREMULTIPLIED_DISCS.clear()
+        _PREMULTIPLIED_DISCS[key] = disc
+    return disc
+
+
 def _blit_disc(surface, colour, sx, sy, radius_px):
-    """An additive filled circle, clamped to something pygame can draw."""
+    """An additive soft disc, clamped to something pygame can draw."""
     r = max(1, min(int(radius_px), 4000))
-    rect = pygame.Rect(sx - r, sy - r, r * 2, r * 2)
+    rect = pygame.Rect(sx - r, sy - r, r * 2 + 1, r * 2 + 1)
     if not surface.get_rect().colliderect(rect.inflate(4, 4)):
         return
-    glow = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
-    pygame.draw.circle(glow, (*colour, 255), (r, r), r)
-    surface.blit(glow, (sx - r, sy - r), special_flags=pygame.BLEND_ADD)
+    surface.blit(_premultiplied_disc(r, colour), rect.topleft,
+                 special_flags=pygame.BLEND_ADD)
