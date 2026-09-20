@@ -460,11 +460,11 @@ class LaunchTool(TargetLock, Tool):
         if target is not None:
             tx, ty = camera.world_to_screen(world.pos[target])
             tx, ty = int(tx), int(ty)
-            pygame.draw.circle(surface, palette.SELECT, (tx, ty), 6, 1)
+            pygame.draw.aacircle(surface, palette.SELECT, (tx, ty), 6, 1)
             for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                pygame.draw.line(surface, palette.SELECT,
-                                 (tx + dx * 8, ty + dy * 8),
-                                 (tx + dx * 11, ty + dy * 11), 1)
+                pygame.draw.aaline(surface, palette.SELECT,
+                                   (tx + dx * 8, ty + dy * 8),
+                                   (tx + dx * 11, ty + dy * 11))
 
         if self._origin is None or self._cursor is None:
             # What can be thrown is on the buttons now, not in a legend here.
@@ -473,9 +473,9 @@ class LaunchTool(TargetLock, Tool):
         pos, vel = self._tentative(state)
 
         start = camera.world_to_screen(pos)
-        pygame.draw.line(surface, palette.TEXT, start, self._cursor, 1)
-        pygame.draw.circle(surface, palette.SELECT,
-                           (int(start[0]), int(start[1])), 4, 1)
+        pygame.draw.aaline(surface, palette.TEXT, start, self._cursor)
+        pygame.draw.aacircle(surface, palette.SELECT,
+                             (int(start[0]), int(start[1])), 4, 1)
 
         index = self._nearest_attractor(world, pos)
         if index is not None:
@@ -488,8 +488,8 @@ class LaunchTool(TargetLock, Tool):
                 # which overflows the C int pygame.draw.lines wants.
                 np.clip(projected, -32000, 32000, out=projected)
                 colour = palette.AIM_GOOD if bound else palette.AIM_ESCAPE
-                pygame.draw.lines(surface, colour, bool(bound),
-                                  projected.astype(int).tolist(), 1)
+                pygame.draw.aalines(surface, colour, bool(bound),
+                                    projected.astype(int).tolist())
 
         speed = float(np.hypot(vel[0], vel[1]))
         label = "%.4g km/s" % units.to_kms(speed)
@@ -1529,7 +1529,7 @@ class FlyTool(TargetLock, DragPan, Tool):
         target = self._target_index(world)
         if target is not None:
             tx, ty = camera.world_to_screen(world.pos[target])
-            pygame.draw.circle(surface, palette.SELECT, (int(tx), int(ty)), 6, 1)
+            pygame.draw.aacircle(surface, palette.SELECT, (int(tx), int(ty)), 6, 1)
 
         craft = self._craft(state)
         if craft is None:
@@ -1588,8 +1588,8 @@ class FlyTool(TargetLock, DragPan, Tool):
         # Clamp before casting: a near-parabolic arc can reach 1e12 px, which
         # overflows the C int pygame.draw.lines wants.
         np.clip(projected, -32000, 32000, out=projected)
-        pygame.draw.lines(surface, colour, bool(bound),
-                          projected.astype(int).tolist(), 1)
+        pygame.draw.aalines(surface, colour, bool(bound),
+                            projected.astype(int).tolist())
 
     def _draw_node(self, surface, state, craft, index, attractor):
         """A handle where the burn happens, on the orbit it happens from."""
@@ -1603,9 +1603,9 @@ class FlyTool(TargetLock, DragPan, Tool):
         nx, ny = state.camera.world_to_screen(
             node_pos + state.sim.world.pos[attractor])
         nx, ny = int(np.clip(nx, -32000, 32000)), int(np.clip(ny, -32000, 32000))
-        pygame.draw.circle(surface, palette.SELECT, (nx, ny), 4, 1)
-        pygame.draw.line(surface, palette.SELECT, (nx - 7, ny), (nx + 7, ny), 1)
-        pygame.draw.line(surface, palette.SELECT, (nx, ny - 7), (nx, ny + 7), 1)
+        pygame.draw.aacircle(surface, palette.SELECT, (nx, ny), 4, 1)
+        pygame.draw.aaline(surface, palette.SELECT, (nx - 7, ny), (nx + 7, ny))
+        pygame.draw.aaline(surface, palette.SELECT, (nx, ny - 7), (nx, ny + 7))
 
     def shortfall_ms(self, state):
         """How much delta-v the whole plan needs beyond the tank, in m/s.
@@ -1810,10 +1810,10 @@ class FlyTool(TargetLock, DragPan, Tool):
         def arrow(vec, colour):
             end = (origin[0] + float(vec[0]) * pixels,
                    origin[1] - float(vec[1]) * pixels)
-            pygame.draw.line(surface, colour,
-                             (int(origin[0]), int(origin[1])),
-                             (int(np.clip(end[0], -32000, 32000)),
-                              int(np.clip(end[1], -32000, 32000))), 1)
+            pygame.draw.aaline(surface, colour,
+                               (int(origin[0]), int(origin[1])),
+                               (int(np.clip(end[0], -32000, 32000)),
+                                int(np.clip(end[1], -32000, 32000))))
             return end
 
         arrow(v_planet, palette.TEXT_DIM)

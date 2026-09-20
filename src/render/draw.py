@@ -187,5 +187,5 @@ class WorldRenderer:
                 fade = 0.25 + 0.75 * (chunk + 1) / TRAIL_CHUNKS
                 colour = tuple(int(palette.TRAIL_BASE[k] * (1 - fade) + base[k] * fade)
                                for k in range(3))
-                pygame.draw.lines(surface, colour, False,
-                                  projected[start:stop].astype(int).tolist(), 1)
+                pygame.draw.aalines(surface, colour, False,
+                                    projected[start:stop].astype(int).tolist())

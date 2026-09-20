@@ -367,3 +367,32 @@ def test_a_sub_pixel_body_is_a_sprite_not_a_set_at(parts):
     view.real_size = True                 # so the floor does not rescue them
     renderer.draw(parts["surface"], parts["sim"], camera, view)
     assert len(renderer.cache) > 0
+
+
+def test_trails_are_antialiased(parts):
+    """A diagonal trail must blend into the background, not merely step
+    between flat fade-chunk colours.
+
+    Isolated to one body: with ``TRAIL_CHUNKS`` flat colours the ceiling is
+    eight, whatever the trail's shape, so a second body's own eight distinct
+    colours cannot paper over a still-aliased line the way counting every
+    body at once would.
+    """
+    from src.render import palette
+    surface, sim, camera = parts["surface"], parts["sim"], parts["camera"]
+    for _ in range(40):
+        sim.advance(2.0)
+        sim.update_trails()
+    earth = next(b for b in sim.world.bodies if b.name == "Earth")
+
+    class _OneBodyWorld:
+        n = 1
+        bodies = [earth]
+
+    surface.fill(palette.SPACE)
+    parts["renderer"]._draw_trails(surface, _OneBodyWorld(), camera,
+                                   surface.get_width(), surface.get_height())
+    colours = {surface.get_at((x, y))[:3] for x in range(surface.get_width())
+               for y in range(surface.get_height())}
+    colours.discard(palette.SPACE)
+    assert len(colours) > 8, "a flat aliased line gives at most the 8 fade-chunk colours"
