@@ -98,6 +98,32 @@ def format_speed(speed):
     return "%.4g km/s" % kms
 
 
+def format_light_time(days):
+    """How long light takes, in whichever unit reads naturally -- "8.3 min"
+    from the Sun, "1.3 s" from the Moon, the numbers the books quote."""
+    seconds = days * units.SEC_PER_DAY
+    if seconds < 60.0:
+        return "%.1f s" % seconds
+    if seconds < 3600.0:
+        return "%.1f min" % (seconds / 60.0)
+    if seconds < units.SEC_PER_DAY:
+        return "%.1f hr" % (seconds / 3600.0)
+    return "{:,.1f} days".format(days)
+
+
+def format_period(days):
+    """An orbital period to four figures: "365.3 d", "12 hr", "164.8 yr".
+
+    Four figures because the timer is compared against Kepler, and three would
+    hide every difference worth seeing.
+    """
+    if days < 1.0:
+        return "%.4g hr" % (days * 24.0)
+    if days < 1000.0:
+        return "%.4g d" % days
+    return "%.4g yr" % units.to_years(days)
+
+
 def format_temperature(kelvin):
     """Kelvin, without exponent notation anywhere a black hole can reach.
 
