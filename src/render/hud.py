@@ -116,13 +116,19 @@ def format_period(days):
     """An orbital period to four figures: "365.3 d", "12 hr", "164.8 yr".
 
     Four figures because the timer is compared against Kepler, and three would
-    hide every difference worth seeing.
+    hide every difference worth seeing.  At 10,000 years or more -- reachable
+    the instant a body is thrown to a few hundred AU -- four-figure exponent
+    notation ("1.5e+04 yr") is unreadable, so it switches to grouped digits
+    like ``format_speed``'s own large branch.
     """
     if days < 1.0:
         return "%.4g hr" % (days * 24.0)
     if days < 1000.0:
         return "%.4g d" % days
-    return "%.4g yr" % units.to_years(days)
+    years = units.to_years(days)
+    if years >= 10000.0:
+        return "{:,.0f} yr".format(years)
+    return "%.4g yr" % years
 
 
 def format_temperature(kelvin):

@@ -480,3 +480,15 @@ def test_a_period_is_four_figures_in_a_sensible_unit():
     assert format_period(87.969) == "87.97 d"
     assert format_period(0.5) == "12 hr"
     assert format_period(60190.0) == "164.8 yr"
+
+
+def test_a_very_long_period_uses_grouped_digits_not_an_exponent():
+    """A body thrown to ~470 AU reads its Kepler period instantly at >=10,000
+    yr, where %.4g gave "1.1e+04 yr" -- unreadable, like format_speed's own
+    large branch.  Deleting the grouped-digit branch makes this fail."""
+    from src import units
+    from src.render.hud import format_period
+    days = 15000.0 * units.DAYS_PER_YEAR
+    text = format_period(days)
+    assert text == "15,000 yr"
+    assert "e+" not in text
