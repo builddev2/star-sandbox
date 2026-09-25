@@ -1843,6 +1843,11 @@ class MeasureTool(TargetLock, DragPan, Tool):
     context_title = "Measure"
     no_target_label = "Measure to..."
 
+    #: The surface gap only differs from the centre distance in a digit anyone
+    #: reads once both are in kilometres -- the same 0.02 AU at which
+    #: ``hud.format_length`` switches unit.
+    GAP_SHOWN_BELOW_AU = 0.02
+
     def __init__(self):
         TargetLock.__init__(self)
         DragPan.__init__(self)
@@ -1900,6 +1905,93 @@ class MeasureTool(TargetLock, DragPan, Tool):
             state.select(state.sim.world.bodies[index].id)
         else:
             state.selected_id = None
+
+    def readout_lines(self, state):
+        """What the overlay says, as ``(text, colour)``: the ruler, then the timer.
+
+        Returned rather than drawn so a test can read the words.
+        """
+        world = state.sim.world
+        lines = []
+        here = state.selected_index
+        there = self._target_index(world)
+        if here is not None and there is not None and here != there:
+            s = measure.separation(world, here, there)
+            lines.append(("%s to %s" % (world.bodies[here].name,
+                                        world.bodies[there].name), palette.SELECT))
+            lines.append(("Apart  %s" % hud.format_length(s["centres"]), palette.TEXT))
+            if s["centres"] < self.GAP_SHOWN_BELOW_AU:
+                lines.append(("Gap    %s" % hud.format_length(s["gap"]), palette.TEXT))
+            lines.append(("Light takes %s" % hud.format_light_time(s["light_days"]),
+                          palette.TEXT_DIM))
+            verb = "Closing" if s["closing"] >= 0.0 else "Opening"
+            lines.append(("%s at %s" % (verb, hud.format_speed(abs(s["closing"]))),
+                          palette.TEXT_DIM))
+        if state.period_timer is not None:
+            lines.extend(self._timer_lines(world, state.period_timer))
+        return lines
+
+    @staticmethod
+    def _timer_lines(world, timer):
+        index = world.index_of(timer.body_id)
+        if index is None:
+            return [("The timed body is gone", palette.WARN)]
+        name = world.bodies[index].name
+        attractor = (world.index_of(timer.attractor_id)
+                     if timer.attractor_id is not None else None)
+        if attractor is None:
+            return [("%s is not orbiting anything" % name, palette.WARN)]
+        around = world.bodies[attractor].name
+        lines = [("Timing %s round %s" % (name, around), palette.SELECT)]
+        if timer.status == "too fast":
+            lines.append(("Too fast to time -- slow down", palette.WARN))
+        elif timer.status == "moved on":
+            lines.append(("It left %s behind" % around, palette.WARN))
+        elif timer.status == "not in orbit":
+            lines.append(("Not in orbit -- it will never come back", palette.WARN))
+        else:
+            lines.append(("%d%% round" % int(timer.fraction_round * 100),
+                          palette.TEXT_DIM))
+        measured = timer.measured
+        kepler, _ = measure.kepler_period(world, index, attractor)
+        if measured is not None:
+            lines.append(("Measured    %s" % hud.format_period(measured), palette.TEXT))
+        if kepler is not None:
+            lines.append(("Kepler says %s" % hud.format_period(kepler), palette.TEXT))
+        if measured is not None and kepler is not None:
+            lines.append(("Off by %.2f%%" % (100.0 * abs(measured / kepler - 1.0)),
+                          palette.TEXT_DIM))
+        mass = timer.mass_from_orbit(world)
+        if mass is not None:
+            lines.append(("a^3/P^2 weighs %s" % hud.format_mass(mass),
+                          palette.AIM_GOOD))
+        return lines
+
+    def draw_overlay(self, surface, state, font):
+        world = state.sim.world
+        camera = state.camera
+        m = widgets.Metrics(font, *surface.get_size())
+        here = state.selected_index
+        there = self._target_index(world)
+        if there is not None:
+            tx, ty = camera.world_to_screen(world.pos[there])
+            pygame.draw.aacircle(surface, palette.SELECT, (int(tx), int(ty)),
+                                 max(3, m.btn_h // 4), 1)
+        if here is not None and there is not None and here != there:
+            ends = camera.world_to_screen_array(world.pos[[here, there]])
+            # Clamped before the cast, as FlyTool._stroke does: a zoomed-in
+            # view puts a far body at 1e12 px, past the C int pygame wants.
+            np.clip(ends, -32000, 32000, out=ends)
+            (ax, ay), (bx, by) = ends.astype(int).tolist()
+            pygame.draw.aaline(surface, palette.SELECT, (ax, ay), (bx, by))
+        x = widgets.overlay_x(m, state.show_body_list)
+        # Below the explain panel when one is up, as the Fly readout does.
+        panel = state.explain_rect
+        y = m.content_top if panel is None else panel.bottom + m.gap
+        step = font.height + 2
+        for text, colour in self.readout_lines(state):
+            font.draw(surface, x, y, text, colour)
+            y += step
 
 
 def _mean_radius(mu, rel_pos, rel_vel):

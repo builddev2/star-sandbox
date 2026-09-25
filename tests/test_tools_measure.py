@@ -1,5 +1,6 @@
 """The Measure tool: its panel, its keys, and where it sits."""
 
+import math
 import os
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -128,3 +129,92 @@ def test_the_new_icons_draw_something(name):
     surface.fill((0, 0, 0))
     draw_icon(surface, name, pygame.Rect(2, 2, 20, 20), (255, 255, 255))
     assert pygame.mask.from_threshold(surface, (255, 255, 255), (60, 60, 60, 255)).count() > 10
+
+
+def _two_body_state():
+    pygame.init()
+    sim = Simulation(world=scenarios.two_body())
+    app = AppState(sim, Camera(*SIZE), ViewSettings())
+    app.set_tool(MeasureTool)
+    return app
+
+
+def _texts(state):
+    return [text for text, _ in state.tool.readout_lines(state)]
+
+
+def test_nothing_to_say_with_nothing_chosen(state):
+    assert state.tool.readout_lines(state) == []
+
+
+def test_the_ruler_reads_light_minutes_to_the_sun():
+    """One AU exactly, from the two-body scenario: 8.3 light-minutes."""
+    st = _two_body_state()
+    st.select(st.sim.world.bodies[1].id)
+    st.tool.target_id = st.sim.world.bodies[0].id
+    texts = _texts(st)
+    assert texts[0] == "Secondary to Primary"
+    assert "Apart  1 AU" in texts
+    assert "Light takes 8.3 min" in texts
+    assert not any(t.startswith("Gap") for t in texts)      # too far to matter
+
+
+def test_the_gap_appears_once_they_are_close():
+    # Earth to the Moon is well inside 0.02 AU.
+    pygame.init()
+    sim = Simulation(world=scenarios.solar_system())
+    st = AppState(sim, Camera(*SIZE), ViewSettings())
+    st.set_tool(MeasureTool)
+    st.select(_body(st, "Earth").id)
+    st.tool.target_id = _body(st, "Moon").id
+    assert any(t.startswith("Gap") and t.endswith("km") for t in _texts(st))
+
+
+def test_the_timer_reads_measured_against_kepler():
+    """After one lap: the measured period, Kepler's, how far apart, and the
+    mass it implies.  Removing any of the four lines fails this."""
+    st = _two_body_state()
+    st.select(st.sim.world.bodies[1].id)
+    st.start_timer()
+    while st.period_timer.measured is None and st.sim.world.time < 1000.0:
+        st.sim.advance(5.0, budget_s=1e9)
+        st.sample_timer()
+    texts = _texts(st)
+    assert texts[0] == "Timing Secondary round Primary"
+    assert "Measured    365.3 d" in texts
+    assert "Kepler says 365.3 d" in texts
+    assert any(t.startswith("Off by 0.0") for t in texts)
+    assert "a^3/P^2 weighs 1 Suns" in texts
+
+
+def test_too_fast_is_said_out_loud():
+    st = _two_body_state()
+    st.select(st.sim.world.bodies[1].id)
+    st.start_timer()
+    st.sim.advance(200.0, budget_s=1e9)
+    st.sample_timer()
+    assert "Too fast to time -- slow down" in _texts(st)
+
+
+def test_a_line_is_drawn_between_the_two():
+    """A pixel a quarter of the way along the line is lit only when there is
+    a target.  Deleting the aaline call makes this fail."""
+    from src.render.pixelfont import PixelFont
+    st = _two_body_state()
+    st.show_body_list = False
+    st.camera.log_zoom = math.log(SIZE[0] / 3.0)     # pixels per AU: 3 AU across
+    st.camera.centre[:] = 0.0
+    st.select(st.sim.world.bodies[1].id)
+    st.tool.target_id = st.sim.world.bodies[0].id
+    world = st.sim.world
+    a = st.camera.world_to_screen(world.pos[1])
+    b = st.camera.world_to_screen(world.pos[0])
+    probe = (int(round(a[0] + 0.25 * (b[0] - a[0]))), int(round(a[1] + 0.25 * (b[1] - a[1]))))
+    # A probe off screen would make this test pass or fail for no reason.
+    assert pygame.Rect(0, 0, *SIZE).collidepoint(probe)
+    surface = pygame.Surface(SIZE)
+    surface.fill((0, 0, 0))
+    st.tool.draw_overlay(surface, st, PixelFont(12))
+    lit = max(surface.get_at((probe[0] + dx, probe[1] + dy))[:3]
+              for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+    assert sum(lit) > 150
