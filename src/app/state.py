@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pygame
 
-from .. import explain, save, units
+from .. import explain, measure, save, units
 from ..body import KIND_CRAFT
 from ..render import scale
 from ..render.camera import MAX_ZOOM, MIN_ZOOM
@@ -261,6 +261,11 @@ class AppState:
         #: The open modal, or None.  While one is up, ``ui.build`` lays out
         #: only it and ``input.handle_event`` routes everything to it.
         self.dialog = None
+        #: The orbit the Measure tool is timing, or None.  Here rather than on
+        #: the tool because a tool is rebuilt every time it is picked, and
+        #: timing Neptune should survive a look at the Edit panel.  Not saved:
+        #: it is a stopwatch, not part of the world.
+        self.period_timer = None
 
     # --- time -------------------------------------------------------------------
 
@@ -432,6 +437,24 @@ class AppState:
         self.sim.world.vel[index] = 0.0
         self.sim.refresh()
 
+    def start_timer(self):
+        """Time the selected body round what it orbits.  False with nothing
+        selected -- the key path relies on this check, since a key never
+        passes through a disabled button's gate."""
+        index = self.selected_index
+        if index is None:
+            return False
+        self.period_timer = measure.PeriodTimer(self.sim.world, index)
+        return True
+
+    def stop_timer(self):
+        self.period_timer = None
+
+    def sample_timer(self):
+        """Once a frame, after the physics -- never per substep."""
+        if self.period_timer is not None:
+            self.period_timer.sample(self.sim.world)
+
     # --- leaving ----------------------------------------------------------------
 
     def request_quit(self):
@@ -466,6 +489,7 @@ class AppState:
         self.selected_id = None
         self.camera.follow_id = None
         self.body_list_offset = 0
+        self.period_timer = None
 
     # --- the start menu and the saves dialog ------------------------------------
 
@@ -632,6 +656,7 @@ class AppState:
         self.explain.clear()
         self.explain_rect = None
         self.effects.clear()
+        self.period_timer = None
         self.body_list_offset = 0
         self.quit_armed = False
         if self.tool is not None:

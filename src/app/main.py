@@ -122,6 +122,8 @@ class App:
         frame_dt = self.clock.tick(60) / 1000.0
         state.sim.advance(state.days_per_second * frame_dt)
         state.sim.update_trails()
+        # The orbit timer, on the same once-a-frame grain as the trails.
+        state.sample_timer()
         state.explain.settle(state.sim.world, pygame.time.get_ticks())
         state.camera.update_follow(state.sim.world)
         for impact in state.sim.impacts:

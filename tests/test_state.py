@@ -610,3 +610,54 @@ def test_restart_closes_nothing_but_loading_resets_the_tool(saving_state):
     old_tool = st.tool
     st.load_slot(1)
     assert isinstance(st.tool, FlyTool) and st.tool is not old_tool
+
+
+# --- the orbit timer ---------------------------------------------------------------
+
+def _earth(st):
+    return next(b for b in st.sim.world.bodies if b.name == "Earth")
+
+
+def test_start_timer_needs_a_selection(state):
+    assert state.start_timer() is False
+    assert state.period_timer is None
+
+
+def test_start_timer_times_the_selected_body(state):
+    state.select(_earth(state).id)
+    assert state.start_timer() is True
+    assert state.period_timer.body_id == _earth(state).id
+    state.stop_timer()
+    assert state.period_timer is None
+
+
+def test_the_timer_survives_a_tool_switch(state):
+    # The reason it lives on the state and not the tool.
+    from src.app.tools import EditTool, SelectTool
+    state.set_tool(SelectTool)
+    state.select(_earth(state).id)
+    state.start_timer()
+    timer = state.period_timer
+    state.set_tool(EditTool)
+    assert state.period_timer is timer
+
+
+def test_restart_drops_the_timer(state):
+    # Deleting the line in reset() makes this fail.
+    state.select(_earth(state).id)
+    state.start_timer()
+    state.reset()
+    assert state.period_timer is None
+
+
+def test_load_drops_the_timer(saving_state):
+    # Deleting the line in load_slot() makes this fail.
+    st = saving_state
+    st.open_saves()
+    st.save_slot(1)
+    st.close_dialog()
+    st.select(_earth(st).id)
+    st.start_timer()
+    st.open_saves()
+    assert st.load_slot(1) is True
+    assert st.period_timer is None
