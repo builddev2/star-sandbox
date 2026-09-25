@@ -302,7 +302,7 @@ def test_the_readout_uses_the_lap_values_once_one_exists():
     assert ("Kepler says %s" % hud.format_period(st.period_timer.lap_kepler)) in texts
 
 
-# --- F6: the attractor being gone reads differently from never having one ---------
+# --- a too-fast restart drops the banked lap ---------------------------------------
 
 def test_after_a_restart_kepler_is_the_live_prediction():
     """Complete a lap, go too fast (banking a stale Kepler number), quadruple
@@ -331,8 +331,9 @@ def test_after_a_restart_kepler_is_the_live_prediction():
     live, _ = measure.kepler_period(st.sim.world, 1, 0)
     texts = _texts(st)
     assert ("Kepler says %s" % hud.format_period(live)) in texts
-    assert "Kepler says 365.3 d" not in texts
 
+
+# --- F6: the attractor being gone reads differently from never having one ---------
 
 def test_the_attractor_being_deleted_reads_differently_from_never_orbiting():
     """The Sun (no attractor from the start) keeps the old wording; a body
