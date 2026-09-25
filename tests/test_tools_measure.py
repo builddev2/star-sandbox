@@ -177,7 +177,7 @@ def test_the_timer_reads_measured_against_kepler():
     st.select(st.sim.world.bodies[1].id)
     st.start_timer()
     while st.period_timer.measured is None and st.sim.world.time < 1000.0:
-        st.sim.advance(5.0, budget_s=1e9)
+        st.sim.advance(1.0, budget_s=1e9)
         st.sample_timer()
     texts = _texts(st)
     assert texts[0] == "Timing Secondary round Primary"
