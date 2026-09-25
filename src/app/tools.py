@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from .. import edits, maneuver, materials, orbits, units
+from .. import edits, maneuver, materials, measure, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
                     KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 from ..render import hud, palette, widgets
@@ -1828,6 +1828,80 @@ class FlyTool(TargetLock, DragPan, Tool):
                   palette.AIM_GOOD)
 
 
+class MeasureTool(TargetLock, DragPan, Tool):
+    """A ruler between two bodies, and a stopwatch for an orbit.
+
+    Numbers he can check against a book: the Sun is 8.3 light-minutes away, a
+    year is 365.256 days, and ``a^3 / P^2`` weighs whatever is being orbited.
+    The physics is ``src/measure.py``; the timer itself lives on ``AppState``,
+    so switching tools does not stop it.
+    """
+
+    name = "Measure"
+    hint = ("Click a body, then X and a second body to measure between them  -  "
+            "P times the selected body all the way round its orbit")
+    context_title = "Measure"
+    no_target_label = "Measure to..."
+
+    def __init__(self):
+        TargetLock.__init__(self)
+        DragPan.__init__(self)
+
+    def controls(self, state, metrics):
+        selected = state.selected_index is not None
+        timing = state.period_timer is not None
+        return [
+            [Control("measure.target", label=self._target_label(state),
+                     icon="target", hotkey="X",
+                     active=(self.picking_target
+                             or self._target_index(state.sim.world) is not None),
+                     tooltip="Click a body to measure the distance to it")],
+            [Control("measure.time",
+                     label=("Pick a body first" if not selected
+                            else "Time it again" if timing else "Time its orbit"),
+                     icon="clock", hotkey="P", enabled=selected,
+                     tooltip=("Time it all the way round, and check Kepler"
+                              if selected else "Click a planet first, then press this")),
+             Control("measure.stop", icon="close", compact=True, enabled=timing,
+                     tooltip="Stop timing")],
+        ]
+
+    def perform(self, control, state):
+        cid = control.id
+        if cid == "measure.target":
+            self.picking_target = not self.picking_target
+            return True
+        if cid == "measure.time":
+            state.start_timer()
+            return True
+        if cid == "measure.stop":
+            state.stop_timer()
+            return True
+        return False
+
+    def on_event(self, event, state):
+        """Keys.  ``P`` relies on ``start_timer``'s own check for a selection,
+        because a key never passes through the disabled button's gate."""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_x:
+                self.picking_target = not self.picking_target
+                return True
+            if event.key == pygame.K_p:
+                state.start_timer()
+                return True
+        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                and self._pick_target(event, state)):
+            return True
+        return self._pan_event(event, state)
+
+    def _on_click(self, pos, state):
+        index = state.pick_body_at(pos[0], pos[1])
+        if index is not None:
+            state.select(state.sim.world.bodies[index].id)
+        else:
+            state.selected_id = None
+
+
 def _mean_radius(mu, rel_pos, rel_vel):
     """The radius a body's orbit stands in for, in AU: its semi-major axis.
 
@@ -1910,9 +1984,10 @@ TOOLS = {
     pygame.K_2: LaunchTool,
     pygame.K_3: EditTool,
     pygame.K_4: FlyTool,
+    pygame.K_5: MeasureTool,
 }
 
-#: The same four tools addressed by name, for the buttons.  Keyed off the tool
+#: The same tools addressed by name, for the buttons.  Keyed off the tool
 #: rather than duplicated, so the two routes cannot disagree about what "Throw"
 #: means.
 TOOL_BY_NAME = {cls.name.lower(): cls for cls in TOOLS.values()}
