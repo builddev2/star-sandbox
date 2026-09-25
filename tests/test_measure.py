@@ -196,3 +196,93 @@ def test_a_body_captured_by_another_star_has_moved_on():
     sim.advance(1.0, budget_s=1e9)
     timer.sample(world)
     assert timer.status == "moved on"
+
+
+# --- the lap-mean a (F1 + F2) ------------------------------------------------------
+
+def test_lap_a_and_lap_kepler_are_none_before_the_first_lap():
+    # Deleting the __init__/_restart initialisation of lap_a makes this raise.
+    sim = Simulation(world=scenarios.two_body())
+    timer = measure.PeriodTimer(sim.world, 1)
+    assert timer.lap_a is None
+    assert timer.lap_kepler is None
+
+
+def test_lap_a_and_lap_kepler_freeze_at_the_crossing():
+    """A clean two-body orbit's instantaneous a is constant, so the frozen lap
+    value should read the same as Kepler's own number.  Not freezing (leaving
+    lap_a/lap_kepler at None) makes this fail."""
+    sim, timer = _time(scenarios.two_body(), 1, 7.0)
+    assert timer.lap_a == pytest.approx(1.0, rel=5e-3)
+    assert timer.lap_kepler == pytest.approx(365.256, rel=5e-4)
+
+
+def _sun_earth_moon():
+    """Sun, Earth and Moon only, trimmed from the real scenario so the Moon is
+    perturbed by the Sun exactly as it is in the game, without Io's tiny
+    dynamical time forcing the timestep down."""
+    world = scenarios.solar_system(moons=True)
+    keep = {"Sun", "Earth", "Moon"}
+    for body in list(world.bodies):
+        if body.name not in keep:
+            world.remove(world.index_of(body.id))
+    return world
+
+
+def test_the_moons_mass_no_longer_wanders_through_a_lap():
+    """Before this fix, the *instantaneous* a wanders across a lap (measured
+    directly here: recomputing a from the live state over the ten days
+    sampled below swings a^3/measured^2 by ~5.5%, matching the reviewer's
+    27.22->28.09 d Kepler swing and 0.971->1.03 Earth+Moon-mass swing) even
+    though the measured lap length itself is steady.  With the lap's mean a
+    frozen at the crossing there is nothing left inside a lap to wander:
+    a^3/measured^2 must read bit-identically at every frame sampled through
+    the following lap.  Using the live osculating a instead of the frozen
+    lap value in mass_from_orbit makes this fail.
+
+    It settles about 0.8-1.2% below the true Earth+Moon mass here, not the
+    finding's proposed +-0.5% -- real solar perturbation on the Moon (the
+    spec's own "comes out about 1% slow against its own two-body prediction"),
+    which mass_from_orbit's a^3/P^2 roughly doubles from the period error.
+    Flagged for the controller in final-fix-report.md rather than loosened."""
+    world = _sun_earth_moon()
+    sim = Simulation(world=world)
+    earth = world.index_of(next(b for b in world.bodies if b.name == "Earth").id)
+    moon = world.index_of(next(b for b in world.bodies if b.name == "Moon").id)
+    target = float(world.mass[earth] + world.mass[moon])
+    timer = measure.PeriodTimer(sim.world, moon)
+    # Two laps at 0.5-day frames, as the reviewer's experiment used.
+    while len(timer.laps) < 3 and sim.world.time < 100.0:
+        sim.advance(0.5, budget_s=1e9)
+        timer.sample(sim.world)
+    assert timer.status == "timing"
+    samples = []
+    for _ in range(20):
+        sim.advance(0.5, budget_s=1e9)
+        timer.sample(sim.world)
+        mass = timer.mass_from_orbit(sim.world)
+        assert mass is not None
+        samples.append(mass)
+    assert samples == [samples[0]] * len(samples)          # no wander at all
+    assert samples[0] == pytest.approx(target, rel=0.02)   # right ballpark
+
+
+def test_mass_from_orbit_is_frozen_and_positive_once_unbound():
+    """After a lap, tripling the secondary's heliocentric speed makes the
+    orbit unbound.  mass_from_orbit must keep reporting the frozen, positive
+    lap value rather than a fresh (and here negative) a^3/P^2.  Recomputing
+    from the live osculating a instead of the frozen lap_a makes this fail."""
+    sim, timer = _time(scenarios.two_body(), 1, 7.0)
+    assert timer.status == "timing"
+    frozen = timer.mass_from_orbit(sim.world)
+    assert frozen is not None and frozen > 0.0
+
+    sim.world.vel[1] *= 3.0
+    sim.refresh()
+    sim.advance(1.0, budget_s=1e9)
+    timer.sample(sim.world)
+    assert timer.status == "not in orbit"
+
+    mass = timer.mass_from_orbit(sim.world)
+    assert mass == pytest.approx(frozen)
+    assert mass > 0.0 and math.isfinite(mass)

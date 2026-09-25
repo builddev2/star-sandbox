@@ -5,15 +5,18 @@ import os
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
+import numpy as np
 import pygame
 import pytest
 
-from src import scenarios
+from src import materials, measure, scenarios, units
 from src.app.state import AppState
 from src.app.tools import MeasureTool
+from src.render import hud
 from src.render.camera import Camera
 from src.render.draw import ViewSettings
 from src.sim import Simulation
+from src.world import World
 
 SIZE = (640, 360)
 
@@ -171,8 +174,8 @@ def test_the_gap_appears_once_they_are_close():
 
 
 def test_the_timer_reads_measured_against_kepler():
-    """After one lap: the measured period, Kepler's, how far apart, and the
-    mass it implies.  Removing any of the four lines fails this."""
+    """After one lap: the measured period, Kepler's, how far apart (signed,
+    F5), and the mass it implies.  Removing any of the four lines fails this."""
     st = _two_body_state()
     st.select(st.sim.world.bodies[1].id)
     st.start_timer()
@@ -183,7 +186,9 @@ def test_the_timer_reads_measured_against_kepler():
     assert texts[0] == "Timing Secondary round Primary"
     assert "Measured    365.3 d" in texts
     assert "Kepler says 365.3 d" in texts
-    assert any(t.startswith("Off by 0.0") for t in texts)
+    # Measured lands a hair above Kepler at this frame rate -- "slower", not
+    # the old unsigned "Off by".  Swapping the verb makes this fail.
+    assert any(t.endswith("% slower than Kepler") for t in texts)
     assert "a^3/P^2 weighs 1 Suns" in texts
 
 
@@ -218,3 +223,104 @@ def test_a_line_is_drawn_between_the_two():
     lit = max(surface.get_at((probe[0] + dx, probe[1] + dy))[:3]
               for dx in (-1, 0, 1) for dy in (-1, 0, 1))
     assert sum(lit) > 150
+
+
+# --- F3: closing vs opening --------------------------------------------------------
+
+def _radial_pair_state(vel_b):
+    """A at the origin, B one AU out on +x, moving along that same line."""
+    pygame.init()
+    world = World()
+    rock = materials.get("rock")
+    world.add("A", rock, units.EARTH_MASS, 0.0, np.zeros(2), np.zeros(2))
+    world.add("B", rock, units.EARTH_MASS, 0.0, np.array([1.0, 0.0]), np.array(vel_b))
+    st = AppState(Simulation(world=world), Camera(*SIZE), ViewSettings())
+    st.set_tool(MeasureTool)
+    st.select(world.bodies[1].id)
+    st.tool.target_id = world.bodies[0].id
+    return st
+
+
+def test_a_target_moving_closer_reads_closing():
+    # Swapping "Closing"/"Opening" in readout_lines makes this fail.
+    texts = _texts(_radial_pair_state((-0.01, 0.0)))
+    line = next(t for t in texts if t.startswith(("Closing", "Opening")))
+    assert line.startswith("Closing at")
+
+
+def test_a_target_moving_away_reads_opening():
+    # Swapping "Closing"/"Opening" in readout_lines makes this fail.
+    texts = _texts(_radial_pair_state((0.01, 0.0)))
+    line = next(t for t in texts if t.startswith(("Closing", "Opening")))
+    assert line.startswith("Opening at")
+
+
+# --- F5: a signed comparison against Kepler ----------------------------------------
+
+def test_measured_faster_than_kepler_says_so():
+    """2-day frames on an e=0.8 orbit measure a shade short of the lap-mean
+    Kepler prediction (measured, verified directly: 365.70 against 365.84).
+    Flipping the faster/slower branch makes this fail."""
+    world = scenarios.two_body(eccentricity=0.8)
+    st = AppState(Simulation(world=world), Camera(*SIZE), ViewSettings())
+    st.set_tool(MeasureTool)
+    st.select(world.bodies[1].id)
+    st.start_timer()
+    while st.period_timer.measured is None and st.sim.world.time < 1000.0:
+        st.sim.advance(2.0, budget_s=1e9)
+        st.sample_timer()
+    assert st.period_timer.measured < st.period_timer.lap_kepler
+    texts = _texts(st)
+    assert any(t.endswith("% faster than Kepler") for t in texts)
+
+
+# --- F1 + F2: the readout uses the lap's frozen values, not the live ones ----------
+
+def test_the_readout_uses_the_lap_values_once_one_exists():
+    """Sun-perturbed Moon: well into the lap after the first one, the live
+    osculating Kepler prediction has wandered measurably away from the
+    frozen lap value.  The readout must show the frozen one.  Reading the
+    live `measure.kepler_period` here instead of `timer.lap_kepler` makes
+    this fail."""
+    world = scenarios.solar_system(moons=True)
+    for body in list(world.bodies):
+        if body.name not in ("Sun", "Earth", "Moon"):
+            world.remove(world.index_of(body.id))
+    st = AppState(Simulation(world=world), Camera(*SIZE), ViewSettings())
+    st.set_tool(MeasureTool)
+    moon = next(b for b in world.bodies if b.name == "Moon")
+    st.select(moon.id)
+    st.start_timer()
+    while len(st.period_timer.laps) < 3 and st.sim.world.time < 100.0:
+        st.sim.advance(0.5, budget_s=1e9)
+        st.sample_timer()
+    for _ in range(20):
+        st.sim.advance(0.5, budget_s=1e9)
+        st.sample_timer()
+    assert st.period_timer.lap_kepler is not None
+    texts = _texts(st)
+    assert ("Kepler says %s" % hud.format_period(st.period_timer.lap_kepler)) in texts
+
+
+# --- F6: the attractor being gone reads differently from never having one ---------
+
+def test_the_attractor_being_deleted_reads_differently_from_never_orbiting():
+    """The Sun (no attractor from the start) keeps the old wording; a body
+    whose attractor was removed after timing started gets the new one.
+    Making both branches share a message makes one of these two fail."""
+    st = _two_body_state()
+    sun = st.sim.world.bodies[0]
+    st.select(sun.id)
+    st.start_timer()
+    assert st.period_timer.attractor_id is None
+    assert "Primary is not orbiting anything" in _texts(st)
+
+    st2 = _two_body_state()
+    secondary = st2.sim.world.bodies[1]
+    st2.select(secondary.id)
+    st2.start_timer()
+    st2.sim.world.remove(st2.sim.world.index_of(st2.sim.world.bodies[0].id))
+    st2.sim.refresh()
+    texts2 = _texts(st2)
+    assert "What it orbited is gone" in texts2
+    assert "Secondary is not orbiting anything" not in texts2

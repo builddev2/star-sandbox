@@ -6,6 +6,23 @@ all the way round it has *measured* an orbital period -- which can then be set
 beside what Kepler's third law predicts from the orbit's size, and turned round
 to weigh what it orbits (``a^3 / P^2`` in AU, years and suns).
 
+**Kepler's side of that comparison uses each lap's *mean* semi-major axis, not
+the osculating one at the moment it is drawn.**  A perturbed orbit's
+instantaneous ``a`` wanders throughout a single lap -- the Sun-perturbed Moon's
+walks from about 27.22 to 28.09 days' worth of Kepler prediction across one
+lunar month, while the *measured* lap length itself sits still at 27.8 -- so
+reading the live ``a`` at draw time reported the physics simulation's own
+wobble as though it were new information each frame, and once the body went
+unbound it produced a nonsense negative mass.  ``sample`` instead keeps a
+time-weighted running mean of ``el["a"]`` (sum of ``a * gap`` over sum of
+``gap``) across the lap in progress, and freezes it as ``lap_a`` -- along with
+the Kepler period it implies, ``lap_kepler`` -- the instant the lap completes.
+Both are ``None`` before the first lap, and both simply hold their last frozen
+value once the body leaves orbit or "moves on" -- a real, already-measured
+number is worth more than blanking the readout -- so ``mass_from_orbit`` reads
+``lap_a`` rather than recomputing from whatever the body's orbit happens to be
+doing right now.
+
 **Sampled once a frame**, like the trails.  It measures by angle swept rather
 than by time, so it is right at any speed -- up to the point where one sample
 sweeps more than half a turn, which angle-unwrapping cannot resolve.  A body's
@@ -99,6 +116,13 @@ class PeriodTimer:
                              if attractor is not None else None)
         #: "timing", "too fast", "not in orbit", "lost" or "moved on".
         self.status = "timing"
+        #: The last *completed* lap's time-weighted mean semi-major axis (AU)
+        #: and the Kepler period it implies (days).  Both None until the first
+        #: lap completes, and neither is touched by ``_restart`` -- a lap
+        #: already banked stays banked across a "too fast" restart or once the
+        #: body leaves orbit, rather than blank a number already measured.
+        self.lap_a = None
+        self.lap_kepler = None
         self._restart(world, index, attractor)
 
     def _restart(self, world, index, attractor):
@@ -108,6 +132,11 @@ class PeriodTimer:
         #: Signed radians swept since the start, so a retrograde orbit counts.
         self.swept = 0.0
         self._last_time = world.time
+        #: Running time-weighted sums for the current, in-progress lap's mean
+        #: ``a`` -- sum of ``a * gap`` and sum of ``gap``.  Reset here and at
+        #: every lap crossing in ``sample``.
+        self._a_accum = 0.0
+        self._gap_accum = 0.0
         if attractor is None or kepler_period(world, index, attractor)[0] is None:
             self.status = "not in orbit"
             return
@@ -131,7 +160,7 @@ class PeriodTimer:
             self.status = "moved on"
             return
         el = _elements(world, index, attractor)
-        period, e = el["period"], el["e"]
+        period, e, a = el["period"], el["e"], el["a"]
         if period is None:
             self.status = "not in orbit"
             return
@@ -146,6 +175,8 @@ class PeriodTimer:
             self.status = "too fast"
             return
         self.status = "timing"
+        self._a_accum += a * gap
+        self._gap_accum += gap
         angle = _angle(world, index, attractor)
         step = (angle - self._last_angle + math.pi) % TWO_PI - math.pi
         before = abs(self.swept)
@@ -156,6 +187,15 @@ class PeriodTimer:
             fraction = ((done + 1) * TWO_PI - before) / (after - before)
             self.laps.append(self._last_time + fraction * gap)
             done += 1
+            # Freeze this lap's time-weighted mean a, and the Kepler period
+            # it implies at this crossing's masses, then start the next lap's
+            # accumulation clean.
+            mean_a = self._a_accum / self._gap_accum
+            self.lap_a = mean_a
+            mu = units.G * float(world.mass[attractor] + world.mass[index])
+            self.lap_kepler = TWO_PI * math.sqrt(mean_a ** 3 / mu)
+            self._a_accum = 0.0
+            self._gap_accum = 0.0
         self._last_angle = angle
         self._last_time = world.time
 
@@ -174,11 +214,17 @@ class PeriodTimer:
     def mass_from_orbit(self, world):
         """Kepler's third law turned round: ``a^3 / P^2`` in AU and years is the
         mass of the pair in suns.  None before the first lap, or once the body
-        or what it orbits is gone.
+        or what it orbits is gone (but *not* once it merely leaves orbit --
+        ``lap_a`` and ``measured`` are already frozen at that point).
+
+        Uses ``lap_a`` -- the frozen lap-mean semi-major axis -- rather than
+        the live osculating one, so a perturbed orbit's instant-to-instant
+        wander does not leak into a number that is supposed to be settled the
+        moment a lap completes, and a body that has since gone unbound cannot
+        turn this negative.
         """
         period = self.measured
         index, attractor = self._rows(world)
-        if period is None or index is None or attractor is None:
+        if period is None or index is None or attractor is None or self.lap_a is None:
             return None
-        _, a = kepler_period(world, index, attractor)
-        return a ** 3 / units.to_years(period) ** 2
+        return self.lap_a ** 3 / units.to_years(period) ** 2

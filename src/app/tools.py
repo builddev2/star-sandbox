@@ -1937,10 +1937,11 @@ class MeasureTool(TargetLock, DragPan, Tool):
         if index is None:
             return [("The timed body is gone", palette.WARN)]
         name = world.bodies[index].name
-        attractor = (world.index_of(timer.attractor_id)
-                     if timer.attractor_id is not None else None)
-        if attractor is None:
+        if timer.attractor_id is None:
             return [("%s is not orbiting anything" % name, palette.WARN)]
+        attractor = world.index_of(timer.attractor_id)
+        if attractor is None:
+            return [("What it orbited is gone", palette.WARN)]
         around = world.bodies[attractor].name
         lines = [("Timing %s round %s" % (name, around), palette.SELECT)]
         if timer.status == "too fast":
@@ -1953,13 +1954,23 @@ class MeasureTool(TargetLock, DragPan, Tool):
             lines.append(("%d%% round" % int(timer.fraction_round * 100),
                           palette.TEXT_DIM))
         measured = timer.measured
-        kepler, _ = measure.kepler_period(world, index, attractor)
+        # Before the first lap there is nothing frozen yet, so the only
+        # number to show is the live osculating prediction; once a lap has
+        # completed, Kepler's side of the comparison is the lap's own frozen
+        # mean-a value, not whatever the orbit happens to be doing right now
+        # (see src/measure.py).
+        if timer.lap_kepler is not None:
+            kepler = timer.lap_kepler
+        else:
+            kepler, _ = measure.kepler_period(world, index, attractor)
         if measured is not None:
             lines.append(("Measured    %s" % hud.format_period(measured), palette.TEXT))
         if kepler is not None:
             lines.append(("Kepler says %s" % hud.format_period(kepler), palette.TEXT))
         if measured is not None and kepler is not None:
-            lines.append(("Off by %.2f%%" % (100.0 * abs(measured / kepler - 1.0)),
+            diff = measured / kepler - 1.0
+            verb = "slower" if diff >= 0.0 else "faster"
+            lines.append(("%.2f%% %s than Kepler" % (100.0 * abs(diff), verb),
                           palette.TEXT_DIM))
         mass = timer.mass_from_orbit(world)
         if mass is not None:
