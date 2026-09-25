@@ -21,7 +21,11 @@ Both are ``None`` before the first lap, and both simply hold their last frozen
 value once the body leaves orbit or "moves on" -- a real, already-measured
 number is worth more than blanking the readout -- so ``mass_from_orbit`` reads
 ``lap_a`` rather than recomputing from whatever the body's orbit happens to be
-doing right now.
+doing right now. A "too fast" restart is different: it throws the lap in
+progress away because the direction of travel between samples is ambiguous,
+so it drops ``lap_a`` and ``lap_kepler`` too -- "measured", "Kepler (lap)" and
+the mass they imply live and die together, rather than showing a stale
+Kepler number with no measured lap beside it.
 
 **Sampled once a frame**, like the trails.  It measures by angle swept rather
 than by time, so it is right at any speed -- up to the point where one sample
@@ -116,13 +120,6 @@ class PeriodTimer:
                              if attractor is not None else None)
         #: "timing", "too fast", "not in orbit", "lost" or "moved on".
         self.status = "timing"
-        #: The last *completed* lap's time-weighted mean semi-major axis (AU)
-        #: and the Kepler period it implies (days).  Both None until the first
-        #: lap completes, and neither is touched by ``_restart`` -- a lap
-        #: already banked stays banked across a "too fast" restart or once the
-        #: body leaves orbit, rather than blank a number already measured.
-        self.lap_a = None
-        self.lap_kepler = None
         self._restart(world, index, attractor)
 
     def _restart(self, world, index, attractor):
@@ -137,6 +134,16 @@ class PeriodTimer:
         #: every lap crossing in ``sample``.
         self._a_accum = 0.0
         self._gap_accum = 0.0
+        #: The last *completed* lap's time-weighted mean semi-major axis (AU)
+        #: and the Kepler period it implies (days).  Both None until the
+        #: first lap completes, and both dropped here -- on a "too fast"
+        #: restart -- along with ``measured``, so a stale Kepler number never
+        #: sits on screen with no measured lap beside it.  They survive the
+        #: body merely leaving orbit (``sample`` returns "not in orbit"
+        #: without calling ``_restart``): a real, already-measured number is
+        #: worth more than blanking the readout there.
+        self.lap_a = None
+        self.lap_kepler = None
         if attractor is None or kepler_period(world, index, attractor)[0] is None:
             self.status = "not in orbit"
             return

@@ -267,6 +267,24 @@ def test_the_moons_mass_no_longer_wanders_through_a_lap():
     assert samples[0] == pytest.approx(target, rel=0.02)   # right ballpark
 
 
+def test_a_too_fast_restart_drops_the_banked_lap():
+    """A completed lap banks lap_a/lap_kepler; a "too fast" restart must drop
+    them along with measured and mass_from_orbit, not leave a stale Kepler
+    number on display with no measured lap beside it. Deleting the two new
+    reset lines in _restart makes this fail."""
+    sim, timer = _time(scenarios.two_body(), 1, 7.0)
+    assert timer.status == "timing"
+    assert timer.lap_kepler is not None
+
+    sim.advance(200.0, budget_s=1e9)
+    timer.sample(sim.world)
+    assert timer.status == "too fast"
+    assert timer.lap_a is None
+    assert timer.lap_kepler is None
+    assert timer.measured is None
+    assert timer.mass_from_orbit(sim.world) is None
+
+
 def test_mass_from_orbit_is_frozen_and_positive_once_unbound():
     """After a lap, tripling the secondary's heliocentric speed makes the
     orbit unbound.  mass_from_orbit must keep reporting the frozen, positive
