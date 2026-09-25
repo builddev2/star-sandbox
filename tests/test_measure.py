@@ -98,6 +98,28 @@ def test_a_frame_longer_than_a_quarter_orbit_is_refused():
     assert timer.measured is None
 
 
+def test_an_eccentric_orbit_is_refused_past_the_periapsis_scaled_limit():
+    """e=0.5: the flat quarter-period limit (~91 days) would let an 80-day
+    frame straddling periapsis sweep more than half a turn and count
+    backwards, reporting a wildly wrong lap.  The limit scaled by periapsis
+    rate (~26 days here) refuses it instead."""
+    sim, timer = _time(scenarios.two_body(eccentricity=0.5), 1, 80.0)
+    assert timer.status == "too fast"
+    assert timer.measured is None
+
+
+def test_an_eccentric_orbit_is_timed_within_the_scaled_limit():
+    """5-day frames sit comfortably inside the e=0.5 limit (~26 days).
+    Measured error is ~0.12%: linear interpolation between samples is a
+    coarser fit near a fast periapsis passage than it is on a circle, where
+    the same interpolation measures to ~0.035% (see the 7-day-frame test
+    above)."""
+    sim, timer = _time(scenarios.two_body(eccentricity=0.5), 1, 5.0)
+    kepler, _ = measure.kepler_period(sim.world, 1, 0)
+    assert timer.status == "timing"
+    assert timer.measured == pytest.approx(kepler, rel=2e-3)
+
+
 def test_the_timer_recovers_once_time_slows_down():
     # Leaving out the status reset to "timing" in sample() makes this fail.
     sim = Simulation(world=scenarios.two_body())

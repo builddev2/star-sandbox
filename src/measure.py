@@ -7,11 +7,19 @@ beside what Kepler's third law predicts from the orbit's size, and turned round
 to weigh what it orbits (``a^3 / P^2`` in AU, years and suns).
 
 **Sampled once a frame**, like the trails.  It measures by angle swept rather
-than by time, so it is right at any speed -- up to the point where one frame
-carries the body more than a quarter of the way round.  Past that, which way it
-went between two samples is ambiguous, and the timer says "too fast" and starts
-again rather than report a number it cannot stand behind.  Measured: 200-day
-frames on a one-year orbit reported a 600-day "lap" before the guard existed.
+than by time, so it is right at any speed -- up to the point where one sample
+sweeps more than half a turn, which angle-unwrapping cannot resolve.  A body's
+angular rate is not constant: near periapsis it runs at
+``n * sqrt(1+e) / (1-e)**1.5``, far above its average, so a limit stated as a
+flat fraction of the mean period is only safe for a circle.  The guard in
+``sample`` shrinks by that same factor as the orbit gets eccentric, capping the
+worst-case sweep *at periapsis* to a quarter turn rather than the average
+sweep.  Past the limit, which way the body went between two samples is
+ambiguous, and the timer says "too fast" and starts again rather than report a
+number it cannot stand behind.  Measured: 200-day frames on a one-year, circular
+orbit reported a 600-day "lap" before the guard existed; without the
+eccentricity scaling, an e=0.5 orbit let an 80-day gap straddling periapsis
+through and reported a 730-day "lap".
 
 **Holds ids, never rows**: ``World.remove`` is a swap-remove and a timer lives
 for hundreds of frames.
@@ -24,10 +32,13 @@ import math
 from . import orbits, units
 
 TWO_PI = 2.0 * math.pi
-#: The longest gap between two samples, as a fraction of the predicted period,
-#: that the timer will trust.  Unwrapping is exact below half a turn; a quarter
-#: leaves room for an eccentric orbit racing through periapsis faster than its
-#: average.
+#: The longest gap between two samples, as a fraction of the *circular*
+#: (mean-motion) period, that the timer will trust before scaling for
+#: eccentricity.  ``sample`` multiplies this by ``(1-e)**1.5 / sqrt(1+e)`` --
+#: the ratio of a circle's angular rate to the true rate at periapsis -- so
+#: the actual limit shrinks as the orbit gets eccentric.  Unwrapping is exact
+#: below half a turn; a flat quarter left unscaled is generous enough for a
+#: circle but lets an eccentric orbit sweep past it unnoticed near periapsis.
 MAX_SAMPLE_FRACTION = 0.25
 
 
@@ -54,13 +65,22 @@ def separation(world, i, j):
     }
 
 
+def _elements(world, index, attractor):
+    """The osculating-elements dict (`orbits.elements_from_state`) for
+    ``index`` relative to ``attractor`` -- the one place `kepler_period` and
+    `PeriodTimer.sample` compute ``mu`` and the relative state, so a sample
+    that needs both the period and the eccentricity asks once.
+    """
+    mu = units.G * float(world.mass[attractor] + world.mass[index])
+    return orbits.elements_from_state(mu, world.pos[index] - world.pos[attractor],
+                                      world.vel[index] - world.vel[attractor])
+
+
 def kepler_period(world, index, attractor):
     """``(period, a)``: what Kepler's third law says, in days, from the
     osculating semi-major axis in AU.  ``period`` is None for an unbound orbit.
     """
-    mu = units.G * float(world.mass[attractor] + world.mass[index])
-    el = orbits.elements_from_state(mu, world.pos[index] - world.pos[attractor],
-                                    world.vel[index] - world.vel[attractor])
+    el = _elements(world, index, attractor)
     return el["period"], el["a"]
 
 
@@ -110,14 +130,18 @@ class PeriodTimer:
         if orbits.dominant_attractor(world, index) != attractor:
             self.status = "moved on"
             return
-        period, _ = kepler_period(world, index, attractor)
+        el = _elements(world, index, attractor)
+        period, e = el["period"], el["e"]
         if period is None:
             self.status = "not in orbit"
             return
         gap = world.time - self._last_time
         if gap <= 0.0:
             return                              # paused
-        if gap > MAX_SAMPLE_FRACTION * period:
+        # Angular rate at periapsis exceeds the mean rate by
+        # sqrt(1+e) / (1-e)**1.5, so the trusted gap shrinks by its inverse.
+        limit = MAX_SAMPLE_FRACTION * period * (1.0 - e) ** 1.5 / math.sqrt(1.0 + e)
+        if gap > limit:
             self._restart(world, index, attractor)
             self.status = "too fast"
             return
