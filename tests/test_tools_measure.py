@@ -67,6 +67,15 @@ def test_the_button_starts_timing_the_selection(state):
     assert state.period_timer is None
 
 
+def test_the_target_button_arms_picking(state):
+    # Deleting the measure.target branch of perform makes this fail.
+    target = _controls(state)["measure.target"]
+    assert state.tool.perform(target, state)
+    assert state.tool.picking_target
+    assert state.tool.perform(target, state)
+    assert not state.tool.picking_target
+
+
 def test_p_times_the_selection_and_does_nothing_without_one(state):
     assert state.tool.on_event(_key(pygame.K_p), state)
     assert state.period_timer is None
