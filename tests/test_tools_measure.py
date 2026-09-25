@@ -304,6 +304,36 @@ def test_the_readout_uses_the_lap_values_once_one_exists():
 
 # --- F6: the attractor being gone reads differently from never having one ---------
 
+def test_after_a_restart_kepler_is_the_live_prediction():
+    """Complete a lap, go too fast (banking a stale Kepler number), quadruple
+    the Primary's mass, then resume at 1-day frames. The readout's "Kepler
+    says" line must track the live prediction for the new mass, not the
+    dropped lap's old 365.3 d. Leaving lap_a/lap_kepler alone in _restart
+    makes this fail."""
+    st = _two_body_state()
+    st.select(st.sim.world.bodies[1].id)
+    st.start_timer()
+    while st.period_timer.measured is None and st.sim.world.time < 1000.0:
+        st.sim.advance(1.0, budget_s=1e9)
+        st.sample_timer()
+    assert st.period_timer.lap_kepler is not None
+
+    st.sim.advance(200.0, budget_s=1e9)
+    st.sample_timer()
+    assert st.period_timer.status == "too fast"
+
+    st.sim.world.mass[0] *= 4.0
+    st.sim.refresh()
+    for _ in range(5):
+        st.sim.advance(1.0, budget_s=1e9)
+        st.sample_timer()
+
+    live, _ = measure.kepler_period(st.sim.world, 1, 0)
+    texts = _texts(st)
+    assert ("Kepler says %s" % hud.format_period(live)) in texts
+    assert "Kepler says 365.3 d" not in texts
+
+
 def test_the_attractor_being_deleted_reads_differently_from_never_orbiting():
     """The Sun (no attractor from the start) keeps the old wording; a body
     whose attractor was removed after timing started gets the new one.
