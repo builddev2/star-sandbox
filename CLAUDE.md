@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python selftest.py                      # whole suite (1283 tests, ~3:40)
+python selftest.py                      # whole suite (1363 tests, ~3:40)
 python -m pytest tests/test_orbits.py    # one file
 python -m pytest tests/test_sim.py::test_paused_simulation_does_not_move   # one test
 python -m src.app.main                  # run the app
@@ -33,14 +33,16 @@ Three layers, enforced by `tests/test_layering.py`:
 `maneuver.py` (a craft's flight plan: nodes, burns, closest approach, the Hohmann
 transfer and its launch window, and the gravity assist), and `explain.py` (what an edit
 did and why, as plain data), and `save.py` (a world and a session as plain data, and
-back). |
+back), and `measure.py` (the ruler between two bodies and the orbit timer that checks
+Kepler's third law). |
 | `src/render/` | camera, sprites, HUD, pixel font, starfield, button widgets, `shade.py` (per-pixel sphere and star shading), `effects.py` (turns an `ImpactEvent` into particles). Everything that touches pixels. |
 | `src/app/` | display context, frame loop, input routing, the interface, one class per tool, `saves.py` (the three slot files). |
 
 `App.step_once()` (`src/app/main.py`) is one frame: events (each one put through
 `ctx.map_event` first) → reconcile the window size → rebuild the pixel-sized stack if the
 buffer changed shape → `ui.update` (held steppers) → refresh `world.contact_radius` from
-the camera → `sim.advance` → `sim.update_trails` → `state.explain.settle` → camera follow
+the camera → `sim.advance` → `sim.update_trails` → `state.sample_timer` →
+`state.explain.settle` → camera follow
 → drain `sim.impacts` into `state.effects` → draw world → `effects.update` / `effects.draw`
 → draw the explain panel → draw the tool overlay → draw HUD → `ui.build` → `ui.draw` →
 `ctx.present`. It is factored out of `run()` so `tests/test_smoke.py` can drive the real
@@ -238,6 +240,18 @@ or fast time scales.
 - **A save file is written whole or not at all** (`app/saves.py`): `slotN.json.tmp`
   then `os.replace`. A file that cannot be read lists as unreadable with Load and
   Rename disabled; Save stays enabled because overwriting is the way out.
+- **The orbit timer measures by angle swept, sampled once a frame, and refuses when a
+  frame outruns a quarter turn at periapsis** (`src/measure.py`). A body's angular rate
+  is not constant -- near periapsis it runs at `n * sqrt(1+e) / (1-e)**1.5`, far above
+  its average -- so a limit stated as a flat fraction of the mean period is only safe
+  for a circle; the guard shrinks the trusted gap by
+  `MAX_SAMPLE_FRACTION * period * (1-e)**1.5 / sqrt(1+e)` (`MAX_SAMPLE_FRACTION` = 0.25)
+  so the worst-case sweep is capped at a quarter turn *at periapsis* rather than the
+  average sweep. Measured: a flat quarter-period let an e=0.5 orbit's 80-day frame
+  straddling periapsis through and reported a 730-day "lap". The lap's end is
+  interpolated between the two samples straddling it (0.035% at 7-day frames against
+  1.6% without). The timer lives on `AppState`, not the tool, so it survives a tool
+  switch; Restart and Load drop it, and it is not saved.
 
 ### Design decisions worth knowing before changing them
 
@@ -393,7 +407,9 @@ or fast time scales.
 ### Adding a tool
 
 Subclass `Tool` in `src/app/tools.py` and register it in `TOOLS`, keyed by pygame key
-constant; `TOOL_BY_NAME` is derived from that dict, so the buttons follow automatically.
+constant (`TOOL_BY_NAME` is derived from that dict), and add its row to
+`ui.TOOL_BUTTONS` -- the hotbar reads that table, not `TOOLS`. Add it to the tool lists
+in `tests/test_layout.py` and the parity test in `tests/test_ui.py`.
 
 - `on_event` returns True to consume an event; `draw_overlay`, `on_exit`, `name`, `hint`.
 - `controls(state, metrics)` returns rows (a list of lists of `Control`) for the panel
