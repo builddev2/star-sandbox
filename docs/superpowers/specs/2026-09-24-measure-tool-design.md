@@ -44,8 +44,10 @@ button (no key) clears it.
   crossing time is interpolated linearly between the two samples that straddle
   it.  Prototyped: the error is 0.035% at 7-day frames, against 1.6% without
   the interpolation.
-- **"Too fast" is refused, not guessed.** If one frame covers more than a
-  quarter of the predicted period, the direction of travel between samples is
+- **"Too fast" is refused, not guessed.** The trusted gap is scaled by
+  periapsis rate, not a flat quarter of the mean period -- a body runs fastest
+  there, so a flat limit would let an eccentric orbit's gap straddle periapsis
+  and count backwards.  Past it, the direction of travel between samples is
   ambiguous.  The timer says so, restarts, and resumes when the child slows
   time down.  At the default month-a-second, Io (1.77 d) is too fast and the
   Moon is not.
@@ -57,8 +59,11 @@ button (no key) clears it.
 - **The timer holds ids, never rows** (swap-remove).  A body or attractor that
   disappears reads "lost"; a body whose dominant attractor changes (a craft after
   a slingshot) reads "moved on" and stops.
-- **Kepler's prediction uses the osculating `a`** from `orbits.elements_from_state`
-  at the moment it is shown, with `mu = G (M + m)`.
+- **Kepler's prediction uses each lap's time-weighted mean `a`**, frozen the
+  instant the lap completes, with `mu = G (M + m)` at that crossing -- the
+  osculating `a` wanders across a perturbed lap (the Moon's swings enough to
+  walk the prediction from 27.22 to 28.09 days within one lunar month), and a
+  number read off mid-wander is not one the timer can stand behind.
 - **Physics in `src/measure.py`** (pure numpy, no pygame), formatters in
   `render/hud.py`, the tool in `app/tools.py`.
 - **The readout is an overlay, not panel rows.** The panel carries two rows (the

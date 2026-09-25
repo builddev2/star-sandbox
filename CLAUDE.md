@@ -42,11 +42,10 @@ Kepler's third law). |
 `ctx.map_event` first) → reconcile the window size → rebuild the pixel-sized stack if the
 buffer changed shape → `ui.update` (held steppers) → refresh `world.contact_radius` from
 the camera → `sim.advance` → `sim.update_trails` → `state.sample_timer` →
-`state.explain.settle` → camera follow
-→ drain `sim.impacts` into `state.effects` → draw world → `effects.update` / `effects.draw`
-→ draw the explain panel → draw the tool overlay → draw HUD → `ui.build` → `ui.draw` →
-`ctx.present`. It is factored out of `run()` so `tests/test_smoke.py` can drive the real
-application headless.
+`state.explain.settle` → camera follow → drain `sim.impacts` into `state.effects` →
+draw world → `effects.update` / `effects.draw` → draw the explain panel → draw the tool
+overlay → draw HUD → `ui.build` → `ui.draw` → `ctx.present`. It is factored out of
+`run()` so `tests/test_smoke.py` can drive the real application headless.
 
 The interface is built **at the end of the frame**, from the state about to be shown, so
 the next frame's clicks hit exactly what is on screen.
@@ -240,18 +239,21 @@ or fast time scales.
 - **A save file is written whole or not at all** (`app/saves.py`): `slotN.json.tmp`
   then `os.replace`. A file that cannot be read lists as unreadable with Load and
   Rename disabled; Save stays enabled because overwriting is the way out.
-- **The orbit timer measures by angle swept, sampled once a frame, and refuses when a
+- **The orbit timer measures by angle swept, sampled once a frame, and restarts when a
   frame outruns a quarter turn at periapsis** (`src/measure.py`). A body's angular rate
   is not constant -- near periapsis it runs at `n * sqrt(1+e) / (1-e)**1.5`, far above
   its average -- so a limit stated as a flat fraction of the mean period is only safe
-  for a circle; the guard shrinks the trusted gap by
-  `MAX_SAMPLE_FRACTION * period * (1-e)**1.5 / sqrt(1+e)` (`MAX_SAMPLE_FRACTION` = 0.25)
-  so the worst-case sweep is capped at a quarter turn *at periapsis* rather than the
-  average sweep. Measured: a flat quarter-period let an e=0.5 orbit's 80-day frame
+  for a circle; the trusted limit *is*
+  `MAX_SAMPLE_FRACTION * period * (1-e)**1.5 / sqrt(1+e)` (`MAX_SAMPLE_FRACTION` = 0.25),
+  capping the worst-case sweep at a quarter turn *at periapsis* rather than the average
+  sweep. Over that limit the timer throws the lap in progress away, says "too fast", and
+  starts again. Measured: a flat quarter-period let an e=0.5 orbit's 80-day frame
   straddling periapsis through and reported a 730-day "lap". The lap's end is
   interpolated between the two samples straddling it (0.035% at 7-day frames against
-  1.6% without). The timer lives on `AppState`, not the tool, so it survives a tool
-  switch; Restart and Load drop it, and it is not saved.
+  1.6% without), and the Kepler comparison and the mass it implies both read the lap's
+  own frozen mean `a`, never the live osculating one, which wanders across a perturbed
+  lap. The timer lives on `AppState`, not the tool, so it survives a tool switch; Restart
+  and Load drop it, and it is not saved.
 
 ### Design decisions worth knowing before changing them
 
