@@ -69,6 +69,7 @@ TOOL_BUTTONS = (
     ("tool.throw", "Throw", "throw", "2", "Throw a new body into the system"),
     ("tool.edit", "Edit", "edit", "3", "Change what a body is made of"),
     ("tool.fly", "Fly", "fly", "4", "Fly a spacecraft: plan a burn, go somewhere"),
+    ("tool.measure", "Measure", "measure", "5", "Measure a distance, time an orbit"),
 )
 
 #: (id, icon, label, hotkey, tooltip).  A button with no icon draws its label

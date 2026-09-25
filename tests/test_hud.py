@@ -463,3 +463,32 @@ def test_the_temperature_row_fits_the_inspector_panel():
     from src.render.hud import PANEL_WIDTH_CHARS, format_body_temperature
     hottest = "Temp       %s" % format_body_temperature(units.MAX_TEMPERATURE_K)
     assert len(hottest) <= PANEL_WIDTH_CHARS
+
+
+def test_light_time_reads_in_the_unit_a_book_uses():
+    from src import units
+    from src.render.hud import format_light_time
+    assert format_light_time(1.0 / units.C) == "8.3 min"          # the Sun
+    assert format_light_time(30.07 / units.C) == "4.2 hr"         # Neptune
+    assert format_light_time(0.00257 / units.C) == "1.3 s"        # the Moon
+    assert format_light_time(2.0) == "2.0 days"
+
+
+def test_a_period_is_four_figures_in_a_sensible_unit():
+    from src.render.hud import format_period
+    assert format_period(365.2564) == "365.3 d"
+    assert format_period(87.969) == "87.97 d"
+    assert format_period(0.5) == "12 hr"
+    assert format_period(60190.0) == "164.8 yr"
+
+
+def test_a_very_long_period_uses_grouped_digits_not_an_exponent():
+    """A body thrown to ~470 AU reads its Kepler period instantly at >=10,000
+    yr, where %.4g gave "1.1e+04 yr" -- unreadable, like format_speed's own
+    large branch.  Deleting the grouped-digit branch makes this fail."""
+    from src import units
+    from src.render.hud import format_period
+    days = 15000.0 * units.DAYS_PER_YEAR
+    text = format_period(days)
+    assert text == "15,000 yr"
+    assert "e+" not in text

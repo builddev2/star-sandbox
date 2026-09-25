@@ -13,7 +13,7 @@ PHYSICS_MODULES = [
     "src.units", "src.body", "src.materials", "src.world",
     "src.integrator", "src.orbits", "src.scenarios",
     "src.collisions", "src.destruction", "src.thermal", "src.sim", "src.edits",
-    "src.maneuver", "src.save",
+    "src.maneuver", "src.save", "src.measure",
 ]
 
 

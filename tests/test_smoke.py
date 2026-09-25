@@ -453,3 +453,15 @@ def test_a_resize_does_not_lose_the_simulation(app):
     world = app.state.sim.world
     assert world.time > before
     assert [b.name for b in world.bodies[:world.n]] == names
+
+
+def test_the_frame_loop_samples_the_orbit_timer(app):
+    """Deleting state.sample_timer() from step_once makes this fail: the
+    timer would never see the world move."""
+    state = app.state
+    earth = next(b for b in state.sim.world.bodies if b.name == "Earth")
+    state.select(earth.id)
+    assert state.start_timer()
+    for _ in range(5):
+        app.step_once()
+    assert state.period_timer.swept != 0.0

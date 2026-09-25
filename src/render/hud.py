@@ -33,14 +33,15 @@ KEY_HELP = (
     ("Tab", "cycle through bodies"),
     ("B", "the list of bodies"),
     ("F", "follow the selected body"),
-    ("1 2 3 4", "Look / Throw / Edit / Fly"),
+    ("1 2 3 4 5", "Look / Throw / Edit / Fly / Measure"),
     ("M", "work out the transfer to the target (Fly)"),
     ("A", "aim straight at the target (Fly)"),
     ("N", "throw the flight plan away (Fly)"),
+    ("P", "time the selected body's orbit (Measure)"),
     ("C", "collapse a star into a black hole (Edit)"),
     ("K", "lock or unlock the selected field (Edit)"),
     ("U", "unlock every field on the selected body (Edit)"),
-    ("X", "lock a target (Throw, Fly)"),
+    ("X", "lock a target (Throw, Fly, Measure)"),
     ("0", "stop the selected body dead"),
     ("T", "orbit trails on and off"),
     ("R", "real sizes (everything is a dot)"),
@@ -96,6 +97,38 @@ def format_speed(speed):
     if kms >= 1.0e4:
         return "{:,.0f} km/s".format(kms)
     return "%.4g km/s" % kms
+
+
+def format_light_time(days):
+    """How long light takes, in whichever unit reads naturally -- "8.3 min"
+    from the Sun, "1.3 s" from the Moon, the numbers the books quote."""
+    seconds = days * units.SEC_PER_DAY
+    if seconds < 60.0:
+        return "%.1f s" % seconds
+    if seconds < 3600.0:
+        return "%.1f min" % (seconds / 60.0)
+    if seconds < units.SEC_PER_DAY:
+        return "%.1f hr" % (seconds / 3600.0)
+    return "{:,.1f} days".format(days)
+
+
+def format_period(days):
+    """An orbital period to four figures: "365.3 d", "12 hr", "164.8 yr".
+
+    Four figures because the timer is compared against Kepler, and three would
+    hide every difference worth seeing.  At 10,000 years or more -- reachable
+    the instant a body is thrown to a few hundred AU -- four-figure exponent
+    notation ("1.5e+04 yr") is unreadable, so it switches to grouped digits
+    like ``format_speed``'s own large branch.
+    """
+    if days < 1.0:
+        return "%.4g hr" % (days * 24.0)
+    if days < 1000.0:
+        return "%.4g d" % days
+    years = units.to_years(days)
+    if years >= 10000.0:
+        return "{:,.0f} yr".format(years)
+    return "%.4g yr" % years
 
 
 def format_temperature(kelvin):

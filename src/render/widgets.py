@@ -625,6 +625,18 @@ def draw_icon(surface, name, rect, colour):
         ])
         pygame.draw.line(surface, colour, (x + w // 5, cy),
                          (x + w // 5, cy - h // 3), 1)
+    elif name == "measure":
+        # A ruler: a bar with ticks along its top edge, every other one longer.
+        bar = pygame.Rect(x, cy - h // 4, w, max(3, h // 2))
+        pygame.draw.rect(surface, colour, bar, 1)
+        for k in range(1, 5):
+            tx = x + k * w // 5
+            tick = bar.height // 2 if k % 2 == 0 else bar.height // 3
+            pygame.draw.line(surface, colour, (tx, bar.top), (tx, bar.top + tick), 1)
+    elif name == "clock":
+        pygame.draw.aacircle(surface, colour, (cx, cy), r, 1)
+        pygame.draw.line(surface, colour, (cx, cy), (cx, cy - r + 2), 1)
+        pygame.draw.line(surface, colour, (cx, cy), (cx + r // 2, cy), 1)
     elif name == "save":
         # A floppy disk: the one icon every child still knows means "save".
         pygame.draw.rect(surface, colour, pygame.Rect(cx - r, cy - r, 2 * r, 2 * r), 1)

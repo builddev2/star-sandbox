@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from .. import edits, maneuver, materials, orbits, units
+from .. import edits, maneuver, materials, measure, orbits, units
 from ..body import (DEFAULT_BLACK_HOLE_DISK, DEFAULT_BLACK_HOLE_SPIN,
                     KIND_BLACK_HOLE, KIND_CRAFT, KIND_PLANET, KIND_STAR)
 from ..render import hud, palette, widgets
@@ -1828,6 +1828,183 @@ class FlyTool(TargetLock, DragPan, Tool):
                   palette.AIM_GOOD)
 
 
+class MeasureTool(TargetLock, DragPan, Tool):
+    """A ruler between two bodies, and a stopwatch for an orbit.
+
+    Numbers he can check against a book: the Sun is 8.3 light-minutes away, a
+    year is 365.256 days, and ``a^3 / P^2`` weighs whatever is being orbited.
+    The physics is ``src/measure.py``; the timer itself lives on ``AppState``,
+    so switching tools does not stop it.
+    """
+
+    name = "Measure"
+    hint = ("Click a body, then X and a second body to measure between them  -  "
+            "P times the selected body all the way round its orbit")
+    context_title = "Measure"
+    no_target_label = "Measure to..."
+
+    #: The surface gap only differs from the centre distance in a digit anyone
+    #: reads once both are in kilometres -- the same 0.02 AU at which
+    #: ``hud.format_length`` switches unit.
+    GAP_SHOWN_BELOW_AU = 0.02
+
+    def __init__(self):
+        TargetLock.__init__(self)
+        DragPan.__init__(self)
+
+    def controls(self, state, metrics):
+        selected = state.selected_index is not None
+        timing = state.period_timer is not None
+        return [
+            [Control("measure.target", label=self._target_label(state),
+                     icon="target", hotkey="X",
+                     active=(self.picking_target
+                             or self._target_index(state.sim.world) is not None),
+                     tooltip="Click a body to measure the distance to it")],
+            [Control("measure.time",
+                     label=("Pick a body first" if not selected
+                            else "Time it again" if timing else "Time its orbit"),
+                     icon="clock", hotkey="P", enabled=selected,
+                     tooltip=("Time it all the way round, and check Kepler"
+                              if selected else "Click a planet first, then press this")),
+             Control("measure.stop", icon="close", compact=True, enabled=timing,
+                     tooltip="Stop timing")],
+        ]
+
+    def perform(self, control, state):
+        cid = control.id
+        if cid == "measure.target":
+            self.picking_target = not self.picking_target
+            return True
+        if cid == "measure.time":
+            state.start_timer()
+            return True
+        if cid == "measure.stop":
+            state.stop_timer()
+            return True
+        return False
+
+    def on_event(self, event, state):
+        """Keys.  ``P`` relies on ``start_timer``'s own check for a selection,
+        because a key never passes through the disabled button's gate."""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_x:
+                self.picking_target = not self.picking_target
+                return True
+            if event.key == pygame.K_p:
+                state.start_timer()
+                return True
+        if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                and self._pick_target(event, state)):
+            return True
+        return self._pan_event(event, state)
+
+    def _on_click(self, pos, state):
+        index = state.pick_body_at(pos[0], pos[1])
+        if index is not None:
+            state.select(state.sim.world.bodies[index].id)
+        else:
+            state.selected_id = None
+
+    def readout_lines(self, state):
+        """What the overlay says, as ``(text, colour)``: the ruler, then the timer.
+
+        Returned rather than drawn so a test can read the words.
+        """
+        world = state.sim.world
+        lines = []
+        here = state.selected_index
+        there = self._target_index(world)
+        if here is not None and there is not None and here != there:
+            s = measure.separation(world, here, there)
+            lines.append(("%s to %s" % (world.bodies[here].name,
+                                        world.bodies[there].name), palette.SELECT))
+            lines.append(("Apart  %s" % hud.format_length(s["centres"]), palette.TEXT))
+            if s["centres"] < self.GAP_SHOWN_BELOW_AU:
+                lines.append(("Gap    %s" % hud.format_length(s["gap"]), palette.TEXT))
+            lines.append(("Light takes %s" % hud.format_light_time(s["light_days"]),
+                          palette.TEXT_DIM))
+            verb = "Closing" if s["closing"] >= 0.0 else "Opening"
+            lines.append(("%s at %s" % (verb, hud.format_speed(abs(s["closing"]))),
+                          palette.TEXT_DIM))
+        if state.period_timer is not None:
+            lines.extend(self._timer_lines(world, state.period_timer))
+        return lines
+
+    @staticmethod
+    def _timer_lines(world, timer):
+        index = world.index_of(timer.body_id)
+        if index is None:
+            return [("The timed body is gone", palette.WARN)]
+        name = world.bodies[index].name
+        if timer.attractor_id is None:
+            return [("%s is not orbiting anything" % name, palette.WARN)]
+        attractor = world.index_of(timer.attractor_id)
+        if attractor is None:
+            return [("What it orbited is gone", palette.WARN)]
+        around = world.bodies[attractor].name
+        lines = [("Timing %s round %s" % (name, around), palette.SELECT)]
+        if timer.status == "too fast":
+            lines.append(("Too fast to time -- slow down", palette.WARN))
+        elif timer.status == "moved on":
+            lines.append(("It left %s behind" % around, palette.WARN))
+        elif timer.status == "not in orbit":
+            lines.append(("Not in orbit -- it will never come back", palette.WARN))
+        else:
+            lines.append(("%d%% round" % int(timer.fraction_round * 100),
+                          palette.TEXT_DIM))
+        measured = timer.measured
+        # Before the first lap there is nothing frozen yet, so the only
+        # number to show is the live osculating prediction; once a lap has
+        # completed, Kepler's side of the comparison is the lap's own frozen
+        # mean-a value, not whatever the orbit happens to be doing right now
+        # (see src/measure.py).
+        if timer.lap_kepler is not None:
+            kepler = timer.lap_kepler
+        else:
+            kepler, _ = measure.kepler_period(world, index, attractor)
+        if measured is not None:
+            lines.append(("Measured    %s" % hud.format_period(measured), palette.TEXT))
+        if kepler is not None:
+            lines.append(("Kepler says %s" % hud.format_period(kepler), palette.TEXT))
+        if measured is not None and kepler is not None:
+            diff = measured / kepler - 1.0
+            verb = "slower" if diff >= 0.0 else "faster"
+            lines.append(("%.2f%% %s than Kepler" % (100.0 * abs(diff), verb),
+                          palette.TEXT_DIM))
+        mass = timer.mass_from_orbit(world)
+        if mass is not None:
+            lines.append(("a^3/P^2 weighs %s" % hud.format_mass(mass),
+                          palette.AIM_GOOD))
+        return lines
+
+    def draw_overlay(self, surface, state, font):
+        world = state.sim.world
+        camera = state.camera
+        m = widgets.Metrics(font, *surface.get_size())
+        here = state.selected_index
+        there = self._target_index(world)
+        if there is not None:
+            tx, ty = camera.world_to_screen(world.pos[there])
+            pygame.draw.aacircle(surface, palette.SELECT, (int(tx), int(ty)),
+                                 max(3, m.btn_h // 4), 1)
+        if here is not None and there is not None and here != there:
+            ends = camera.world_to_screen_array(world.pos[[here, there]])
+            # Clamped before the cast, as FlyTool._stroke does: a zoomed-in
+            # view puts a far body at 1e12 px, past the C int pygame wants.
+            np.clip(ends, -32000, 32000, out=ends)
+            (ax, ay), (bx, by) = ends.astype(int).tolist()
+            pygame.draw.aaline(surface, palette.SELECT, (ax, ay), (bx, by))
+        x = widgets.overlay_x(m, state.show_body_list)
+        # Below the explain panel when one is up, as the Fly readout does.
+        panel = state.explain_rect
+        y = m.content_top if panel is None else panel.bottom + m.gap
+        step = font.height + 2
+        for text, colour in self.readout_lines(state):
+            font.draw(surface, x, y, text, colour)
+            y += step
+
+
 def _mean_radius(mu, rel_pos, rel_vel):
     """The radius a body's orbit stands in for, in AU: its semi-major axis.
 
@@ -1910,9 +2087,10 @@ TOOLS = {
     pygame.K_2: LaunchTool,
     pygame.K_3: EditTool,
     pygame.K_4: FlyTool,
+    pygame.K_5: MeasureTool,
 }
 
-#: The same four tools addressed by name, for the buttons.  Keyed off the tool
+#: The same tools addressed by name, for the buttons.  Keyed off the tool
 #: rather than duplicated, so the two routes cannot disagree about what "Throw"
 #: means.
 TOOL_BY_NAME = {cls.name.lower(): cls for cls in TOOLS.values()}
